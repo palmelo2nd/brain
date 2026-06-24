@@ -4,174 +4,24 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Brain タスク管理（完全コントロール版）</title>
-    <style>
-        body { font-family: sans-serif; padding: 20px; max-width: 600px; margin: 0 auto; color: #333; }
-        #content-box { background: #fafafa; padding: 20px; border: 1px solid #ddd; border-radius: 8px; margin-top: 20px; }
-        .btn-group { margin-top: 15px; display: flex; gap: 10px; }
-        button { padding: 10px 15px; font-size: 16px; cursor: pointer; border: none; border-radius: 4px; }
-        #load-btn { background: #007bff; color: white; }
-        #save-btn { background: #28a745; color: white; }
-        button:hover { opacity: 0.9; }
-        input[type="password"] { padding: 10px; width: 100%; box-sizing: border-box; margin-bottom: 15px; font-size: 14px; border: 1px solid #ccc; border-radius: 4px; }
-        
-        ul { list-style-type: none; padding-left: 20px; }
-        li { margin: 8px 0; }
-        input[type="checkbox"] { width: auto; margin-right: 8px; transform: scale(1.2); cursor: pointer; }
-        h1 { border-bottom: 2px solid #007bff; padding-bottom: 5px; }
-        .status-badge { font-size: 12px; padding: 2px 6px; border-radius: 4px; margin-left: 10px; font-weight: bold; }
-        .online-badge { background: #e2f0d9; color: #385723; }
-        .offline-badge { background: #fff2cc; color: #7f6000; }
-    </style>
+    <link rel="stylesheet" href="css/style.css">
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 </head>
 <body>
 
     <h1>Brain タスク管理</h1>
-    
+
     <label for="token-input">GitHub パーソナルアクセストークン (PAT):</label>
     <input type="password" id="token-input" placeholder="github_pat_... を貼り付けてください">
-    
+
     <div class="btn-group">
         <button id="load-btn">GitHubから読み込む</button>
         <button id="save-btn">GitHubへ保存する</button>
     </div>
-    
+
     <h2>タスク一覧: <span id="network-status"></span></h2>
     <div id="content-box">トークンを入力して「読み込む」を押してください</div>
 
-    <script>
-        const OWNER = 'palmelo2nd';
-        const REPO = 'brain_data';
-        const PATH = 'todo.md';
-
-        // GitHub上のファイルの「現在のバージョン」を記憶する変数
-        let currentSha = null;
-
-        // トークンをブラウザに自動保存・復元する便利機能
-        window.addEventListener('DOMContentLoaded', () => {
-            const savedToken = localStorage.getItem('brain_pat_token');
-            if (savedToken) {
-                document.getElementById('token-input').value = savedToken;
-            }
-        });
-
-        // --- 1. 読み込み処理 ---
-        document.getElementById('load-btn').addEventListener('click', async () => {
-            const token = document.getElementById('token-input').value.trim();
-            const contentBox = document.getElementById('content-box');
-            const statusBadge = document.getElementById('network-status');
-
-            if (!token) return alert('トークンを入力してください');
-            
-            // トークンを入力したら次回のために自動保存
-            localStorage.setItem('brain_pat_token', token);
-            contentBox.textContent = '読み込み中...';
-
-            try {
-                const url = `https://api.github.com/repos/${OWNER}/${REPO}/contents/${PATH}`;
-                const response = await fetch(url, {
-                    headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/vnd.github.v3+json' }
-                });
-                
-                if (!response.ok) throw new Error(`取得失敗 (${response.status})`);
-                const data = await response.json();
-                
-                currentSha = data.sha;
-                // バージョン識別子(SHA)を次回オフライン用にスマホへ保存
-                localStorage.setItem('brain_cached_sha', currentSha);
-                
-                const decodedContent = decodeURIComponent(escape(atob(data.content)));
-                
-                // 【圏外対応】取得に成功した最新テキストをスマホ内蔵メモリにバックアップ
-                localStorage.setItem('brain_cached_tasks', decodedContent);
-
-                statusBadge.innerHTML = '<span class="status-badge online-badge">オンライン（最新）</span>';
-                contentBox.innerHTML = marked.parse(decodedContent);
-
-            } catch (error) {
-                console.error(error);
-                // 【圏外対応】通信エラー（404やネットワーク切断）の時はスマホ内のバックアップを探す
-                const cachedData = localStorage.getItem('brain_cached_tasks');
-                const cachedSha = localStorage.getItem('brain_cached_sha');
-                
-                if (cachedData) {
-                    currentSha = cachedSha; // 前回のSHAを復元（電波復帰時の保存に必要）
-                    statusBadge.innerHTML = '<span class="status-badge offline-badge">オフライン（端末内データ）</span>';
-                    contentBox.innerHTML = marked.parse(cachedData);
-                    alert('通信できませんでした。スマホ内に一時保存されている前回のデータを表示します。');
-                } else {
-                    contentBox.textContent = `エラー: ${error.message}（端末内にキャッシュもありません）`;
-                }
-            }
-        });
-
-        // --- 2. 保存（書き込み）処理 ---
-        document.getElementById('save-btn').addEventListener('click', async () => {
-            const token = document.getElementById('token-input').value.trim();
-            const contentBox = document.getElementById('content-box');
-            const statusBadge = document.getElementById('network-status');
-
-            if (!token) return alert('トークンを入力してください');
-            if (!currentSha) return alert('先にデータを読み込んでください（またはオフラインキャッシュを読み込んでください）');
-
-            contentBox.textContent = 'GitHubへ保存中...';
-
-            // 画面上の現在のチェックボックス状態から、新しいMarkdownを組み立てる
-            let newMarkdown = '# タスク一覧\n\n';
-            const items = contentBox.querySelectorAll('li');
-            items.forEach(li => {
-                const checkbox = li.querySelector('input[type="checkbox"]');
-                const text = li.textContent.trim();
-                
-                if (checkbox.checked) {
-                    newMarkdown += `- [x] ${text}\n`;
-                } else {
-                    newMarkdown += `- [ ] ${text}\n`;
-                }
-            });
-
-            // 先にスマホの内蔵メモリ側のバックアップを最新状態に更新しておく（超重要）
-            localStorage.setItem('brain_cached_tasks', newMarkdown);
-
-            try {
-                // 日本語（UTF-8）を正しくBase64エンコードするための処理
-                const encodedContent = btoa(unescape(encodeURIComponent(newMarkdown)));
-
-                // GitHub API（PUTリクエスト）の設定
-                const url = `https://api.github.com/repos/${OWNER}/${REPO}/contents/${PATH}`;
-                const response = await fetch(url, {
-                    method: 'PUT',
-                    headers: {
-                        'Authorization': `Bearer ${token}`,
-                        'Accept': 'application/vnd.github.v3+json',
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        message: "docs: HTMLアプリからタスクを更新",
-                        content: encodedContent,
-                        sha: currentSha
-                    })
-                });
-
-                if (!response.ok) throw new Error(`保存失敗 (${response.status})`);
-                const result = await response.json();
-                
-                // 新しいshaが発行されるので記憶し直し、スマホ側も更新
-                currentSha = result.content.sha;
-                localStorage.setItem('brain_cached_sha', currentSha);
-                
-                statusBadge.innerHTML = '<span class="status-badge online-badge">オンライン（同期完了）</span>';
-                alert('GitHubへの保存が成功しました！');
-                contentBox.innerHTML = marked.parse(newMarkdown);
-
-            } catch (error) {
-                console.error(error);
-                // 【圏外対応】もし送信に失敗しても、上のステップでスマホ内(localStorage)への保存は完了している
-                statusBadge.innerHTML = '<span class="status-badge offline-badge">未同期の変更あり</span>';
-                alert('現在通信ができません。変更はスマホ内に一時保存されました。電波の良い場所に移動してから、再度「GitHubへ保存する」を押して同期してください。');
-                contentBox.innerHTML = marked.parse(newMarkdown);
-            }
-        });
-    </script>
+    <script type="module" src="js/app.js"></script>
 </body>
 </html>
