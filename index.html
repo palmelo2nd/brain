@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Brain タスク管理（プライベート最小構成）</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; max-width: 600px; margin: 0 auto; }
+        pre { background: #f4f4f4; padding: 15px; border-radius: 5px; white-space: pre-wrap; }
+        button { padding: 10px 15px; font-size: 16px; cursor: pointer; }
+        input { padding: 10px; width: 100%; box-sizing: border-box; margin-bottom: 15px; font-size: 14px; }
+    </style>
+</head>
+<body>
+
+    <h1>Brain タスク管理（プライベート最小構成）</h1>
+    
+    <label for="token-input">GitHub パーソナルアクセストークン (PAT):</label>
+    <input type="password" id="token-input" placeholder="github_pat_... を貼り付けてください">
+    
+    <button id="load-btn">GitHubからデータを読み込む</button>
+    
+    <h2>取得したデータ:</h2>
+    <pre id="content">トークンを入力してボタンを押してください</pre>
+
+    <script>
+        const OWNER = 'palmelo2nd';
+        const REPO = 'brain';
+        const PATH = 'data/todo.md';
+
+        document.getElementById('load-btn').addEventListener('click', async () => {
+            const token = document.getElementById('token-input').value.trim();
+            const contentElem = document.getElementById('content');
+
+            if (!token) {
+                alert('トークンを入力してください');
+                return;
+            }
+
+            contentElem.textContent = 'プライベートリポジトリから読み込み中...';
+
+            try {
+                const url = `https://api.github.com/repos/${OWNER}/${REPO}/contents/${PATH}`;
+                
+                // fetchの第二引数に「Authorization（認証）」ヘッダーを追加します
+                const response = await fetch(url, {
+                    method: 'GET',
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Accept': 'application/vnd.github.v3+json'
+                    }
+                });
+                
+                if (!response.ok) {
+                    if (response.status === 404) {
+                        throw new Error('ファイルが見つからないか、トークンの権限が足りません（404）');
+                    }
+                    throw new Error(`データの取得に失敗しました (${response.status})`);
+                }
+                
+                const data = await response.json();
+                
+                // Base64デコード処理（日本語対応）
+                const decodedContent = decodeURIComponent(escape(atob(data.content)));
+                
+                contentElem.textContent = decodedContent;
+
+            } catch (error) {
+                contentElem.textContent = `エラー: ${error.message}`;
+            }
+        });
+    </script>
+</body>
+</html>
