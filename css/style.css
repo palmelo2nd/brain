@@ -1,50 +1,233 @@
+/* ===== リセット & ベース ===== */
+*, *::before, *::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
 body {
-    font-family: sans-serif;
-    padding: 20px;
-    max-width: 600px;
-    margin: 0 auto;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', sans-serif;
+    background: #f0f2f5;
     color: #333;
+    min-height: 100vh;
 }
 
-#content-box {
-    background: #fafafa;
-    padding: 20px;
-    border: 1px solid #ddd;
-    border-radius: 8px;
-    margin-top: 20px;
+/* ===== 2カラム・アプリシェル ===== */
+.app-shell {
+    display: grid;
+    grid-template-columns: 230px 1fr;
+    min-height: 100vh;
 }
 
-.btn-group {
-    margin-top: 15px;
+/* ===== サイドバー ===== */
+.sidebar {
+    background: #1e2a38;
+    color: #c9d1d9;
     display: flex;
-    gap: 10px;
+    flex-direction: column;
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    overflow-y: auto;
 }
 
-button {
-    padding: 10px 15px;
-    font-size: 16px;
+/* ---- サイドバーヘッダー（共通コントロール） ---- */
+.sidebar-header {
+    padding: 18px 14px 14px;
+    border-bottom: 1px solid #2d3f52;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.app-title {
+    font-size: 20px;
+    font-weight: 700;
+    color: #ffffff;
+    letter-spacing: 0.5px;
+}
+
+.sidebar-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: #8b949e;
+    margin-bottom: -4px;
+}
+
+.sidebar-header input[type="password"] {
+    width: 100%;
+    padding: 8px 10px;
+    font-size: 13px;
+    background: #0d1117;
+    border: 1px solid #2d3f52;
+    border-radius: 6px;
+    color: #c9d1d9;
+}
+
+.sidebar-header input[type="password"]::placeholder { color: #484f58; }
+.sidebar-header input[type="password"]:focus {
+    outline: none;
+    border-color: #007bff;
+}
+
+/* ---- ネットワークステータス ---- */
+#network-status {
+    display: block;
+    min-height: 20px;
+}
+
+/* ---- ボタングループ (サイドバー内) ---- */
+.btn-group {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.btn-group--excel {
+    padding-top: 8px;
+    border-top: 1px dashed #2d3f52;
+}
+
+.sidebar-header button {
+    flex: 1 1 0;
+    min-width: 0;
+    padding: 7px 8px;
+    font-size: 12px;
+    font-weight: 500;
     cursor: pointer;
     border: none;
-    border-radius: 4px;
+    border-radius: 5px;
+    white-space: nowrap;
+    transition: opacity 0.15s;
 }
 
-#load-btn { background: #007bff; color: white; }
-#save-btn { background: #28a745; color: white; }
+.sidebar-header button:hover { opacity: 0.85; }
 
-button:hover { opacity: 0.9; }
+#load-btn         { background: #007bff; color: #fff; }
+#save-btn         { background: #28a745; color: #fff; }
+#excel-export-btn { background: #e67e00; color: #fff; }
 
-input[type="password"] {
-    padding: 10px;
+/* ---- ファイル選択ラベル ---- */
+.file-label {
+    flex: 1 1 0;
+    min-width: 0;
+    padding: 7px 8px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    border-radius: 5px;
+    background: #6f42c1;
+    color: #fff;
+    text-align: center;
+    white-space: nowrap;
+    user-select: none;
+    transition: opacity 0.15s;
+}
+
+.file-label:hover { opacity: 0.85; }
+.file-label input[type="file"] { display: none; }
+
+/* ===== カテゴリフィルタ ===== */
+.category-filter {
+    padding: 0 10px 16px;
+    border-top: 1px solid #2d3f52;
+}
+
+.category-filter .sidebar-label {
+    display: block;
+    padding: 10px 4px 6px;
+}
+
+#category-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.category-radio-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 13px;
+    color: #c9d1d9;
+    transition: background 0.15s, color 0.15s;
+    user-select: none;
+}
+
+.category-radio-label:hover  { background: #2d3f52; color: #fff; }
+.category-radio-label.active { background: #1a5276; color: #fff; font-weight: 600; }
+
+.category-radio-label input[type="radio"] {
+    accent-color: #4da6ff;
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+    cursor: pointer;
+}
+
+/* ===== サイドナビ ===== */
+.sidebar-nav {
+    padding: 12px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.nav-btn {
     width: 100%;
-    box-sizing: border-box;
-    margin-bottom: 15px;
+    padding: 10px 14px;
     font-size: 14px;
-    border: 1px solid #ccc;
-    border-radius: 4px;
+    text-align: left;
+    background: transparent;
+    color: #c9d1d9;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
 }
 
-ul { list-style-type: none; padding-left: 20px; }
-li { margin: 8px 0; }
+.nav-btn:hover  { background: #2d3f52; color: #fff; }
+.nav-btn.active { background: #007bff; color: #fff; font-weight: 600; }
+
+/* ===== メインコンテンツエリア ===== */
+.main-content {
+    padding: 32px 36px;
+    overflow-y: auto;
+}
+
+/* ===== ページコンテナ（SPA 表示/非表示） ===== */
+.page         { display: none; }
+.page.active  { display: block; }
+
+.page h2 {
+    font-size: 22px;
+    font-weight: 700;
+    color: #1e2a38;
+    padding-bottom: 10px;
+    margin-bottom: 20px;
+    border-bottom: 2px solid #007bff;
+}
+
+.placeholder-text {
+    color: #8b949e;
+    font-size: 14px;
+}
+
+/* ===== コンテンツボックス（タスクページ） ===== */
+#content-box {
+    background: #fff;
+    padding: 20px 24px;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+}
+
+/* ===== タスクリスト ===== */
+ul  { list-style-type: none; padding-left: 20px; }
+li  { margin: 8px 0; }
 
 input[type="checkbox"] {
     width: auto;
@@ -53,18 +236,349 @@ input[type="checkbox"] {
     cursor: pointer;
 }
 
-h1 {
-    border-bottom: 2px solid #007bff;
-    padding-bottom: 5px;
-}
-
+/* ===== ステータスバッジ ===== */
 .status-badge {
-    font-size: 12px;
-    padding: 2px 6px;
-    border-radius: 4px;
-    margin-left: 10px;
+    display: inline-block;
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 10px;
     font-weight: bold;
 }
 
 .online-badge  { background: #e2f0d9; color: #385723; }
 .offline-badge { background: #fff2cc; color: #7f6000; }
+
+/* ===== トリアージフォーム ===== */
+.triage-form {
+    padding: 14px 18px 16px;
+    border-top: 1px solid #e1e4e8;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.triage-form-row {
+    display: grid;
+    grid-template-columns: 90px 1fr;
+    align-items: center;
+    gap: 10px;
+}
+
+.triage-form-row label {
+    font-size: 13px;
+    color: #555;
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+.required { color: #dc3545; font-size: 11px; }
+
+.triage-form-row input[type="text"],
+.triage-form-row select {
+    padding: 6px 10px;
+    font-size: 13px;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+    color: #333;
+    background: #fff;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.triage-form-row input[type="text"]:focus,
+.triage-form-row select:focus {
+    outline: none;
+    border-color: #007bff;
+    box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.12);
+}
+
+.triage-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 4px;
+    padding-top: 10px;
+    border-top: 1px dashed #e1e4e8;
+}
+
+.triage-info {
+    font-size: 12px;
+    color: #8b949e;
+}
+
+.triage-btn {
+    padding: 8px 24px;
+    font-size: 13px;
+    font-weight: 600;
+    background: #28a745;
+    color: #fff;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.triage-btn:hover { background: #1e7e34; }
+
+/* 選択行のハイライト */
+.selected-row td { background: #e8f4fd !important; }
+
+/* ===== エクスパンダー（details / summary） ===== */
+.expander {
+    border: 1px solid #e1e4e8;
+    border-radius: 8px;
+    background: #fff;
+    margin-bottom: 14px;
+    overflow: hidden;
+}
+
+.expander-title {
+    list-style: none;          /* Chrome の ▶ マーカーを消す */
+    padding: 13px 18px;
+    font-size: 14px;
+    font-weight: 600;
+    color: #24292f;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: #f6f8fa;
+    user-select: none;
+    gap: 8px;
+}
+
+/* WebKit 系のデフォルト矢印を消す */
+.expander-title::-webkit-details-marker { display: none; }
+
+.expander-title::after {
+    content: '▶';
+    font-size: 11px;
+    color: #8b949e;
+    flex-shrink: 0;
+    transition: transform 0.2s ease;
+}
+
+details[open] > .expander-title::after { transform: rotate(90deg); }
+
+.expander-title:hover { background: #eef0f3; }
+
+/* ===== データテーブル ===== */
+.table-wrapper {
+    overflow-x: auto;
+    padding: 0 0 2px;          /* スクロールバー分の余白 */
+}
+
+.data-table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 12.5px;
+}
+
+.data-table th {
+    position: sticky;
+    top: 0;
+    background: #f0f2f5;
+    padding: 8px 10px;
+    border: 1px solid #e1e4e8;
+    text-align: left;
+    white-space: nowrap;
+    font-weight: 600;
+    color: #1e2a38;
+}
+
+.data-table td {
+    padding: 6px 10px;
+    border: 1px solid #e1e4e8;
+    max-width: 180px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: #444;
+}
+
+.data-table tbody tr:nth-child(even) td { background: #f9fafb; }
+.data-table tbody tr:hover td           { background: #eef5ff; }
+
+.data-table .empty-cell {
+    text-align: center;
+    color: #8b949e;
+    font-style: italic;
+    padding: 20px;
+    max-width: none;
+    white-space: normal;
+}
+
+.expander-count {
+    font-size: 12px;
+    font-weight: 400;
+    color: #8b949e;
+    margin-left: 6px;
+}
+
+/* ===== INBOX フォーム ===== */
+.inbox-form {
+    padding: 14px 18px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.inbox-textarea {
+    width: 100%;
+    padding: 10px 12px;
+    font-size: 14px;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    resize: vertical;
+    font-family: inherit;
+    line-height: 1.6;
+    color: #333;
+    box-sizing: border-box;
+    background: #fff;
+}
+
+.inbox-textarea:focus {
+    outline: none;
+    border-color: #007bff;
+    box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.15);
+}
+
+.inbox-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.inbox-category-badge {
+    font-size: 12px;
+    color: #8b949e;
+    background: #f0f2f5;
+    border-radius: 4px;
+    padding: 3px 8px;
+}
+
+.inbox-btn {
+    padding: 8px 28px;
+    font-size: 14px;
+    font-weight: 600;
+    background: #007bff;
+    color: #fff;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.inbox-btn:hover { background: #0069d9; }
+
+/* ===== 警告バナー ===== */
+.warning-text {
+    background: #fff3cd;
+    color: #7f6000;
+    border: 1px solid #ffd700;
+    border-radius: 6px;
+    padding: 10px 14px;
+    font-size: 13px;
+    margin-bottom: 14px;
+}
+
+.warning-ok {
+    background: #e2f0d9;
+    color: #385723;
+    border: 1px solid #92d050;
+    border-radius: 6px;
+    padding: 10px 14px;
+    font-size: 13px;
+    margin-bottom: 14px;
+}
+
+/* ===== 編集テーブル ===== */
+.edit-table-toolbar {
+    padding: 10px 14px 6px;
+    display: flex;
+    justify-content: flex-end;
+}
+
+#apply-master-btn {
+    padding: 7px 18px;
+    font-size: 13px;
+    font-weight: 600;
+    background: #0d6efd;
+    color: #fff;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+}
+
+#apply-master-btn:hover { background: #0b5ed7; }
+
+.edit-table td { max-width: none; white-space: normal; }
+
+.col-ctrl {
+    width: 62px;
+    text-align: center;
+    white-space: nowrap;
+}
+
+.row-move-btn {
+    background: #e9ecef;
+    border: 1px solid #ced4da;
+    border-radius: 4px;
+    padding: 2px 5px;
+    font-size: 12px;
+    cursor: pointer;
+    margin: 0 1px;
+}
+
+.row-move-btn:hover:not(:disabled) { background: #dee2e6; }
+.row-move-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+.edit-input {
+    width: 100%;
+    min-width: 110px;
+    padding: 4px 6px;
+    font-size: 12.5px;
+    border: 1px solid #ced4da;
+    border-radius: 4px;
+    background: #fff;
+    color: #333;
+    box-sizing: border-box;
+}
+
+.edit-input:focus {
+    outline: none;
+    border-color: #007bff;
+    background: #f0f7ff;
+}
+
+/* ===== スマホ対応（640px以下） ===== */
+@media (max-width: 640px) {
+    .app-shell {
+        grid-template-columns: 1fr;
+        grid-template-rows: auto 1fr;
+    }
+
+    .sidebar {
+        position: static;
+        height: auto;
+    }
+
+    .sidebar-nav {
+        flex-direction: row;
+        flex-wrap: wrap;
+        padding: 8px 10px;
+        gap: 4px;
+    }
+
+    .nav-btn {
+        flex: 1 1 auto;
+        text-align: center;
+        padding: 8px 6px;
+        font-size: 12px;
+    }
+
+    .main-content {
+        padding: 16px;
+    }
+}

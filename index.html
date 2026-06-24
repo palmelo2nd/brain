@@ -3,25 +3,190 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Brain タスク管理（完全コントロール版）</title>
+    <title>Brain タスク管理</title>
     <link rel="stylesheet" href="css/style.css">
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 </head>
 <body>
 
-    <h1>Brain タスク管理</h1>
+<div class="app-shell">
 
-    <label for="token-input">GitHub パーソナルアクセストークン (PAT):</label>
-    <input type="password" id="token-input" placeholder="github_pat_... を貼り付けてください">
+    <!-- ========== サイドメニュー ========== -->
+    <aside class="sidebar">
 
-    <div class="btn-group">
-        <button id="load-btn">GitHubから読み込む</button>
-        <button id="save-btn">GitHubへ保存する</button>
-    </div>
+        <!-- 共通コントロール（全ページで使用） -->
+        <div class="sidebar-header">
+            <p class="app-title">Brain</p>
 
-    <h2>タスク一覧: <span id="network-status"></span></h2>
-    <div id="content-box">トークンを入力して「読み込む」を押してください</div>
+            <label class="sidebar-label" for="token-input">GitHub PAT</label>
+            <input type="password" id="token-input" placeholder="github_pat_...">
 
-    <script type="module" src="js/app.js"></script>
+            <span id="network-status"></span>
+
+            <div class="btn-group">
+                <button id="load-btn">読み込む</button>
+                <button id="save-btn">保存する</button>
+            </div>
+
+            <div class="btn-group btn-group--excel">
+                <button id="excel-export-btn">Excelエクスポート</button>
+                <label class="file-label" for="excel-import">
+                    Excelインポート
+                    <input type="file" id="excel-import" accept=".xlsx">
+                </label>
+            </div>
+        </div>
+
+        <!-- ページナビゲーション -->
+        <nav class="sidebar-nav">
+            <button class="nav-btn" data-page="dashboard">ダッシュボード</button>
+            <button class="nav-btn" data-page="inbox">情報整理</button>
+            <button class="nav-btn" data-page="task">タスク</button>
+            <button class="nav-btn" data-page="knowledge">ナレッジ</button>
+            <button class="nav-btn" data-page="master">マスタ管理</button>
+        </nav>
+
+        <!-- カテゴリフィルタ -->
+        <div class="category-filter">
+            <p class="sidebar-label">カテゴリ フィルタ</p>
+            <div id="category-list">
+                <!-- データ読み込み後に JS で描画 -->
+            </div>
+        </div>
+
+    </aside>
+
+    <!-- ========== メインコンテンツ ========== -->
+    <main class="main-content">
+
+        <div id="page-dashboard" class="page">
+            <h2>ダッシュボード</h2>
+            <div id="dashboard-warning"></div>
+
+            <!-- INBOX（デフォルト展開） -->
+            <details class="expander" open>
+                <summary class="expander-title">INBOX — 思いついたことをすぐ記録</summary>
+                <div class="inbox-form">
+                    <textarea id="inbox-content" class="inbox-textarea"
+                              placeholder="内容を入力してください..." rows="4"></textarea>
+                    <div class="inbox-toolbar">
+                        <span id="inbox-category-badge" class="inbox-category-badge"></span>
+                        <button id="inbox-submit-btn" class="inbox-btn">登録</button>
+                    </div>
+                </div>
+            </details>
+
+            <p class="placeholder-text">概要・サマリーがここに表示されます。</p>
+        </div>
+
+        <div id="page-inbox" class="page">
+            <h2>情報整理</h2>
+
+            <!-- INBOXトリアージ（デフォルト折り畳み） -->
+            <details class="expander">
+                <summary class="expander-title" id="summary-inbox-triage">
+                    INBOXトリアージ
+                </summary>
+
+                <!-- INBOX一覧 -->
+                <div class="table-wrapper">
+                    <table id="table-inbox-list"></table>
+                </div>
+
+                <!-- 振り分けフォーム -->
+                <div class="triage-form">
+                    <div class="triage-form-row">
+                        <label>データ区分 <span class="required">*</span></label>
+                        <select id="triage-kubun"></select>
+                    </div>
+                    <div class="triage-form-row">
+                        <label>タイトル</label>
+                        <input type="text" id="triage-title" placeholder="（省略可）">
+                    </div>
+                    <div class="triage-form-row">
+                        <label>備考</label>
+                        <input type="text" id="triage-biko" placeholder="（省略可）">
+                    </div>
+                    <div class="triage-form-row">
+                        <label>タグ</label>
+                        <select id="triage-tag"></select>
+                    </div>
+                    <div class="triage-form-row">
+                        <label>ハブ</label>
+                        <select id="triage-hub"></select>
+                    </div>
+                    <div class="triage-toolbar">
+                        <span id="triage-selection-info" class="triage-info"></span>
+                        <button id="triage-apply-btn" class="triage-btn">振り分け実行</button>
+                    </div>
+                </div>
+            </details>
+
+            <!-- 直近の更新データ（デフォルト折り畳み） -->
+            <details class="expander">
+                <summary class="expander-title" id="summary-recent">
+                    直近の更新データ
+                </summary>
+                <div class="table-wrapper">
+                    <table id="table-recent"></table>
+                </div>
+            </details>
+        </div>
+
+        <div id="page-task" class="page">
+            <h2>タスク</h2>
+            <div id="content-box">トークンを入力して「読み込む」を押してください</div>
+        </div>
+
+        <div id="page-knowledge" class="page">
+            <h2>ナレッジ</h2>
+            <p class="placeholder-text">ナレッジベースの内容がここに表示されます。</p>
+        </div>
+
+        <div id="page-master" class="page">
+            <h2>マスタ管理</h2>
+
+            <!-- 警告バナー（1行） -->
+            <div id="master-warning"></div>
+
+            <!-- 変数定義の編集（デフォルト折り畳み） -->
+            <details class="expander">
+                <summary class="expander-title" id="summary-edit">
+                    変数定義の編集
+                </summary>
+                <div class="edit-table-toolbar">
+                    <button id="apply-master-btn">変更を適用する</button>
+                </div>
+                <div class="table-wrapper">
+                    <table id="table-edit-master"></table>
+                </div>
+            </details>
+
+            <!-- データ閲覧（デフォルト折り畳み） -->
+            <details class="expander">
+                <summary class="expander-title" id="summary-main">
+                    メインデータ 一覧
+                </summary>
+                <div class="table-wrapper">
+                    <table id="table-main"></table>
+                </div>
+            </details>
+
+            <details class="expander">
+                <summary class="expander-title" id="summary-master">
+                    マスタデータ 一覧
+                </summary>
+                <div class="table-wrapper">
+                    <table id="table-master"></table>
+                </div>
+            </details>
+        </div>
+
+    </main>
+
+</div>
+
+<script type="module" src="js/app.js"></script>
 </body>
 </html>
