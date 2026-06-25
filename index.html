@@ -83,19 +83,92 @@
         <div id="page-inbox" class="page">
             <h2>情報整理</h2>
 
-            <!-- INBOXトリアージ（デフォルト折り畳み） -->
-            <details class="expander">
+            <!-- 直接データ入力（デフォルト展開） -->
+            <details class="expander" open>
+                <summary class="expander-title" id="summary-direct-entry">直接データ入力</summary>
+                <div class="triage-form">
+                    <div class="triage-form-row">
+                        <label>データ区分 <span class="required">*</span></label>
+                        <select id="direct-kubun"></select>
+                    </div>
+                    <div class="triage-form-row">
+                        <label>タイトル</label>
+                        <input type="text" id="direct-title" placeholder="（省略可）">
+                    </div>
+                    <div class="triage-form-row triage-form-row--top">
+                        <label>内容</label>
+                        <textarea id="direct-content" class="triage-textarea" rows="3" placeholder="（省略可）"></textarea>
+                    </div>
+                    <div class="triage-form-row">
+                        <label>備考</label>
+                        <input type="text" id="direct-biko" placeholder="（省略可）">
+                    </div>
+                    <div class="triage-form-row">
+                        <label>タグ</label>
+                        <select id="direct-tag"></select>
+                    </div>
+                    <div class="triage-form-row">
+                        <label>ハブ</label>
+                        <select id="direct-hub"></select>
+                    </div>
+                    <!-- ステータス（タスク／ナレッジ選択時） -->
+                    <div id="direct-status-row" class="triage-form-row" style="display:none">
+                        <label>ステータス</label>
+                        <select id="direct-status"></select>
+                    </div>
+                    <!-- 優先度（タスク選択時） -->
+                    <div id="direct-priority-row" class="triage-form-row" style="display:none">
+                        <label>優先度</label>
+                        <select id="direct-priority"></select>
+                    </div>
+                    <!-- 期限（タスク選択時） -->
+                    <div id="direct-deadline-row" class="triage-form-row" style="display:none">
+                        <label>期限</label>
+                        <input type="date" id="direct-deadline">
+                    </div>
+                    <!-- 見積時間（タスク選択時） -->
+                    <div id="direct-estimate-row" class="triage-form-row" style="display:none">
+                        <label>見積時間（h）</label>
+                        <input type="number" id="direct-estimate" min="0" step="0.5" placeholder="（省略可）">
+                    </div>
+                    <!-- Input（ナレッジ選択時） -->
+                    <div id="direct-input-row" class="triage-form-row" style="display:none">
+                        <label>Input</label>
+                        <select id="direct-input"></select>
+                    </div>
+                    <div class="triage-toolbar">
+                        <span class="triage-info" id="direct-category-badge"></span>
+                        <button id="direct-submit-btn" class="triage-btn">登録</button>
+                    </div>
+                </div>
+            </details>
+
+            <!-- データ一覧・振り分け（デフォルト展開） -->
+            <details class="expander" open>
                 <summary class="expander-title" id="summary-inbox-triage">
-                    INBOXトリアージ
+                    データ一覧・振り分け
                 </summary>
 
-                <!-- INBOX一覧 -->
+                <!-- データ区分 タブ -->
+                <div id="triage-kubun-tabs" class="triage-kubun-tabs"></div>
+
+                <!-- フィルタエリア -->
+                <div id="triage-filter-area" class="triage-filter-area"></div>
+
+                <!-- データ一覧 -->
                 <div class="table-wrapper">
                     <table id="table-inbox-list"></table>
                 </div>
 
                 <!-- 振り分けフォーム -->
                 <div class="triage-form">
+
+                    <!-- 内容（1件選択時に表示） -->
+                    <div id="triage-content-row" class="triage-form-row triage-form-row--top" style="display:none">
+                        <label>内容</label>
+                        <textarea id="triage-content" class="triage-textarea" rows="3" placeholder="（内容を編集）"></textarea>
+                    </div>
+
                     <div class="triage-form-row">
                         <label>データ区分 <span class="required">*</span></label>
                         <select id="triage-kubun"></select>
@@ -116,6 +189,37 @@
                         <label>ハブ</label>
                         <select id="triage-hub"></select>
                     </div>
+
+                    <!-- ステータス（タスク／ナレッジ選択時） -->
+                    <div id="triage-status-row" class="triage-form-row" style="display:none">
+                        <label>ステータス</label>
+                        <select id="triage-status"></select>
+                    </div>
+
+                    <!-- 優先度（タスク選択時） -->
+                    <div id="triage-priority-row" class="triage-form-row" style="display:none">
+                        <label>優先度</label>
+                        <select id="triage-priority"></select>
+                    </div>
+
+                    <!-- 期限（タスク選択時） -->
+                    <div id="triage-deadline-row" class="triage-form-row" style="display:none">
+                        <label>期限</label>
+                        <input type="date" id="triage-deadline">
+                    </div>
+
+                    <!-- 見積時間（タスク選択時） -->
+                    <div id="triage-estimate-row" class="triage-form-row" style="display:none">
+                        <label>見積時間（h）</label>
+                        <input type="number" id="triage-estimate" min="0" step="0.5" placeholder="（省略可）">
+                    </div>
+
+                    <!-- Input（ナレッジ選択時） -->
+                    <div id="triage-input-row" class="triage-form-row" style="display:none">
+                        <label>Input</label>
+                        <select id="triage-input"></select>
+                    </div>
+
                     <div class="triage-toolbar">
                         <span id="triage-selection-info" class="triage-info"></span>
                         <button id="triage-apply-btn" class="triage-btn">振り分け実行</button>
@@ -160,6 +264,48 @@
                 </div>
                 <div class="table-wrapper">
                     <table id="table-edit-master"></table>
+                </div>
+            </details>
+
+            <!-- マスタ値 編集（ラジオ切り替え） -->
+            <details class="expander">
+                <summary class="expander-title" id="summary-master-values">マスタ値の編集</summary>
+                <div class="master-value-switcher">
+                    <div class="master-radio-group">
+                        <label class="master-radio-label">
+                            <input type="radio" name="master-value-type" value="kubun">
+                            データ区分
+                        </label>
+                        <label class="master-radio-label">
+                            <input type="radio" name="master-value-type" value="category">
+                            カテゴリ
+                        </label>
+                        <label class="master-radio-label">
+                            <input type="radio" name="master-value-type" value="tag">
+                            タグ
+                        </label>
+                        <label class="master-radio-label">
+                            <input type="radio" name="master-value-type" value="hub">
+                            ハブ
+                        </label>
+                        <label class="master-radio-label">
+                            <input type="radio" name="master-value-type" value="status">
+                            ステータス
+                        </label>
+                        <label class="master-radio-label">
+                            <input type="radio" name="master-value-type" value="priority">
+                            優先度
+                        </label>
+                        <label class="master-radio-label">
+                            <input type="radio" name="master-value-type" value="input">
+                            Input
+                        </label>
+                        <label class="master-radio-label">
+                            <input type="radio" name="master-value-type" value="output">
+                            Output
+                        </label>
+                    </div>
+                    <div id="section-master-value-editor"></div>
                 </div>
             </details>
 

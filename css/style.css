@@ -552,6 +552,193 @@ details[open] > .expander-title::after { transform: rotate(90deg); }
     background: #f0f7ff;
 }
 
+/* ===== トリアージ データ区分タブ ===== */
+.triage-kubun-tabs {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    padding: 12px 14px 0;
+}
+
+.triage-tab-label {
+    display: inline-flex;
+    align-items: center;
+    padding: 6px 14px;
+    border: 1px solid #ccc;
+    border-radius: 20px;
+    cursor: pointer;
+    font-size: 13px;
+    color: #555;
+    background: #fff;
+    user-select: none;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.triage-tab-label:hover        { border-color: #007bff; color: #007bff; }
+.triage-tab-label.active       { background: #007bff; border-color: #007bff; color: #fff; font-weight: 600; }
+.triage-tab-label input[type="radio"] { display: none; }
+
+/* ===== トリアージ フィルタエリア ===== */
+.triage-filter-area {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 20px;
+    padding: 10px 14px 12px;
+    border-bottom: 1px solid #e1e4e8;
+    background: #f9fafb;
+}
+
+.triage-filter-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+}
+
+.triage-filter-label {
+    color: #555;
+    white-space: nowrap;
+    min-width: 52px;
+}
+
+.triage-filter-select {
+    padding: 4px 8px;
+    font-size: 12px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    background: #fff;
+    color: #333;
+    max-width: 140px;
+}
+
+.filter-date-range {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 12px;
+    color: #666;
+}
+
+.filter-date-input {
+    padding: 3px 6px;
+    font-size: 12px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    background: #fff;
+    color: #333;
+    width: 118px;
+}
+
+/* ===== トリアージ フォーム 追加要素 ===== */
+.triage-form-row--top { align-items: flex-start; }
+
+.triage-textarea {
+    width: 100%;
+    padding: 8px 10px;
+    font-size: 13px;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+    resize: vertical;
+    font-family: inherit;
+    line-height: 1.6;
+    color: #333;
+    box-sizing: border-box;
+}
+
+.triage-textarea:focus {
+    outline: none;
+    border-color: #007bff;
+    box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.12);
+}
+
+/* ===== マスタ値 ラジオ切り替え ===== */
+.master-value-switcher {
+    padding: 14px 18px 0;
+}
+
+.master-radio-group {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-bottom: 14px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid #e1e4e8;
+}
+
+.master-radio-label {
+    display: inline-flex;
+    align-items: center;
+    padding: 6px 16px;
+    border: 1px solid #ccc;
+    border-radius: 20px;
+    cursor: pointer;
+    font-size: 13px;
+    color: #555;
+    background: #fff;
+    user-select: none;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.master-radio-label:hover {
+    border-color: #007bff;
+    color: #007bff;
+}
+
+.master-radio-label:has(input:checked) {
+    background: #007bff;
+    border-color: #007bff;
+    color: #fff;
+    font-weight: 600;
+}
+
+.master-radio-label input[type="radio"] { display: none; }
+
+#section-master-value-editor { padding-bottom: 4px; }
+
+/* ===== マスタ値 エディタ ===== */
+.master-value-add-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    padding: 10px 14px;
+    border-top: 1px solid #e1e4e8;
+    background: #f9fafb;
+}
+
+.master-value-add-row .edit-input { flex: 1; }
+
+.master-add-btn {
+    padding: 6px 18px;
+    font-size: 13px;
+    font-weight: 600;
+    background: #28a745;
+    color: #fff;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.15s;
+}
+
+.master-add-btn:hover { background: #1e7e34; }
+
+.row-delete-btn {
+    padding: 3px 10px;
+    font-size: 12px;
+    background: #dc3545;
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.row-delete-btn:hover { background: #bd2130; }
+
+/* 親が未登録・不正な行をハイライト */
+.invalid-row td { background: #fff3cd !important; }
+.invalid-row input { border-color: #ffc107 !important; }
+
 /* ===== スマホ対応（640px以下） ===== */
 @media (max-width: 640px) {
     .app-shell {
