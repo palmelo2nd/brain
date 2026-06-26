@@ -77,7 +77,11 @@
                 </div>
             </details>
 
-            <p class="placeholder-text">概要・サマリーがここに表示されます。</p>
+            <!-- タスク実行（デフォルト展開） -->
+            <details class="expander" open>
+                <summary class="expander-title" id="summary-task-runner-dash">タスク実行</summary>
+                <div id="task-runner-dash"></div>
+            </details>
         </div>
 
         <div id="page-inbox" class="page">
@@ -135,6 +139,11 @@
                     <div id="direct-input-row" class="triage-form-row" style="display:none">
                         <label>Input</label>
                         <select id="direct-input"></select>
+                    </div>
+                    <!-- Output（ナレッジ選択時） -->
+                    <div id="direct-output-row" class="triage-form-row" style="display:none">
+                        <label>Output</label>
+                        <select id="direct-output"></select>
                     </div>
                     <div class="triage-toolbar">
                         <span class="triage-info" id="direct-category-badge"></span>
@@ -219,6 +228,11 @@
                         <label>Input</label>
                         <select id="triage-input"></select>
                     </div>
+                    <!-- Output（ナレッジ選択時） -->
+                    <div id="triage-output-row" class="triage-form-row" style="display:none">
+                        <label>Output</label>
+                        <select id="triage-output"></select>
+                    </div>
 
                     <div class="triage-toolbar">
                         <span id="triage-selection-info" class="triage-info"></span>
@@ -240,12 +254,235 @@
 
         <div id="page-task" class="page">
             <h2>タスク</h2>
-            <div id="content-box">トークンを入力して「読み込む」を押してください</div>
+
+            <!-- タスク実行（デフォルト展開） -->
+            <details class="expander" open>
+                <summary class="expander-title" id="summary-task-runner-task">タスク実行</summary>
+                <div id="task-runner-task"></div>
+            </details>
+
+            <!-- タスク直接入力（デフォルト展開） -->
+            <details class="expander" open>
+                <summary class="expander-title" id="summary-task-direct">タスク直接入力</summary>
+                <div class="triage-form">
+                    <div class="triage-form-row">
+                        <label>タイトル</label>
+                        <input type="text" id="task-new-title" placeholder="（省略可）">
+                    </div>
+                    <div class="triage-form-row triage-form-row--top">
+                        <label>内容</label>
+                        <textarea id="task-new-content" class="triage-textarea" rows="3" placeholder="（省略可）"></textarea>
+                    </div>
+                    <div class="triage-form-row">
+                        <label>備考</label>
+                        <input type="text" id="task-new-biko" placeholder="（省略可）">
+                    </div>
+                    <div class="triage-form-row">
+                        <label>ステータス</label>
+                        <select id="task-new-status"></select>
+                    </div>
+                    <div class="triage-form-row">
+                        <label>優先度</label>
+                        <select id="task-new-priority"></select>
+                    </div>
+                    <div class="triage-form-row">
+                        <label>期限</label>
+                        <input type="date" id="task-new-deadline">
+                    </div>
+                    <div class="triage-form-row">
+                        <label>見積時間（h）</label>
+                        <input type="number" id="task-new-estimate" min="0" step="0.5" placeholder="（省略可）">
+                    </div>
+                    <div class="triage-form-row">
+                        <label>カテゴリ</label>
+                        <select id="task-new-category"></select>
+                    </div>
+                    <div class="triage-form-row">
+                        <label>タグ</label>
+                        <select id="task-new-tag"></select>
+                    </div>
+                    <div class="triage-form-row">
+                        <label>ハブ</label>
+                        <select id="task-new-hub"></select>
+                    </div>
+                    <div class="triage-toolbar">
+                        <span class="triage-info" id="task-new-badge"></span>
+                        <button id="task-new-submit-btn" class="triage-btn">登録</button>
+                    </div>
+                </div>
+            </details>
+
+            <!-- タスク一覧・編集（デフォルト展開） -->
+            <details class="expander" open>
+                <summary class="expander-title" id="summary-task-list">タスク一覧・編集</summary>
+
+                <!-- フィルタエリア -->
+                <div id="task-filter-area" class="triage-filter-area"></div>
+
+                <!-- タスク一覧テーブル -->
+                <div class="table-wrapper">
+                    <table id="table-task-list"></table>
+                </div>
+
+                <!-- 編集フォーム -->
+                <div class="triage-form">
+                    <div class="triage-form-row">
+                        <label>タイトル</label>
+                        <input type="text" id="task-edit-title" placeholder="（省略可）">
+                    </div>
+                    <div class="triage-form-row triage-form-row--top">
+                        <label>内容</label>
+                        <textarea id="task-edit-content" class="triage-textarea" rows="3" placeholder="（省略可）"></textarea>
+                    </div>
+                    <div class="triage-form-row">
+                        <label>備考</label>
+                        <input type="text" id="task-edit-biko" placeholder="（省略可）">
+                    </div>
+                    <div class="triage-form-row">
+                        <label>ステータス</label>
+                        <select id="task-edit-status"></select>
+                    </div>
+                    <div class="triage-form-row">
+                        <label>優先度</label>
+                        <select id="task-edit-priority"></select>
+                    </div>
+                    <div class="triage-form-row">
+                        <label>期限</label>
+                        <input type="date" id="task-edit-deadline">
+                    </div>
+                    <div class="triage-form-row">
+                        <label>見積時間（h）</label>
+                        <input type="number" id="task-edit-estimate" min="0" step="0.5" placeholder="（省略可）">
+                    </div>
+                    <div class="triage-form-row">
+                        <label>カテゴリ</label>
+                        <select id="task-edit-category"></select>
+                    </div>
+                    <div class="triage-form-row">
+                        <label>タグ</label>
+                        <select id="task-edit-tag"></select>
+                    </div>
+                    <div class="triage-form-row">
+                        <label>ハブ</label>
+                        <select id="task-edit-hub"></select>
+                    </div>
+                    <div class="triage-toolbar">
+                        <span id="task-selection-info" class="triage-info"></span>
+                        <button id="task-apply-btn" class="triage-btn">変更を適用</button>
+                    </div>
+                </div>
+            </details>
+
+            <!-- load-btn / save-btn ハンドラが参照する要素（非表示） -->
+            <div id="content-box" style="display:none"></div>
         </div>
 
         <div id="page-knowledge" class="page">
             <h2>ナレッジ</h2>
-            <p class="placeholder-text">ナレッジベースの内容がここに表示されます。</p>
+
+            <!-- ナレッジ直接入力（デフォルト展開） -->
+            <details class="expander" open>
+                <summary class="expander-title" id="summary-knowledge-direct">ナレッジ直接入力</summary>
+                <div class="triage-form">
+                    <div class="triage-form-row">
+                        <label>タイトル</label>
+                        <input type="text" id="knowledge-new-title" placeholder="（省略可）">
+                    </div>
+                    <div class="triage-form-row triage-form-row--top">
+                        <label>内容</label>
+                        <textarea id="knowledge-new-content" class="triage-textarea" rows="3" placeholder="（省略可）"></textarea>
+                    </div>
+                    <div class="triage-form-row">
+                        <label>備考</label>
+                        <input type="text" id="knowledge-new-biko" placeholder="（省略可）">
+                    </div>
+                    <div class="triage-form-row">
+                        <label>ステータス</label>
+                        <select id="knowledge-new-status"></select>
+                    </div>
+                    <div class="triage-form-row">
+                        <label>Input</label>
+                        <select id="knowledge-new-input"></select>
+                    </div>
+                    <div class="triage-form-row">
+                        <label>Output</label>
+                        <select id="knowledge-new-output"></select>
+                    </div>
+                    <div class="triage-form-row">
+                        <label>カテゴリ</label>
+                        <select id="knowledge-new-category"></select>
+                    </div>
+                    <div class="triage-form-row">
+                        <label>タグ</label>
+                        <select id="knowledge-new-tag"></select>
+                    </div>
+                    <div class="triage-form-row">
+                        <label>ハブ</label>
+                        <select id="knowledge-new-hub"></select>
+                    </div>
+                    <div class="triage-toolbar">
+                        <span class="triage-info" id="knowledge-new-badge"></span>
+                        <button id="knowledge-new-submit-btn" class="triage-btn">登録</button>
+                    </div>
+                </div>
+            </details>
+
+            <!-- ナレッジ一覧・編集（デフォルト展開） -->
+            <details class="expander" open>
+                <summary class="expander-title" id="summary-knowledge-list">ナレッジ一覧・編集</summary>
+
+                <!-- フィルタエリア -->
+                <div id="knowledge-filter-area" class="triage-filter-area"></div>
+
+                <!-- ナレッジ一覧テーブル -->
+                <div class="table-wrapper">
+                    <table id="table-knowledge-list"></table>
+                </div>
+
+                <!-- 編集フォーム -->
+                <div class="triage-form">
+                    <div class="triage-form-row">
+                        <label>タイトル</label>
+                        <input type="text" id="knowledge-edit-title" placeholder="（省略可）">
+                    </div>
+                    <div class="triage-form-row triage-form-row--top">
+                        <label>内容</label>
+                        <textarea id="knowledge-edit-content" class="triage-textarea" rows="3" placeholder="（省略可）"></textarea>
+                    </div>
+                    <div class="triage-form-row">
+                        <label>備考</label>
+                        <input type="text" id="knowledge-edit-biko" placeholder="（省略可）">
+                    </div>
+                    <div class="triage-form-row">
+                        <label>ステータス</label>
+                        <select id="knowledge-edit-status"></select>
+                    </div>
+                    <div class="triage-form-row">
+                        <label>Input</label>
+                        <select id="knowledge-edit-input"></select>
+                    </div>
+                    <div class="triage-form-row">
+                        <label>Output</label>
+                        <select id="knowledge-edit-output"></select>
+                    </div>
+                    <div class="triage-form-row">
+                        <label>カテゴリ</label>
+                        <select id="knowledge-edit-category"></select>
+                    </div>
+                    <div class="triage-form-row">
+                        <label>タグ</label>
+                        <select id="knowledge-edit-tag"></select>
+                    </div>
+                    <div class="triage-form-row">
+                        <label>ハブ</label>
+                        <select id="knowledge-edit-hub"></select>
+                    </div>
+                    <div class="triage-toolbar">
+                        <span id="knowledge-selection-info" class="triage-info"></span>
+                        <button id="knowledge-apply-btn" class="triage-btn">変更を適用</button>
+                    </div>
+                </div>
+            </details>
         </div>
 
         <div id="page-master" class="page">
@@ -303,6 +540,10 @@
                         <label class="master-radio-label">
                             <input type="radio" name="master-value-type" value="output">
                             Output
+                        </label>
+                        <label class="master-radio-label">
+                            <input type="radio" name="master-value-type" value="frequency">
+                            繰返し頻度
                         </label>
                     </div>
                     <div id="section-master-value-editor"></div>

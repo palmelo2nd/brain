@@ -1,4 +1,4 @@
-import { loadToken, saveToken, loadCache, saveCache } from './modules/storage.js';
+﻿import { loadToken, saveToken, loadCache, saveCache } from './modules/storage.js';
 import { fetchFile, saveFile } from './modules/github.js';
 import { parseMarkdown, stringifyMarkdown, MAIN_DATA_COLUMNS, MASTER_DATA_COLUMNS } from './modules/dataModel.js';
 import { exportToExcel, importFromExcel } from './modules/excel.js';
@@ -18,6 +18,13 @@ let categoryInitialized = false;         // 初回ロード時にデフォルト
 let currentMasterValueType = 'kubun';   // マスタ値エディタの選択タイプ
 let currentTriageKubun = 'INBOX';       // トリアージ一覧の表示対象データ区分
 let triageFilters      = {};            // トリアージフィルタ値
+let selectedTaskIds      = new Set();   // タスクページで選択中の行ID
+let taskFilters          = {};          // タスクページのフィルタ値
+let selectedKnowledgeIds = new Set();  // ナレッジページで選択中の行ID
+let knowledgeFilters     = {};         // ナレッジページのフィルタ値
+let selectedRunTaskId    = null;       // タスク実行で選択中のタスクID
+let timerIsRunning       = false;      // タイマー動作中フラグ
+let timerInterval        = null;       // setInterval ハンドル
 
 // ===== 初期化 =====
 window.addEventListener('DOMContentLoaded', () => {
@@ -72,13 +79,13 @@ function renderPage(pageId) {
 // --- ページレンダラー ---
 function renderDashboard() {
     renderWarnings(computeMasterWarnings());
-    // カテゴリバッジを現在の選択値に同期
     const badge = document.getElementById('inbox-category-badge');
     if (badge) {
         badge.textContent = currentCategory === 'すべて'
             ? 'カテゴリ: 未設定（「すべて」選択中）'
             : `カテゴリ: ${currentCategory}`;
     }
+    renderTaskRunner();
 }
 function renderInbox() {
     renderDirectEntryForm();
@@ -88,8 +95,21 @@ function renderInbox() {
     updateTriageForm();
     renderRecentItems();
 }
-function renderTaskList()  { console.log('[render] task', { mainData: currentMainData }); }
-function renderKnowledge() { console.log('[render] knowledge'); }
+function renderTaskList() {
+    renderTaskRunner();
+    renderTaskDirectForm();
+    renderTaskFilters();
+    renderTaskTable();
+    updateTaskEditForm();
+    updateTaskSelectionInfo();
+}
+function renderKnowledge() {
+    renderKnowledgeDirectForm();
+    renderKnowledgeFilters();
+    renderKnowledgeTable();
+    updateKnowledgeEditForm();
+    updateKnowledgeSelectionInfo();
+}
 function renderMaster() {
     renderWarnings(computeMasterWarnings());
     renderMasterEditTable();
@@ -457,6 +477,7 @@ function updateTriageConditionalFields(kubun) {
     show('triage-deadline-row', isTask);
     show('triage-estimate-row', isTask);
     show('triage-input-row',    isKnowledge);
+    show('triage-output-row',   isKnowledge);
 
     function buildSelect(id, options) {
         const el = document.getElementById(id);
@@ -484,8 +505,8 @@ function updateTriageConditionalFields(kubun) {
         buildSelect('triage-priority', priorities);
     }
     if (isKnowledge) {
-        const inputs = [...new Set(currentMasterData.map(r => r['(M)Input']).filter(Boolean))];
-        buildSelect('triage-input', inputs);
+        buildSelect('triage-input',  [...new Set(currentMasterData.map(r => r['(M)Input']).filter(Boolean))]);
+        buildSelect('triage-output', [...new Set(currentMasterData.map(r => r['(M)Output']).filter(Boolean))]);
     }
 }
 
@@ -599,6 +620,643 @@ function renderRecentItems() {
     table.replaceChildren(thead, tbody);
 }
 
+// ===== タスクページ =====
+
+const TASK_DISPLAY_COLS = ['タイトル', 'ステータス', '優先度', '期限', '見積時間', 'カテゴリ', 'タグ', 'ハブ'];
+
+function getFilteredTasks() {
+    let rows = getFilteredMainData().filter(r => r['データ区分'] === 'タスク');
+    if (taskFilters.status)       rows = rows.filter(r => r['ステータス'] === taskFilters.status);
+    if (taskFilters.priority)     rows = rows.filter(r => r['優先度']     === taskFilters.priority);
+    if (taskFilters.tag)          rows = rows.filter(r => r['タグ']       === taskFilters.tag);
+    if (taskFilters.hub)          rows = rows.filter(r => r['ハブ']       === taskFilters.hub);
+    if (taskFilters.deadlineFrom) rows = rows.filter(r => jpDateOnly(r['期限']) >= isoToJP(taskFilters.deadlineFrom));
+    if (taskFilters.deadlineTo)   rows = rows.filter(r => jpDateOnly(r['期限']) <= isoToJP(taskFilters.deadlineTo));
+    return rows;
+}
+
+function renderTaskFilters() {
+    const area = document.getElementById('task-filter-area');
+    if (!area) return;
+    area.innerHTML = '';
+
+    function makeSelect(options, placeholder) {
+        const sel = document.createElement('select');
+        const all = document.createElement('option');
+        all.value = ''; all.textContent = placeholder;
+        sel.appendChild(all);
+        options.forEach(v => {
+            const o = document.createElement('option');
+            o.value = o.textContent = v;
+            sel.appendChild(o);
+        });
+        return sel;
+    }
+    function makeRow(labelText, ctrl, key) {
+        const row = document.createElement('div');
+        row.className = 'triage-filter-row';
+        const lbl = document.createElement('span');
+        lbl.className = 'triage-filter-label';
+        lbl.textContent = labelText;
+        row.append(lbl, ctrl);
+        area.appendChild(row);
+        ctrl.value = taskFilters[key] || '';
+        ctrl.addEventListener('change', () => { taskFilters[key] = ctrl.value; renderTaskTable(); });
+    }
+
+    const statuses = [...new Set(
+        currentMasterData.filter(r => r['(M)ステータス_親'] === 'タスク')
+            .map(r => r['(M)ステータス_子']).filter(Boolean)
+    )];
+    const priorities = [...new Set(currentMasterData.map(r => r['(M)優先度']).filter(Boolean))];
+
+    makeRow('ステータス', makeSelect(statuses,        'すべて'), 'status');
+    makeRow('優先度',     makeSelect(priorities,       'すべて'), 'priority');
+    makeRow('タグ',       makeSelect(getFilteredTags(), 'すべて'), 'tag');
+    makeRow('ハブ',       makeSelect(getFilteredHubs(), 'すべて'), 'hub');
+
+    // 期限 from/to
+    const dateRow  = document.createElement('div');
+    dateRow.className = 'triage-filter-row';
+    const dateLbl  = document.createElement('span');
+    dateLbl.className = 'triage-filter-label';
+    dateLbl.textContent = '期限';
+    const dateRange = document.createElement('div');
+    dateRange.className = 'filter-date-range';
+    const fromInp = document.createElement('input'); fromInp.type = 'date'; fromInp.className = 'filter-date-input';
+    const sep     = document.createElement('span');  sep.textContent = '〜';
+    const toInp   = document.createElement('input'); toInp.type = 'date'; toInp.className = 'filter-date-input';
+    fromInp.value = taskFilters.deadlineFrom || '';
+    toInp.value   = taskFilters.deadlineTo   || '';
+    fromInp.addEventListener('change', () => { taskFilters.deadlineFrom = fromInp.value; renderTaskTable(); });
+    toInp.addEventListener('change',   () => { taskFilters.deadlineTo   = toInp.value;   renderTaskTable(); });
+    dateRange.append(fromInp, sep, toInp);
+    dateRow.append(dateLbl, dateRange);
+    area.appendChild(dateRow);
+}
+
+function renderTaskTable() {
+    const tasks = getFilteredTasks();
+
+    const summaryEl = document.getElementById('summary-task-list');
+    if (summaryEl) {
+        summaryEl.innerHTML =
+            `タスク一覧・編集<span class="expander-count">${tasks.length} 件</span>`;
+    }
+
+    const table = document.getElementById('table-task-list');
+    if (!table) return;
+    table.className = 'data-table';
+
+    const thead = document.createElement('thead');
+    const hRow  = document.createElement('tr');
+    const thCb  = document.createElement('th'); thCb.textContent = '';
+    hRow.appendChild(thCb);
+    TASK_DISPLAY_COLS.forEach(col => {
+        const th = document.createElement('th');
+        th.textContent = col;
+        hRow.appendChild(th);
+    });
+    thead.appendChild(hRow);
+
+    const tbody = document.createElement('tbody');
+    if (tasks.length === 0) {
+        const tr = document.createElement('tr');
+        const td = document.createElement('td');
+        td.colSpan = TASK_DISPLAY_COLS.length + 1;
+        td.className = 'empty-cell';
+        td.textContent = 'タスクがありません';
+        tr.appendChild(td);
+        tbody.appendChild(tr);
+    } else {
+        tasks.forEach(row => {
+            const tr = document.createElement('tr');
+            const id = String(row['ID']);
+            if (selectedTaskIds.has(id)) tr.classList.add('selected-row');
+
+            const tdCb = document.createElement('td');
+            const cb   = document.createElement('input');
+            cb.type = 'checkbox';
+            cb.checked = selectedTaskIds.has(id);
+            cb.addEventListener('change', () => {
+                if (cb.checked) selectedTaskIds.add(id);
+                else            selectedTaskIds.delete(id);
+                tr.classList.toggle('selected-row', cb.checked);
+                updateTaskSelectionInfo();
+                if (selectedTaskIds.size === 1) prefillTaskForm();
+                else if (selectedTaskIds.size === 0) clearTaskForm();
+            });
+            tdCb.appendChild(cb);
+            tr.appendChild(tdCb);
+
+            TASK_DISPLAY_COLS.forEach(col => {
+                const td  = document.createElement('td');
+                let   val = row[col] ?? '';
+                if (col === 'タイトル' && val.length > 30) val = val.slice(0, 30) + '…';
+                td.textContent = val;
+                tr.appendChild(td);
+            });
+
+            tbody.appendChild(tr);
+        });
+    }
+
+    table.replaceChildren(thead, tbody);
+    updateTaskSelectionInfo();
+}
+
+function updateTaskSelectionInfo() {
+    const el = document.getElementById('task-selection-info');
+    if (!el) return;
+    el.textContent = selectedTaskIds.size === 0
+        ? '行を選択してください'
+        : `${selectedTaskIds.size} 件選択中`;
+}
+
+function updateTaskEditForm() {
+    function buildSelect(id, options) {
+        const el = document.getElementById(id);
+        if (!el) return;
+        const prev = el.value;
+        el.innerHTML = '<option value="">（未設定）</option>';
+        options.forEach(v => {
+            const o = document.createElement('option');
+            o.value = o.textContent = v;
+            el.appendChild(o);
+        });
+        el.value = prev;
+    }
+    const statuses = [...new Set(
+        currentMasterData.filter(r => r['(M)ステータス_親'] === 'タスク')
+            .map(r => r['(M)ステータス_子']).filter(Boolean)
+    )];
+    buildSelect('task-edit-status',   statuses);
+    buildSelect('task-edit-priority', [...new Set(currentMasterData.map(r => r['(M)優先度']).filter(Boolean))]);
+    buildSelect('task-edit-category', [...new Set(currentMasterData.map(r => r['(M)カテゴリ']).filter(Boolean))]);
+    buildSelect('task-edit-tag',      getFilteredTags());
+    buildSelect('task-edit-hub',      getFilteredHubs());
+}
+
+function prefillTaskForm() {
+    if (selectedTaskIds.size !== 1) return;
+    const id  = [...selectedTaskIds][0];
+    const row = currentMainData.find(r => String(r['ID']) === id);
+    if (!row) return;
+    function set(elId, val) {
+        const el = document.getElementById(elId);
+        if (el) el.value = val ?? '';
+    }
+    updateTaskEditForm();
+    set('task-edit-title',    row['タイトル']);
+    set('task-edit-content',  row['内容']);
+    set('task-edit-biko',     row['備考']);
+    set('task-edit-status',   row['ステータス']);
+    set('task-edit-priority', row['優先度']);
+    set('task-edit-deadline', (row['期限'] || '').replace(/\//g, '-').slice(0, 10));
+    set('task-edit-estimate', row['見積時間']);
+    set('task-edit-category', row['カテゴリ']);
+    set('task-edit-tag',      row['タグ']);
+    set('task-edit-hub',      row['ハブ']);
+}
+
+function clearTaskForm() {
+    ['task-edit-title','task-edit-content','task-edit-biko','task-edit-status',
+     'task-edit-priority','task-edit-deadline','task-edit-estimate',
+     'task-edit-category','task-edit-tag','task-edit-hub'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.value = '';
+    });
+}
+
+document.getElementById('task-apply-btn')?.addEventListener('click', () => {
+    if (selectedTaskIds.size === 0) { alert('編集するタスクを選択してください'); return; }
+
+    const title    = document.getElementById('task-edit-title').value.trim();
+    const content  = document.getElementById('task-edit-content').value.trim();
+    const biko     = document.getElementById('task-edit-biko').value.trim();
+    const status   = document.getElementById('task-edit-status').value;
+    const priority = document.getElementById('task-edit-priority').value;
+    const deadline = document.getElementById('task-edit-deadline').value;
+    const estimate = document.getElementById('task-edit-estimate').value;
+    const category = document.getElementById('task-edit-category').value;
+    const tag      = document.getElementById('task-edit-tag').value;
+    const hub      = document.getElementById('task-edit-hub').value;
+
+    const now = new Date();
+    const pad = n => String(n).padStart(2, '0');
+    const ts  = `${now.getFullYear()}/${pad(now.getMonth() + 1)}/${pad(now.getDate())} `
+              + `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+
+    selectedTaskIds.forEach(id => {
+        const row = currentMainData.find(r => String(r['ID']) === id);
+        if (!row) return;
+        row['更新日時'] = ts;
+        if (title)    row['タイトル']   = title;
+        if (content)  row['内容']       = content;
+        if (biko)     row['備考']       = biko;
+        if (status)   row['ステータス'] = status;
+        if (priority) row['優先度']     = priority;
+        if (deadline) row['期限']       = deadline.replace(/-/g, '/');
+        if (estimate) row['見積時間']   = estimate;
+        if (category) row['カテゴリ']   = category;
+        if (tag)      row['タグ']       = tag;
+        if (hub)      row['ハブ']       = hub;
+    });
+
+    selectedTaskIds.clear();
+    saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
+    renderTaskList();
+});
+
+/** タスク直接入力フォームのドロップダウンを再構築する */
+function renderTaskDirectForm() {
+    function rebuildSelect(id, options, placeholder) {
+        const el = document.getElementById(id);
+        if (!el) return;
+        const prev = el.value;
+        el.innerHTML = `<option value="">${placeholder}</option>`;
+        options.forEach(v => {
+            const o = document.createElement('option');
+            o.value = o.textContent = v;
+            el.appendChild(o);
+        });
+        el.value = prev;
+    }
+    const statuses = [...new Set(
+        currentMasterData.filter(r => r['(M)ステータス_親'] === 'タスク')
+            .map(r => r['(M)ステータス_子']).filter(Boolean)
+    )];
+    rebuildSelect('task-new-status',   statuses, '（未設定）');
+    rebuildSelect('task-new-priority', [...new Set(currentMasterData.map(r => r['(M)優先度']).filter(Boolean))], '（未設定）');
+    rebuildSelect('task-new-category', [...new Set(currentMasterData.map(r => r['(M)カテゴリ']).filter(Boolean))], '（未設定）');
+    rebuildSelect('task-new-tag',      getFilteredTags(), '（未設定）');
+    rebuildSelect('task-new-hub',      getFilteredHubs(), '（未設定）');
+    const badge = document.getElementById('task-new-badge');
+    if (badge && !badge.textContent.startsWith('✓')) {
+        badge.textContent = currentCategory === 'すべて' ? 'カテゴリ: 未設定' : `カテゴリ: ${currentCategory}`;
+    }
+}
+
+document.getElementById('task-new-submit-btn')?.addEventListener('click', () => {
+    const title    = document.getElementById('task-new-title').value.trim();
+    const content  = document.getElementById('task-new-content').value.trim();
+    const biko     = document.getElementById('task-new-biko').value.trim();
+    const status   = document.getElementById('task-new-status').value;
+    const priority = document.getElementById('task-new-priority').value;
+    const deadline = document.getElementById('task-new-deadline').value;
+    const estimate = document.getElementById('task-new-estimate').value;
+    const category = document.getElementById('task-new-category').value;
+    const tag      = document.getElementById('task-new-tag').value;
+    const hub      = document.getElementById('task-new-hub').value;
+
+    const maxId = currentMainData.reduce((max, row) => {
+        const id = parseInt(row['ID'], 10);
+        return isNaN(id) ? max : Math.max(max, id);
+    }, 0);
+    const now = new Date();
+    const pad = n => String(n).padStart(2, '0');
+    const ts  = `${now.getFullYear()}/${pad(now.getMonth() + 1)}/${pad(now.getDate())} `
+              + `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+
+    const entry = Object.fromEntries(MAIN_DATA_COLUMNS.map(col => [col, '']));
+    entry['ID']        = String(maxId + 1);
+    entry['データ区分'] = 'タスク';
+    entry['カテゴリ']   = category || (currentCategory === 'すべて' ? '' : currentCategory);
+    entry['タイトル']   = title;
+    entry['内容']       = content;
+    entry['備考']       = biko;
+    entry['ステータス'] = status;
+    entry['優先度']     = priority;
+    entry['期限']       = deadline ? deadline.replace(/-/g, '/') : '';
+    entry['見積時間']   = estimate;
+    entry['タグ']       = tag;
+    entry['ハブ']       = hub;
+    entry['作成日時']   = ts;
+    entry['更新日時']   = ts;
+
+    currentMainData.push(entry);
+    saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
+
+    ['task-new-title','task-new-content','task-new-biko','task-new-status',
+     'task-new-priority','task-new-deadline','task-new-estimate',
+     'task-new-category','task-new-tag','task-new-hub'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.value = '';
+    });
+
+    const badge = document.getElementById('task-new-badge');
+    if (badge) {
+        badge.textContent = `✓ 登録しました（ID: ${entry['ID']}）`;
+        setTimeout(() => renderTaskDirectForm(), 2000);
+    }
+    renderTaskTable();
+});
+
+// ===== ナレッジページ =====
+
+const KNOWLEDGE_DISPLAY_COLS = ['タイトル', 'ステータス', 'Input', 'カテゴリ', 'タグ', 'ハブ', '更新日時'];
+
+function getFilteredKnowledge() {
+    let rows = getFilteredMainData().filter(r => r['データ区分'] === 'ナレッジ');
+    if (knowledgeFilters.status) rows = rows.filter(r => r['ステータス'] === knowledgeFilters.status);
+    if (knowledgeFilters.input)  rows = rows.filter(r => r['Input']      === knowledgeFilters.input);
+    if (knowledgeFilters.tag)    rows = rows.filter(r => r['タグ']       === knowledgeFilters.tag);
+    if (knowledgeFilters.hub)    rows = rows.filter(r => r['ハブ']       === knowledgeFilters.hub);
+    return rows;
+}
+
+function renderKnowledgeDirectForm() {
+    function rebuildSelect(id, options, placeholder) {
+        const el = document.getElementById(id);
+        if (!el) return;
+        const prev = el.value;
+        el.innerHTML = `<option value="">${placeholder}</option>`;
+        options.forEach(v => {
+            const o = document.createElement('option');
+            o.value = o.textContent = v;
+            el.appendChild(o);
+        });
+        el.value = prev;
+    }
+    const statuses = [...new Set(
+        currentMasterData.filter(r => r['(M)ステータス_親'] === 'ナレッジ')
+            .map(r => r['(M)ステータス_子']).filter(Boolean)
+    )];
+    rebuildSelect('knowledge-new-status',   statuses, '（未設定）');
+    rebuildSelect('knowledge-new-input',    [...new Set(currentMasterData.map(r => r['(M)Input']).filter(Boolean))],  '（未設定）');
+    rebuildSelect('knowledge-new-output',   [...new Set(currentMasterData.map(r => r['(M)Output']).filter(Boolean))], '（未設定）');
+    rebuildSelect('knowledge-new-category', [...new Set(currentMasterData.map(r => r['(M)カテゴリ']).filter(Boolean))], '（未設定）');
+    rebuildSelect('knowledge-new-tag',      getFilteredTags(), '（未設定）');
+    rebuildSelect('knowledge-new-hub',      getFilteredHubs(), '（未設定）');
+    const badge = document.getElementById('knowledge-new-badge');
+    if (badge && !badge.textContent.startsWith('✓')) {
+        badge.textContent = currentCategory === 'すべて' ? 'カテゴリ: 未設定' : `カテゴリ: ${currentCategory}`;
+    }
+}
+
+function renderKnowledgeFilters() {
+    const area = document.getElementById('knowledge-filter-area');
+    if (!area) return;
+    area.innerHTML = '';
+
+    function makeSelect(options, placeholder) {
+        const sel = document.createElement('select');
+        const all = document.createElement('option');
+        all.value = ''; all.textContent = placeholder;
+        sel.appendChild(all);
+        options.forEach(v => {
+            const o = document.createElement('option');
+            o.value = o.textContent = v;
+            sel.appendChild(o);
+        });
+        return sel;
+    }
+    function makeRow(labelText, ctrl, key) {
+        const row = document.createElement('div');
+        row.className = 'triage-filter-row';
+        const lbl = document.createElement('span');
+        lbl.className = 'triage-filter-label';
+        lbl.textContent = labelText;
+        row.append(lbl, ctrl);
+        area.appendChild(row);
+        ctrl.value = knowledgeFilters[key] || '';
+        ctrl.addEventListener('change', () => { knowledgeFilters[key] = ctrl.value; renderKnowledgeTable(); });
+    }
+
+    const statuses = [...new Set(
+        currentMasterData.filter(r => r['(M)ステータス_親'] === 'ナレッジ')
+            .map(r => r['(M)ステータス_子']).filter(Boolean)
+    )];
+    const inputs = [...new Set(currentMasterData.map(r => r['(M)Input']).filter(Boolean))];
+
+    makeRow('ステータス', makeSelect(statuses,        'すべて'), 'status');
+    makeRow('Input',      makeSelect(inputs,           'すべて'), 'input');
+    makeRow('タグ',       makeSelect(getFilteredTags(), 'すべて'), 'tag');
+    makeRow('ハブ',       makeSelect(getFilteredHubs(), 'すべて'), 'hub');
+}
+
+function renderKnowledgeTable() {
+    const items = getFilteredKnowledge();
+
+    const summaryEl = document.getElementById('summary-knowledge-list');
+    if (summaryEl) {
+        summaryEl.innerHTML =
+            `ナレッジ一覧・編集<span class="expander-count">${items.length} 件</span>`;
+    }
+
+    const table = document.getElementById('table-knowledge-list');
+    if (!table) return;
+    table.className = 'data-table';
+
+    const thead = document.createElement('thead');
+    const hRow  = document.createElement('tr');
+    const thCb  = document.createElement('th'); thCb.textContent = '';
+    hRow.appendChild(thCb);
+    KNOWLEDGE_DISPLAY_COLS.forEach(col => {
+        const th = document.createElement('th');
+        th.textContent = col;
+        hRow.appendChild(th);
+    });
+    thead.appendChild(hRow);
+
+    const tbody = document.createElement('tbody');
+    if (items.length === 0) {
+        const tr = document.createElement('tr');
+        const td = document.createElement('td');
+        td.colSpan = KNOWLEDGE_DISPLAY_COLS.length + 1;
+        td.className = 'empty-cell';
+        td.textContent = 'ナレッジがありません';
+        tr.appendChild(td);
+        tbody.appendChild(tr);
+    } else {
+        items.forEach(row => {
+            const tr = document.createElement('tr');
+            const id = String(row['ID']);
+            if (selectedKnowledgeIds.has(id)) tr.classList.add('selected-row');
+
+            const tdCb = document.createElement('td');
+            const cb   = document.createElement('input');
+            cb.type = 'checkbox';
+            cb.checked = selectedKnowledgeIds.has(id);
+            cb.addEventListener('change', () => {
+                if (cb.checked) selectedKnowledgeIds.add(id);
+                else            selectedKnowledgeIds.delete(id);
+                tr.classList.toggle('selected-row', cb.checked);
+                updateKnowledgeSelectionInfo();
+                if (selectedKnowledgeIds.size === 1) prefillKnowledgeForm();
+                else if (selectedKnowledgeIds.size === 0) clearKnowledgeForm();
+            });
+            tdCb.appendChild(cb);
+            tr.appendChild(tdCb);
+
+            KNOWLEDGE_DISPLAY_COLS.forEach(col => {
+                const td  = document.createElement('td');
+                let   val = row[col] ?? '';
+                if (col === 'タイトル' && val.length > 30) val = val.slice(0, 30) + '…';
+                td.textContent = val;
+                tr.appendChild(td);
+            });
+
+            tbody.appendChild(tr);
+        });
+    }
+
+    table.replaceChildren(thead, tbody);
+    updateKnowledgeSelectionInfo();
+}
+
+function updateKnowledgeSelectionInfo() {
+    const el = document.getElementById('knowledge-selection-info');
+    if (!el) return;
+    el.textContent = selectedKnowledgeIds.size === 0
+        ? '行を選択してください'
+        : `${selectedKnowledgeIds.size} 件選択中`;
+}
+
+function updateKnowledgeEditForm() {
+    function buildSelect(id, options) {
+        const el = document.getElementById(id);
+        if (!el) return;
+        const prev = el.value;
+        el.innerHTML = '<option value="">（未設定）</option>';
+        options.forEach(v => {
+            const o = document.createElement('option');
+            o.value = o.textContent = v;
+            el.appendChild(o);
+        });
+        el.value = prev;
+    }
+    const statuses = [...new Set(
+        currentMasterData.filter(r => r['(M)ステータス_親'] === 'ナレッジ')
+            .map(r => r['(M)ステータス_子']).filter(Boolean)
+    )];
+    buildSelect('knowledge-edit-status',   statuses);
+    buildSelect('knowledge-edit-input',    [...new Set(currentMasterData.map(r => r['(M)Input']).filter(Boolean))]);
+    buildSelect('knowledge-edit-output',   [...new Set(currentMasterData.map(r => r['(M)Output']).filter(Boolean))]);
+    buildSelect('knowledge-edit-category', [...new Set(currentMasterData.map(r => r['(M)カテゴリ']).filter(Boolean))]);
+    buildSelect('knowledge-edit-tag',      getFilteredTags());
+    buildSelect('knowledge-edit-hub',      getFilteredHubs());
+}
+
+function prefillKnowledgeForm() {
+    if (selectedKnowledgeIds.size !== 1) return;
+    const id  = [...selectedKnowledgeIds][0];
+    const row = currentMainData.find(r => String(r['ID']) === id);
+    if (!row) return;
+    function set(elId, val) {
+        const el = document.getElementById(elId);
+        if (el) el.value = val ?? '';
+    }
+    updateKnowledgeEditForm();
+    set('knowledge-edit-title',    row['タイトル']);
+    set('knowledge-edit-content',  row['内容']);
+    set('knowledge-edit-biko',     row['備考']);
+    set('knowledge-edit-status',   row['ステータス']);
+    set('knowledge-edit-input',    row['Input']);
+    set('knowledge-edit-output',   row['Output']);
+    set('knowledge-edit-category', row['カテゴリ']);
+    set('knowledge-edit-tag',      row['タグ']);
+    set('knowledge-edit-hub',      row['ハブ']);
+}
+
+function clearKnowledgeForm() {
+    ['knowledge-edit-title','knowledge-edit-content','knowledge-edit-biko','knowledge-edit-status',
+     'knowledge-edit-input','knowledge-edit-output','knowledge-edit-category','knowledge-edit-tag','knowledge-edit-hub'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.value = '';
+    });
+}
+
+document.getElementById('knowledge-apply-btn')?.addEventListener('click', () => {
+    if (selectedKnowledgeIds.size === 0) { alert('編集するナレッジを選択してください'); return; }
+
+    const title    = document.getElementById('knowledge-edit-title').value.trim();
+    const content  = document.getElementById('knowledge-edit-content').value.trim();
+    const biko     = document.getElementById('knowledge-edit-biko').value.trim();
+    const status   = document.getElementById('knowledge-edit-status').value;
+    const input    = document.getElementById('knowledge-edit-input').value;
+    const output   = document.getElementById('knowledge-edit-output').value;
+    const category = document.getElementById('knowledge-edit-category').value;
+    const tag      = document.getElementById('knowledge-edit-tag').value;
+    const hub      = document.getElementById('knowledge-edit-hub').value;
+
+    const now = new Date();
+    const pad = n => String(n).padStart(2, '0');
+    const ts  = `${now.getFullYear()}/${pad(now.getMonth() + 1)}/${pad(now.getDate())} `
+              + `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+
+    selectedKnowledgeIds.forEach(id => {
+        const row = currentMainData.find(r => String(r['ID']) === id);
+        if (!row) return;
+        row['更新日時'] = ts;
+        if (title)    row['タイトル']   = title;
+        if (content)  row['内容']       = content;
+        if (biko)     row['備考']       = biko;
+        if (status)   row['ステータス'] = status;
+        if (input)    row['Input']      = input;
+        if (output)   row['Output']     = output;
+        if (category) row['カテゴリ']   = category;
+        if (tag)      row['タグ']       = tag;
+        if (hub)      row['ハブ']       = hub;
+    });
+
+    selectedKnowledgeIds.clear();
+    saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
+    renderKnowledge();
+});
+
+document.getElementById('knowledge-new-submit-btn')?.addEventListener('click', () => {
+    const title    = document.getElementById('knowledge-new-title').value.trim();
+    const content  = document.getElementById('knowledge-new-content').value.trim();
+    const biko     = document.getElementById('knowledge-new-biko').value.trim();
+    const status   = document.getElementById('knowledge-new-status').value;
+    const input    = document.getElementById('knowledge-new-input').value;
+    const output   = document.getElementById('knowledge-new-output').value;
+    const category = document.getElementById('knowledge-new-category').value;
+    const tag      = document.getElementById('knowledge-new-tag').value;
+    const hub      = document.getElementById('knowledge-new-hub').value;
+
+    const maxId = currentMainData.reduce((max, row) => {
+        const id = parseInt(row['ID'], 10);
+        return isNaN(id) ? max : Math.max(max, id);
+    }, 0);
+    const now = new Date();
+    const pad = n => String(n).padStart(2, '0');
+    const ts  = `${now.getFullYear()}/${pad(now.getMonth() + 1)}/${pad(now.getDate())} `
+              + `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+
+    const entry = Object.fromEntries(MAIN_DATA_COLUMNS.map(col => [col, '']));
+    entry['ID']        = String(maxId + 1);
+    entry['データ区分'] = 'ナレッジ';
+    entry['カテゴリ']   = category || (currentCategory === 'すべて' ? '' : currentCategory);
+    entry['タイトル']   = title;
+    entry['内容']       = content;
+    entry['備考']       = biko;
+    entry['ステータス'] = status;
+    entry['Input']      = input;
+    entry['Output']     = output;
+    entry['タグ']       = tag;
+    entry['ハブ']       = hub;
+    entry['作成日時']   = ts;
+    entry['更新日時']   = ts;
+
+    currentMainData.push(entry);
+    saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
+
+    ['knowledge-new-title','knowledge-new-content','knowledge-new-biko','knowledge-new-status',
+     'knowledge-new-input','knowledge-new-output','knowledge-new-category','knowledge-new-tag','knowledge-new-hub'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.value = '';
+    });
+
+    const badge = document.getElementById('knowledge-new-badge');
+    if (badge) {
+        badge.textContent = `✓ 登録しました（ID: ${entry['ID']}）`;
+        setTimeout(() => renderKnowledgeDirectForm(), 2000);
+    }
+    renderKnowledgeTable();
+});
+
 // ===== 直接データ入力フォーム =====
 
 /** 直接データ入力フォームのドロップダウンをマスタデータで再構築する */
@@ -663,6 +1321,7 @@ function updateDirectConditionalFields(kubun) {
     show('direct-deadline-row', isTask);
     show('direct-estimate-row', isTask);
     show('direct-input-row',    isKnowledge);
+    show('direct-output-row',   isKnowledge);
 
     if (isTask || isKnowledge) {
         const parent   = isTask ? 'タスク' : 'ナレッジ';
@@ -677,13 +1336,13 @@ function updateDirectConditionalFields(kubun) {
             [...new Set(currentMasterData.map(r => r['(M)優先度']).filter(Boolean))]);
     }
     if (isKnowledge) {
-        buildOptions('direct-input',
-            [...new Set(currentMasterData.map(r => r['(M)Input']).filter(Boolean))]);
+        buildOptions('direct-input',  [...new Set(currentMasterData.map(r => r['(M)Input']).filter(Boolean))]);
+        buildOptions('direct-output', [...new Set(currentMasterData.map(r => r['(M)Output']).filter(Boolean))]);
     }
 }
 
 /** 直接データ入力フォームの登録ボタン */
-document.getElementById('direct-submit-btn').addEventListener('click', () => {
+document.getElementById('direct-submit-btn')?.addEventListener('click', () => {
     const kubun = document.getElementById('direct-kubun').value;
     if (!kubun) { alert('データ区分を選択してください'); return; }
 
@@ -697,6 +1356,7 @@ document.getElementById('direct-submit-btn').addEventListener('click', () => {
     const deadline = document.getElementById('direct-deadline')?.value || '';
     const estimate = document.getElementById('direct-estimate')?.value || '';
     const input    = document.getElementById('direct-input')?.value    || '';
+    const output   = document.getElementById('direct-output')?.value   || '';
 
     const maxId = currentMainData.reduce((max, row) => {
         const id = parseInt(row['ID'], 10);
@@ -724,7 +1384,8 @@ document.getElementById('direct-submit-btn').addEventListener('click', () => {
     if (kubun === 'タスク')   { if (priority) entry['優先度'] = priority; }
     if (kubun === 'タスク')   { if (deadline) entry['期限']   = deadline; }
     if (kubun === 'タスク')   { if (estimate) entry['見積時間'] = estimate; }
-    if (kubun === 'ナレッジ') { if (input)    entry['Input']  = input; }
+    if (kubun === 'ナレッジ') { if (input)  entry['Input']  = input; }
+    if (kubun === 'ナレッジ') { if (output) entry['Output'] = output; }
 
     currentMainData.push(entry);
     saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
@@ -750,7 +1411,7 @@ document.getElementById('direct-submit-btn').addEventListener('click', () => {
 });
 
 /** 「振り分け実行」ボタン: 選択行に全フォーム値を適用して更新日時を更新する。 */
-document.getElementById('triage-apply-btn').addEventListener('click', () => {
+document.getElementById('triage-apply-btn')?.addEventListener('click', () => {
     if (selectedInboxIds.size === 0) { alert('振り分ける行を選択してください'); return; }
 
     const kubun = document.getElementById('triage-kubun').value;
@@ -768,6 +1429,7 @@ document.getElementById('triage-apply-btn').addEventListener('click', () => {
     const deadline = document.getElementById('triage-deadline')?.value || '';
     const estimate = document.getElementById('triage-estimate')?.value || '';
     const input    = document.getElementById('triage-input')?.value    || '';
+    const output   = document.getElementById('triage-output')?.value   || '';
 
     const now = new Date();
     const pad = n => String(n).padStart(2, '0');
@@ -795,7 +1457,8 @@ document.getElementById('triage-apply-btn').addEventListener('click', () => {
             if (estimate) row['見積時間'] = estimate;
         }
         if (kubun === 'ナレッジ') {
-            if (input) row['Input'] = input;
+            if (input)  row['Input']  = input;
+            if (output) row['Output'] = output;
         }
     });
 
@@ -1005,7 +1668,7 @@ function applyMasterEdits() {
     renderMasterEditTable();
 }
 
-document.getElementById('apply-master-btn').addEventListener('click', applyMasterEdits);
+document.getElementById('apply-master-btn')?.addEventListener('click', applyMasterEdits);
 
 // ===== マスタ値 CRUD =====
 
@@ -1135,6 +1798,12 @@ function renderCurrentMasterValueEditor() {
             sectionId: 'section-master-value-editor',
             label:     'Output',
             field:     '(M)Output',
+        }),
+        frequency: () => renderPairValueEditor({
+            sectionId:   'section-master-value-editor',
+            label:       '繰返し頻度',
+            parentField: '(M)繰返し頻度',
+            childField:  '(M)繰返し頻度_詳細',
         }),
     };
     CONFIGS[currentMasterValueType]?.();
@@ -1370,7 +2039,7 @@ function applyContent(content, sha) {
 }
 
 // ===== GitHubから読み込み =====
-document.getElementById('load-btn').addEventListener('click', async () => {
+document.getElementById('load-btn')?.addEventListener('click', async () => {
     const token      = document.getElementById('token-input').value.trim();
     const contentBox = document.getElementById('content-box');
     const statusEl   = document.getElementById('network-status');
@@ -1400,7 +2069,7 @@ document.getElementById('load-btn').addEventListener('click', async () => {
 });
 
 // ===== GitHubへ保存 =====
-document.getElementById('save-btn').addEventListener('click', async () => {
+document.getElementById('save-btn')?.addEventListener('click', async () => {
     const token      = document.getElementById('token-input').value.trim();
     const contentBox = document.getElementById('content-box');
     const statusEl   = document.getElementById('network-status');
@@ -1432,7 +2101,7 @@ document.getElementById('save-btn').addEventListener('click', async () => {
 });
 
 // ===== Excelエクスポート =====
-document.getElementById('excel-export-btn').addEventListener('click', () => {
+document.getElementById('excel-export-btn')?.addEventListener('click', () => {
     if (currentMainData.length === 0 && currentMasterData.length === 0) {
         return alert('エクスポートするデータがありません。先にGitHubからデータを読み込んでください。');
     }
@@ -1440,7 +2109,7 @@ document.getElementById('excel-export-btn').addEventListener('click', () => {
 });
 
 // ===== Excelインポート =====
-document.getElementById('excel-import').addEventListener('change', async (e) => {
+document.getElementById('excel-import')?.addEventListener('change', async (e) => {
     const file = e.target.files[0];
     if (!file) return;
 
@@ -1480,7 +2149,7 @@ document.getElementById('excel-import').addEventListener('change', async (e) => 
 
 // ===== INBOX 登録 =====
 
-document.getElementById('inbox-submit-btn').addEventListener('click', () => {
+document.getElementById('inbox-submit-btn')?.addEventListener('click', () => {
     const textarea = document.getElementById('inbox-content');
     const content  = textarea.value.trim();
     if (!content) { textarea.focus(); return; }
@@ -1597,6 +2266,326 @@ export function getFilteredHubs() {
         .filter(r => r['(M)ハブ_親'] === currentCategory)
         .map(r => r['(M)ハブ_子'])
         .filter(Boolean);
+}
+
+// ===== タスク実行機能 =====
+
+/** yyyy/mm/dd hh:mm:ss 形式の日時文字列を Date に変換する */
+function parseJpDatetime(str) {
+    if (!str || !str.trim()) return null;
+    const m = str.trim().match(/^(\d{4})\/(\d{2})\/(\d{2}) (\d{2}):(\d{2}):(\d{2})$/);
+    if (!m) return null;
+    return new Date(+m[1], +m[2]-1, +m[3], +m[4], +m[5], +m[6]);
+}
+
+/** Date を yyyy/mm/dd hh:mm:ss 形式にフォーマット */
+function formatJpDatetime(d) {
+    const p = n => String(n).padStart(2, '0');
+    return `${d.getFullYear()}/${p(d.getMonth()+1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
+/** タイムスタンプログ文字列を解析して累計ミリ秒を返す（開始中=現在時刻まで加算） */
+function parseTimestampLog(log) {
+    if (!log || !log.trim()) return 0;
+    const segments = log.split(',').map(s => s.trim()).filter(Boolean);
+    let total = 0;
+    const now  = Date.now();
+    segments.forEach(seg => {
+        const dashIdx = seg.indexOf('-', 10);
+        if (dashIdx === -1) return;
+        const start = parseJpDatetime(seg.slice(0, dashIdx));
+        if (!start) return;
+        const endStr = seg.slice(dashIdx + 1).trim();
+        const end    = endStr ? parseJpDatetime(endStr) : null;
+        total += (end ? end.getTime() : now) - start.getTime();
+    });
+    return total;
+}
+
+/** ミリ秒を hh:mm:ss にフォーマット */
+function formatDuration(ms) {
+    if (ms < 0) ms = 0;
+    const s = Math.floor(ms / 1000);
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    return `${String(h).padStart(2,'0')}:${String(m % 60).padStart(2,'0')}:${String(s % 60).padStart(2,'0')}`;
+}
+
+/** 選択タスクの補正込み累計時間（ms） */
+function computeTotalDuration(taskId) {
+    const row = currentMainData.find(r => String(r['ID']) === String(taskId));
+    if (!row) return 0;
+    const base = parseTimestampLog(row['タイムスタンプログ'] || '');
+    const adj  = parseFloat(row['補正時間'] || '0') * 60000;
+    return base + adj;
+}
+
+/** 両コンテナの経過時間表示を更新 */
+function updateRunnerTimerDisplay() {
+    if (!selectedRunTaskId) return;
+    const text = formatDuration(computeTotalDuration(selectedRunTaskId));
+    document.querySelectorAll('.runner-elapsed-display').forEach(el => { el.textContent = text; });
+}
+
+/** 両コンテナにタスク実行UIを描画 */
+function renderTaskRunner() {
+    ['task-runner-dash', 'task-runner-task'].forEach(id => {
+        const container = document.getElementById(id);
+        if (container) buildTaskRunnerUI(container);
+    });
+}
+
+/** 単一コンテナにタスク実行UIを構築 */
+function buildTaskRunnerUI(container) {
+    container.innerHTML = '';
+
+    const inProgress = currentMainData.filter(r =>
+        r['データ区分'] === 'タスク' && r['ステータス'] === '進行中'
+    );
+
+    // --- 進行中タスク一覧 ---
+    const wrap  = document.createElement('div');
+    wrap.className = 'table-wrapper';
+    const table = document.createElement('table');
+    table.className = 'data-table';
+
+    const thead = document.createElement('thead');
+    const hRow  = document.createElement('tr');
+    ['タイトル', '優先度', '期限', '累計時間'].forEach(col => {
+        const th = document.createElement('th');
+        th.textContent = col;
+        hRow.appendChild(th);
+    });
+    thead.appendChild(hRow);
+
+    const tbody = document.createElement('tbody');
+    if (inProgress.length === 0) {
+        const tr = document.createElement('tr');
+        const td = document.createElement('td');
+        td.colSpan = 4;
+        td.className = 'empty-cell';
+        td.textContent = '進行中のタスクがありません';
+        tr.appendChild(td);
+        tbody.appendChild(tr);
+    } else {
+        inProgress.forEach(row => {
+            const tr  = document.createElement('tr');
+            const rid = String(row['ID']);
+            if (rid === String(selectedRunTaskId)) tr.classList.add('selected-row');
+            tr.style.cursor = 'pointer';
+            [row['タイトル'] || '（無題）', row['優先度'] || '', row['期限'] || '',
+             formatDuration(computeTotalDuration(rid))
+            ].forEach(val => {
+                const td = document.createElement('td');
+                td.textContent = val;
+                tr.appendChild(td);
+            });
+            tr.addEventListener('click', () => {
+                if (String(selectedRunTaskId) !== rid) {
+                    if (timerIsRunning) {
+                        const now = formatJpDatetime(new Date());
+                        const prev = currentMainData.find(r => String(r['ID']) === String(selectedRunTaskId));
+                        if (prev) prev['タイムスタンプログ'] = (prev['タイムスタンプログ'] || '') + `${now}, `;
+                        timerIsRunning = false;
+                        if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+                    }
+                    selectedRunTaskId = rid;
+                }
+                renderTaskRunner();
+            });
+            tbody.appendChild(tr);
+        });
+    }
+    table.append(thead, tbody);
+    wrap.appendChild(table);
+    container.appendChild(wrap);
+
+    const selectedRow = selectedRunTaskId
+        ? currentMainData.find(r => String(r['ID']) === String(selectedRunTaskId) && r['ステータス'] === '進行中')
+        : null;
+
+    if (!selectedRow) {
+        const hint = document.createElement('p');
+        hint.className = 'placeholder-text';
+        hint.style.margin = '8px 0 0';
+        hint.textContent = inProgress.length > 0 ? 'タスクをクリックして選択してください' : '';
+        container.appendChild(hint);
+        return;
+    }
+
+    // --- 操作パネル ---
+    const panel = document.createElement('div');
+    panel.className = 'runner-panel';
+
+    // タスク名
+    const titleEl = document.createElement('p');
+    titleEl.className = 'runner-task-title';
+    titleEl.textContent = `▶ ${selectedRow['タイトル'] || '（無題）'}`;
+    panel.appendChild(titleEl);
+
+    // 累計時間行
+    const timeRow = document.createElement('div');
+    timeRow.className = 'triage-form-row';
+    const timeLabel = document.createElement('label');
+    timeLabel.textContent = '累計時間';
+    const timeInfo = document.createElement('div');
+    timeInfo.className = 'runner-time-info';
+
+    const elapsedSpan = document.createElement('span');
+    elapsedSpan.className = 'runner-elapsed-display runner-elapsed-big';
+    elapsedSpan.textContent = formatDuration(computeTotalDuration(String(selectedRow['ID'])));
+
+    const adjWrap  = document.createElement('span');
+    adjWrap.className = 'runner-adj-wrap';
+    const adjLabel = document.createElement('span');
+    adjLabel.textContent = '補正:';
+    const adjInput = document.createElement('input');
+    adjInput.type        = 'number';
+    adjInput.className   = 'runner-adj-input';
+    adjInput.placeholder = '分 (±)';
+    adjInput.step        = '1';
+    adjInput.value       = selectedRow['補正時間'] || '';
+    adjInput.addEventListener('change', () => {
+        selectedRow['補正時間'] = adjInput.value;
+        saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
+        updateRunnerTimerDisplay();
+    });
+    const adjSuffix = document.createElement('span');
+    adjSuffix.textContent = '分';
+    adjWrap.append(adjLabel, adjInput, adjSuffix);
+
+    timeInfo.append(elapsedSpan, adjWrap);
+    timeRow.append(timeLabel, timeInfo);
+    panel.appendChild(timeRow);
+
+    // 開始/停止ボタン行
+    const btnRow = document.createElement('div');
+    btnRow.className = 'triage-toolbar';
+
+    const statusLabel = document.createElement('span');
+    statusLabel.className = 'triage-info runner-status-label';
+    statusLabel.textContent = timerIsRunning ? '⏱ 計測中...' : '';
+
+    const startBtn = document.createElement('button');
+    startBtn.className   = 'triage-btn runner-start-btn';
+    startBtn.textContent = '▶ 開始';
+    startBtn.disabled    = timerIsRunning;
+    startBtn.addEventListener('click', () => {
+        const ts = formatJpDatetime(new Date());
+        selectedRow['タイムスタンプログ'] = (selectedRow['タイムスタンプログ'] || '') + `${ts}-`;
+        timerIsRunning = true;
+        if (timerInterval) clearInterval(timerInterval);
+        timerInterval = setInterval(updateRunnerTimerDisplay, 1000);
+        saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
+        renderTaskRunner();
+    });
+
+    const stopBtn = document.createElement('button');
+    stopBtn.className   = 'triage-btn runner-stop-btn';
+    stopBtn.textContent = '■ 停止';
+    stopBtn.disabled    = !timerIsRunning;
+    stopBtn.addEventListener('click', () => {
+        const ts = formatJpDatetime(new Date());
+        selectedRow['タイムスタンプログ'] = (selectedRow['タイムスタンプログ'] || '') + `${ts}, `;
+        timerIsRunning = false;
+        if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+        saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
+        renderTaskRunner();
+    });
+
+    btnRow.append(statusLabel, startBtn, stopBtn);
+    panel.appendChild(btnRow);
+
+    // タイムスタンプログ
+    const logRow   = document.createElement('div');
+    logRow.className = 'triage-form-row triage-form-row--top';
+    const logLabel = document.createElement('label');
+    logLabel.textContent = 'タイムスタンプログ';
+    const logArea  = document.createElement('textarea');
+    logArea.className = 'triage-textarea';
+    logArea.rows      = 3;
+    logArea.value     = selectedRow['タイムスタンプログ'] || '';
+    logArea.addEventListener('change', () => {
+        selectedRow['タイムスタンプログ'] = logArea.value;
+        saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
+        updateRunnerTimerDisplay();
+    });
+    logRow.append(logLabel, logArea);
+    panel.appendChild(logRow);
+
+    // ステータス遷移
+    const taskStatuses = [...new Set(
+        currentMasterData
+            .filter(r => r['(M)ステータス_親'] === 'タスク')
+            .map(r => r['(M)ステータス_子'])
+            .filter(Boolean)
+    )];
+    if (taskStatuses.length > 0) {
+        const statusSec = document.createElement('div');
+        statusSec.className = 'runner-status-section';
+
+        const secLabel = document.createElement('label');
+        secLabel.textContent = 'ステータス遷移';
+        statusSec.appendChild(secLabel);
+
+        const radioGroup = document.createElement('div');
+        radioGroup.className = 'runner-status-radios';
+        const rName = `runner-status-${container.id}`;
+        taskStatuses.forEach((st, i) => {
+            const lbl   = document.createElement('label');
+            lbl.className = 'triage-tab-label';
+            const radio = document.createElement('input');
+            radio.type  = 'radio';
+            radio.name  = rName;
+            radio.value = st;
+            if (i === 0) radio.checked = true;
+            lbl.append(radio, document.createTextNode(' ' + st));
+            radioGroup.appendChild(lbl);
+        });
+        statusSec.appendChild(radioGroup);
+
+        const cmtRow   = document.createElement('div');
+        cmtRow.className = 'triage-form-row';
+        const cmtLabel = document.createElement('label');
+        cmtLabel.textContent = 'ステータスコメント';
+        const cmtInput = document.createElement('input');
+        cmtInput.type        = 'text';
+        cmtInput.placeholder = '（省略可）';
+        cmtInput.value       = selectedRow['ステータスコメント'] || '';
+        cmtRow.append(cmtLabel, cmtInput);
+        statusSec.appendChild(cmtRow);
+
+        const changeTb  = document.createElement('div');
+        changeTb.className = 'triage-toolbar';
+        const changeBtn = document.createElement('button');
+        changeBtn.className   = 'triage-btn';
+        changeBtn.textContent = 'ステータスを変更する';
+        changeBtn.addEventListener('click', () => {
+            const chosen = radioGroup.querySelector(`input[name="${rName}"]:checked`);
+            if (!chosen) return;
+            const newStatus = chosen.value;
+            if (newStatus !== '進行中' && timerIsRunning) {
+                const ts = formatJpDatetime(new Date());
+                selectedRow['タイムスタンプログ'] = (selectedRow['タイムスタンプログ'] || '') + `${ts}, `;
+                timerIsRunning = false;
+                if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+            }
+            selectedRow['ステータス']        = newStatus;
+            selectedRow['ステータスコメント'] = cmtInput.value.trim();
+            selectedRow['更新日時']           = formatJpDatetime(new Date());
+            if (String(selectedRunTaskId) === String(selectedRow['ID'])) {
+                selectedRunTaskId = null;
+            }
+            saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
+            renderTaskRunner();
+            renderTaskTable();
+        });
+        changeTb.appendChild(changeBtn);
+        statusSec.appendChild(changeTb);
+        panel.appendChild(statusSec);
+    }
+
+    container.appendChild(panel);
 }
 
 // ===== 旧フォーマット用ヘルパー =====

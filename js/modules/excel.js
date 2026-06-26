@@ -1,5 +1,5 @@
-// (1) インポート — task.js から列定義を参照、XLSX は window.XLSX (CDN) を使用
-import { MAIN_DATA_COLUMNS, MASTER_DATA_COLUMNS } from './task.js';
+// (1) インポート — dataModel.js から列定義を参照、XLSX は window.XLSX (CDN) を使用
+import { MAIN_DATA_COLUMNS, MASTER_DATA_COLUMNS } from './dataModel.js';
 
 /**
  * mainData / masterData を2シート構成の Excelファイルとしてダウンロードさせる。
