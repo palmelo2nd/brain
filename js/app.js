@@ -2,6 +2,7 @@
 import { fetchFile, saveFile } from './modules/github.js';
 import { parseMarkdown, stringifyMarkdown, MAIN_DATA_COLUMNS, MASTER_DATA_COLUMNS } from './modules/dataModel.js';
 import { exportToExcel, importFromExcel } from './modules/excel.js';
+import { checkAndGenerateChildren, generateChildManually } from './modules/recurring.js';
 
 const OWNER = 'palmelo2nd';
 const REPO  = 'brain_data';
@@ -102,6 +103,7 @@ function renderTaskList() {
     renderTaskTable();
     updateTaskEditForm();
     updateTaskSelectionInfo();
+    renderRecurringSection();
 }
 function renderKnowledge() {
     renderKnowledgeDirectForm();
@@ -2027,6 +2029,13 @@ function applyContent(content, sha) {
     currentMainData   = mainData;
     currentMasterData = masterData;
 
+    // 繰り返しタスクの自動生成（データ読み込み時）
+    const newChildren = checkAndGenerateChildren(currentMainData, new Date());
+    if (newChildren.length > 0) {
+        currentMainData.push(...newChildren);
+        saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
+    }
+
     // 初回ロード時のみ、先頭カテゴリをデフォルト選択にする
     if (!categoryInitialized) {
         const categories = [...new Set(currentMasterData.map(r => r['(M)カテゴリ']).filter(Boolean))];
@@ -2586,6 +2595,137 @@ function buildTaskRunnerUI(container) {
     }
 
     container.appendChild(panel);
+}
+
+// ===== 繰り返しタスク =====
+
+const recurringChartInstances = new Map();
+
+/** 子タスク配列から Chart.js 用の labels / data を作成する */
+function buildChildChartData(children) {
+    const sorted = [...children]
+        .filter(r => r['完了日'] || r['作成日時'])
+        .sort((a, b) => {
+            const da = a['完了日'] || a['作成日時'];
+            const db = b['完了日'] || b['作成日時'];
+            return da.localeCompare(db);
+        });
+
+    const labels = sorted.map(r => (r['完了日'] || r['作成日時']).slice(0, 10));
+    const data   = sorted.map(r => {
+        const manual = parseFloat(r['実績時間'] || '');
+        if (!isNaN(manual) && manual > 0) return manual;
+        const ms = parseTimestampLog(r['タイムスタンプログ'] || '');
+        return ms > 0 ? Math.round(ms / 360000) / 10 : 0;
+    });
+
+    return { labels, data };
+}
+
+/** タスクページの繰り返しタスクセクションを描画する */
+function renderRecurringSection() {
+    const container = document.getElementById('recurring-section');
+    if (!container) return;
+
+    // 既存チャートインスタンスを破棄してからDOMをリセット
+    recurringChartInstances.forEach(chart => chart.destroy());
+    recurringChartInstances.clear();
+    container.innerHTML = '';
+
+    const parents = currentMainData.filter(r =>
+        r['繰返し識別子'] === '1' && !r['繰返し親ID']
+    );
+
+    const summaryEl = document.getElementById('summary-recurring');
+    if (summaryEl) {
+        summaryEl.innerHTML =
+            `繰り返しタスク<span class="expander-count">${parents.length} 件</span>`;
+    }
+
+    if (parents.length === 0) {
+        const p = document.createElement('p');
+        p.className    = 'placeholder-text';
+        p.style.margin = '8px 0';
+        p.textContent  = '繰り返しタスクがありません';
+        container.appendChild(p);
+        return;
+    }
+
+    parents.forEach(parent => {
+        const parentId = String(parent['ID']);
+        const children = currentMainData.filter(r => r['繰返し親ID'] === parentId);
+
+        const block = document.createElement('div');
+        block.className = 'recurring-parent-block';
+
+        // ヘッダー行（タイトル + 手動生成ボタン）
+        const header = document.createElement('div');
+        header.className = 'recurring-parent-header';
+
+        const titleEl = document.createElement('span');
+        titleEl.className   = 'recurring-parent-title';
+        titleEl.textContent = `${parent['タイトル'] || '（無題）'} — ${parent['ステータス'] || '未設定'} / 子タスク ${children.length} 件`;
+
+        const manualBtn = document.createElement('button');
+        manualBtn.className   = 'triage-btn recurring-manual-btn';
+        manualBtn.textContent = '子を手動生成';
+        manualBtn.addEventListener('click', () => {
+            const child = generateChildManually(parent, currentMainData);
+            if (!child) { alert('本日分は既に生成済みです'); return; }
+            currentMainData.push(child);
+            saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
+            renderRecurringSection();
+            renderTaskTable();
+        });
+
+        header.append(titleEl, manualBtn);
+        block.appendChild(header);
+
+        // グラフ
+        const chartData = buildChildChartData(children);
+        if (chartData.labels.length > 0 && window.Chart) {
+            const wrap   = document.createElement('div');
+            wrap.className = 'recurring-chart-wrap';
+            const canvas = document.createElement('canvas');
+            wrap.appendChild(canvas);
+            block.appendChild(wrap);
+
+            const chart = new window.Chart(canvas, {
+                type: 'line',
+                data: {
+                    labels: chartData.labels,
+                    datasets: [{
+                        label: '実績時間 (h)',
+                        data:  chartData.data,
+                        borderColor: '#4a90d9',
+                        backgroundColor: 'rgba(74,144,217,0.1)',
+                        tension: 0.3,
+                        pointRadius: 4,
+                        fill: true,
+                    }],
+                },
+                options: {
+                    responsive: true,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        x: { title: { display: true, text: '日付' } },
+                        y: { title: { display: true, text: '実績時間 (h)' }, beginAtZero: true },
+                    },
+                },
+            });
+            recurringChartInstances.set(parentId, chart);
+        } else {
+            const noData = document.createElement('p');
+            noData.className    = 'placeholder-text';
+            noData.style.margin = '6px 0 0';
+            noData.textContent  = chartData.labels.length === 0
+                ? '子タスクに実績データがありません'
+                : 'Chart.js が読み込まれていません';
+            block.appendChild(noData);
+        }
+
+        container.appendChild(block);
+    });
 }
 
 // ===== 旧フォーマット用ヘルパー =====

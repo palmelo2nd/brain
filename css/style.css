@@ -865,3 +865,39 @@ details[open] > .expander-title::after { transform: rotate(90deg); }
     gap: 8px;
     margin-bottom: 8px;
 }
+
+/* ===== 繰り返しタスク ===== */
+
+.recurring-parent-block {
+    border: 1px solid #e1e4e8;
+    border-radius: 8px;
+    padding: 14px 16px;
+    margin-bottom: 16px;
+    background: #fff;
+}
+
+.recurring-parent-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 10px;
+}
+
+.recurring-parent-title {
+    font-weight: 600;
+    font-size: 14px;
+    color: #24292e;
+}
+
+.recurring-manual-btn {
+    flex-shrink: 0;
+    font-size: 12px;
+    padding: 5px 12px;
+}
+
+.recurring-chart-wrap {
+    position: relative;
+    height: 200px;
+}
+

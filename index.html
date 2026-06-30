@@ -7,6 +7,7 @@
     <link rel="stylesheet" href="css/style.css">
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
 </head>
 <body>
 
@@ -371,6 +372,12 @@
                         <button id="task-apply-btn" class="triage-btn">変更を適用</button>
                     </div>
                 </div>
+            </details>
+
+            <!-- 繰り返しタスク -->
+            <details class="expander" open>
+                <summary class="expander-title" id="summary-recurring">繰り返しタスク</summary>
+                <div id="recurring-section"></div>
             </details>
 
             <!-- load-btn / save-btn ハンドラが参照する要素（非表示） -->
