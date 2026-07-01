@@ -14,15 +14,11 @@ let currentMainData   = [];
 let currentMasterData = [];
 let currentPage       = 'dashboard';
 let currentCategory   = 'すべて';        // カテゴリフィルタの選択値
-let selectedInboxIds  = new Set();       // INBOXトリアージで選択中の行ID
 let categoryInitialized = false;         // 初回ロード時にデフォルトカテゴリを設定済みか
 let currentMasterValueType = 'kubun';   // マスタ値エディタの選択タイプ
-let currentTriageKubun = 'INBOX';       // トリアージ一覧の表示対象データ区分
-let triageFilters      = {};            // トリアージフィルタ値
-let selectedTaskIds      = new Set();   // タスクページで選択中の行ID
-let taskFilters          = {};          // タスクページのフィルタ値
-let selectedKnowledgeIds = new Set();  // ナレッジページで選択中の行ID
-let knowledgeFilters     = {};         // ナレッジページのフィルタ値
+let selectedEditIds = new Set();       // 編集セクションで選択中の行ID
+let editFilters      = {};             // 編集セクションのフィルタ値
+let editKubun         = 'INBOX';       // 編集セクションの対象データ区分（一覧の絞り込みタブ）
 let selectedRunTaskId    = null;       // タスク実行で選択中のタスクID
 let timerIsRunning       = false;      // タイマー動作中フラグ
 let timerInterval        = null;       // setInterval ハンドル
@@ -30,7 +26,10 @@ let timerInterval        = null;       // setInterval ハンドル
 // ===== 初期化 =====
 window.addEventListener('DOMContentLoaded', () => {
     const saved = loadToken();
-    if (saved) document.getElementById('token-input').value = saved;
+    if (saved) {
+        document.getElementById('token-input').value = saved;
+        loadFromGithub(saved, true);
+    }
     switchPage('dashboard');
 });
 
@@ -71,8 +70,6 @@ function renderPage(pageId) {
         dashboard: renderDashboard,
         inbox:     renderInbox,
         task:      renderTaskList,
-        knowledge: renderKnowledge,
-        master:    renderMaster,
     };
     renderers[pageId]?.();
 }
@@ -89,46 +86,33 @@ function renderDashboard() {
     renderTaskRunner();
 }
 function renderInbox() {
-    renderDirectEntryForm();
-    renderTriageKubunTabs();
-    renderTriageFilters();
-    renderInboxList();
-    updateTriageForm();
+    renderEdit();
     renderRecentItems();
-}
-function renderTaskList() {
-    renderTaskRunner();
-    renderTaskDirectForm();
-    renderTaskFilters();
-    renderTaskTable();
-    updateTaskEditForm();
-    updateTaskSelectionInfo();
-    renderRecurringSection();
-}
-function renderKnowledge() {
-    renderKnowledgeDirectForm();
-    renderKnowledgeFilters();
-    renderKnowledgeTable();
-    updateKnowledgeEditForm();
-    updateKnowledgeSelectionInfo();
-}
-function renderMaster() {
+    renderDataTable('table-main',   'summary-main',   getFilteredMainData(),   MAIN_DATA_COLUMNS,   'メインデータ',   { editable: true, idColumn: 'ID' });
+    renderDataTable('table-master', 'summary-master', currentMasterData, MASTER_DATA_COLUMNS, 'マスタデータ', { editable: true, onEdit: () => renderWarnings(computeMasterWarnings()) });
     renderWarnings(computeMasterWarnings());
     renderMasterEditTable();
     renderMasterValueEditors();
-    renderDataTable('table-main',   'summary-main',   getFilteredMainData(),   MAIN_DATA_COLUMNS,   'メインデータ');
-    renderDataTable('table-master', 'summary-master', currentMasterData, MASTER_DATA_COLUMNS, 'マスタデータ');
+}
+function renderTaskList() {
+    renderTaskRunner();
+    renderRecurringSection();
 }
 
 /**
  * 指定テーブルをデータ配列で描画し、サマリーに件数バッジを更新する。
+ * options.editable が true の場合、各セルを直接編集可能にし、
+ * 編集完了（blur）時に row オブジェクトへ書き込んでキャッシュ保存する。
  * @param {string} tableId    - 描画先 <table> の id
  * @param {string} summaryId  - 件数を表示する <summary> の id
  * @param {Array}  data       - 行データの配列
  * @param {Array}  columns    - 表示列名の配列（MAIN_DATA_COLUMNS / MASTER_DATA_COLUMNS）
  * @param {string} label      - サマリー表示名
+ * @param {{editable?: boolean, idColumn?: string, onEdit?: Function}} [options]
  */
-function renderDataTable(tableId, summaryId, data, columns, label) {
+function renderDataTable(tableId, summaryId, data, columns, label, options = {}) {
+    const { editable = false, idColumn = null, onEdit = null } = options;
+
     // ---- サマリーの件数バッジを更新 ----
     const summaryEl = document.getElementById(summaryId);
     if (summaryEl) {
@@ -139,7 +123,7 @@ function renderDataTable(tableId, summaryId, data, columns, label) {
     const table = document.getElementById(tableId);
     if (!table) return;
 
-    table.className = 'data-table';
+    table.className = 'data-table' + (editable ? ' data-table--editable' : '');
 
     // ---- ヘッダー行 ----
     const thead = document.createElement('thead');
@@ -167,6 +151,23 @@ function renderDataTable(tableId, summaryId, data, columns, label) {
             columns.forEach(col => {
                 const td = document.createElement('td');
                 td.textContent = row[col] ?? '';
+
+                // ID列は参照キーとして使われるため編集不可にする
+                if (editable && col !== idColumn) {
+                    td.contentEditable = 'true';
+                    td.classList.add('editable-cell');
+                    td.addEventListener('keydown', e => {
+                        if (e.key === 'Enter') { e.preventDefault(); td.blur(); }
+                    });
+                    td.addEventListener('blur', () => {
+                        const newVal = td.textContent.trim();
+                        if ((row[col] ?? '') === newVal) return;
+                        row[col] = newVal;
+                        saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
+                        if (onEdit) onEdit();
+                    });
+                }
+
                 tr.appendChild(td);
             });
             tbody.appendChild(tr);
@@ -182,392 +183,6 @@ function renderDataTable(tableId, summaryId, data, columns, label) {
 function jpDateOnly(dt) { return (dt || '').slice(0, 10); }
 /** "YYYY-MM-DD" を "YYYY/MM/DD" に変換 */
 function isoToJP(d) { return d.replace(/-/g, '/'); }
-
-/** currentTriageKubun に応じたテーブル列定義を返す */
-function getTriageCols() {
-    if (currentTriageKubun === 'タスク')
-        return ['ID', 'タイトル', '優先度', '期限', 'ステータス', '内容', 'タグ', 'ハブ', '更新日時'];
-    if (currentTriageKubun === 'ナレッジ')
-        return ['ID', 'タイトル', 'Input', 'ステータス', '内容', 'タグ', 'ハブ', '更新日時'];
-    return ['ID', 'カテゴリ', 'タイトル', '内容', 'タグ', 'ハブ', '作成日時'];
-}
-
-/** データ区分タブ（ラジオ）を描画する */
-function renderTriageKubunTabs() {
-    const container = document.getElementById('triage-kubun-tabs');
-    if (!container) return;
-
-    const kubunValues = [...new Set(currentMasterData.map(r => r['(M)データ区分']).filter(Boolean))];
-    if (kubunValues.length > 0 && !kubunValues.includes(currentTriageKubun)) {
-        currentTriageKubun = kubunValues[0];
-    }
-
-    container.innerHTML = '';
-    kubunValues.forEach(val => {
-        const count = getFilteredMainData().filter(r => r['データ区分'] === val).length;
-        const label = document.createElement('label');
-        label.className = 'triage-tab-label' + (val === currentTriageKubun ? ' active' : '');
-
-        const radio = document.createElement('input');
-        radio.type    = 'radio';
-        radio.name    = 'triage-kubun-tab';
-        radio.value   = val;
-        radio.checked = (val === currentTriageKubun);
-        radio.addEventListener('change', () => {
-            currentTriageKubun = val;
-            triageFilters = {};
-            selectedInboxIds.clear();
-            container.querySelectorAll('.triage-tab-label').forEach(l => l.classList.remove('active'));
-            label.classList.add('active');
-            renderTriageFilters();
-            renderInboxList();
-            updateTriageForm();
-        });
-
-        label.append(radio, document.createTextNode(` ${val}（${count}）`));
-        container.appendChild(label);
-    });
-}
-
-/** currentTriageKubun に応じたフィルタコントロールを描画する */
-function renderTriageFilters() {
-    const area = document.getElementById('triage-filter-area');
-    if (!area) return;
-    area.innerHTML = '';
-
-    function makeRow(labelText, el) {
-        const row = document.createElement('div');
-        row.className = 'triage-filter-row';
-        const lbl = document.createElement('label');
-        lbl.className = 'triage-filter-label';
-        lbl.textContent = labelText;
-        row.append(lbl, el);
-        area.appendChild(row);
-    }
-
-    function makeSelect(options, placeholder, key) {
-        const sel = document.createElement('select');
-        sel.className = 'triage-filter-select';
-        const opt0 = document.createElement('option');
-        opt0.value = ''; opt0.textContent = placeholder;
-        sel.appendChild(opt0);
-        options.forEach(v => {
-            const opt = document.createElement('option');
-            opt.value = opt.textContent = v;
-            if (triageFilters[key] === v) opt.selected = true;
-            sel.appendChild(opt);
-        });
-        sel.addEventListener('change', () => { triageFilters[key] = sel.value; renderInboxList(); });
-        return sel;
-    }
-
-    function makeDateRange(fromKey, toKey) {
-        const wrap    = document.createElement('div');
-        wrap.className = 'filter-date-range';
-        const fromInp = document.createElement('input');
-        fromInp.type = 'date'; fromInp.className = 'filter-date-input';
-        fromInp.value = triageFilters[fromKey] || '';
-        fromInp.addEventListener('change', () => { triageFilters[fromKey] = fromInp.value; renderInboxList(); });
-        const toInp = document.createElement('input');
-        toInp.type = 'date'; toInp.className = 'filter-date-input';
-        toInp.value = triageFilters[toKey] || '';
-        toInp.addEventListener('change', () => { triageFilters[toKey] = toInp.value; renderInboxList(); });
-        wrap.append(fromInp, document.createTextNode(' 〜 '), toInp);
-        return wrap;
-    }
-
-    // 共通フィルタ
-    makeRow('タグ',    makeSelect(getFilteredTags(), 'すべて', 'tag'));
-    makeRow('ハブ',    makeSelect(getFilteredHubs(), 'すべて', 'hub'));
-    makeRow('作成日時', makeDateRange('createdFrom', 'createdTo'));
-    makeRow('更新日時', makeDateRange('updatedFrom', 'updatedTo'));
-
-    // タスク専用フィルタ
-    if (currentTriageKubun === 'タスク') {
-        const priorities = [...new Set(currentMasterData.map(r => r['(M)優先度']).filter(Boolean))];
-        makeRow('優先度', makeSelect(priorities, 'すべて', 'priority'));
-        makeRow('期限',   makeDateRange('deadlineFrom', 'deadlineTo'));
-        const taskStatuses = [...new Set(
-            currentMasterData.filter(r => r['(M)ステータス_親'] === 'タスク')
-                .map(r => r['(M)ステータス_子']).filter(Boolean)
-        )];
-        makeRow('ステータス', makeSelect(taskStatuses, 'すべて', 'status'));
-    }
-
-    // ナレッジ専用フィルタ
-    if (currentTriageKubun === 'ナレッジ') {
-        const inputs = [...new Set(currentMasterData.map(r => r['(M)Input']).filter(Boolean))];
-        makeRow('Input', makeSelect(inputs, 'すべて', 'input'));
-        const knowledgeStatuses = [...new Set(
-            currentMasterData.filter(r => r['(M)ステータス_親'] === 'ナレッジ')
-                .map(r => r['(M)ステータス_子']).filter(Boolean)
-        )];
-        makeRow('ステータス', makeSelect(knowledgeStatuses, 'すべて', 'status'));
-    }
-}
-
-/** トリアージ一覧テーブルを描画する（currentTriageKubun + triageFilters を適用） */
-function renderInboxList() {
-    const COLS = getTriageCols();
-
-    // データ区分フィルタ
-    let rows = getFilteredMainData().filter(r => r['データ区分'] === currentTriageKubun);
-
-    // 共通フィルタ
-    if (triageFilters.tag)         rows = rows.filter(r => r['タグ'] === triageFilters.tag);
-    if (triageFilters.hub)         rows = rows.filter(r => r['ハブ'] === triageFilters.hub);
-    if (triageFilters.createdFrom) rows = rows.filter(r => jpDateOnly(r['作成日時']) >= isoToJP(triageFilters.createdFrom));
-    if (triageFilters.createdTo)   rows = rows.filter(r => jpDateOnly(r['作成日時']) <= isoToJP(triageFilters.createdTo));
-    if (triageFilters.updatedFrom) rows = rows.filter(r => jpDateOnly(r['更新日時']) >= isoToJP(triageFilters.updatedFrom));
-    if (triageFilters.updatedTo)   rows = rows.filter(r => jpDateOnly(r['更新日時']) <= isoToJP(triageFilters.updatedTo));
-
-    // タスク専用フィルタ
-    if (currentTriageKubun === 'タスク') {
-        if (triageFilters.priority)     rows = rows.filter(r => r['優先度']   === triageFilters.priority);
-        if (triageFilters.deadlineFrom) rows = rows.filter(r => (r['期限'] || '') >= isoToJP(triageFilters.deadlineFrom));
-        if (triageFilters.deadlineTo)   rows = rows.filter(r => (r['期限'] || '') <= isoToJP(triageFilters.deadlineTo));
-        if (triageFilters.status)       rows = rows.filter(r => r['ステータス'] === triageFilters.status);
-    }
-
-    // ナレッジ専用フィルタ
-    if (currentTriageKubun === 'ナレッジ') {
-        if (triageFilters.input)  rows = rows.filter(r => r['Input']    === triageFilters.input);
-        if (triageFilters.status) rows = rows.filter(r => r['ステータス'] === triageFilters.status);
-    }
-
-    // サマリー更新
-    const summaryEl = document.getElementById('summary-inbox-triage');
-    if (summaryEl) {
-        summaryEl.innerHTML =
-            `INBOXトリアージ<span class="expander-count">${rows.length} 件</span>`;
-    }
-
-    const table = document.getElementById('table-inbox-list');
-    if (!table) return;
-    table.className = 'data-table';
-
-    // ヘッダー（全選択チェックボックス付き）
-    const thead   = document.createElement('thead');
-    const hRow    = document.createElement('tr');
-    const thCheck = document.createElement('th');
-    thCheck.style.width = '36px';
-    const checkAll = document.createElement('input');
-    checkAll.type  = 'checkbox';
-    checkAll.title = '全選択';
-    checkAll.addEventListener('change', e => {
-        table.querySelectorAll('tbody input[type="checkbox"]').forEach(cb => {
-            cb.checked = e.target.checked;
-            const tr   = cb.closest('tr');
-            if (e.target.checked) {
-                selectedInboxIds.add(cb.value);
-                tr.classList.add('selected-row');
-            } else {
-                selectedInboxIds.delete(cb.value);
-                tr.classList.remove('selected-row');
-            }
-        });
-        updateTriageSelectionInfo();
-        prefillTriageForm();
-    });
-    thCheck.appendChild(checkAll);
-    hRow.appendChild(thCheck);
-    COLS.forEach(col => {
-        const th = document.createElement('th');
-        th.textContent = col;
-        hRow.appendChild(th);
-    });
-    thead.appendChild(hRow);
-
-    // ボディ
-    const tbody = document.createElement('tbody');
-    if (rows.length === 0) {
-        const tr = document.createElement('tr');
-        const td = document.createElement('td');
-        td.colSpan     = COLS.length + 1;
-        td.className   = 'empty-cell';
-        td.textContent = 'データがありません';
-        tr.appendChild(td);
-        tbody.appendChild(tr);
-    } else {
-        rows.forEach(row => {
-            const id = String(row['ID']);
-            const tr = document.createElement('tr');
-            if (selectedInboxIds.has(id)) tr.classList.add('selected-row');
-
-            const tdCheck = document.createElement('td');
-            tdCheck.style.textAlign = 'center';
-            const cb = document.createElement('input');
-            cb.type    = 'checkbox';
-            cb.value   = id;
-            cb.checked = selectedInboxIds.has(id);
-            cb.addEventListener('change', () => {
-                if (cb.checked) { selectedInboxIds.add(id);    tr.classList.add('selected-row'); }
-                else            { selectedInboxIds.delete(id); tr.classList.remove('selected-row'); }
-                updateTriageSelectionInfo();
-                prefillTriageForm();
-            });
-            tdCheck.appendChild(cb);
-            tr.appendChild(tdCheck);
-
-            COLS.forEach(col => {
-                const td  = document.createElement('td');
-                let   val = row[col] ?? '';
-                if (col === '内容' && val.length > 50) val = val.slice(0, 50) + '…';
-                td.textContent = val;
-                tr.appendChild(td);
-            });
-            tbody.appendChild(tr);
-        });
-        checkAll.checked = rows.every(r => selectedInboxIds.has(String(r['ID'])));
-    }
-
-    table.replaceChildren(thead, tbody);
-    updateTriageSelectionInfo();
-}
-
-/** 振り分けフォームを再構築する（データ区分ドロップダウン・タグ・ハブ・条件フィールド） */
-function updateTriageForm() {
-    const kubunEl = document.getElementById('triage-kubun');
-    if (kubunEl) {
-        const options = [...new Set(currentMasterData.map(r => r['(M)データ区分']).filter(Boolean))];
-        kubunEl.innerHTML = '<option value="">（選択してください）</option>';
-        options.forEach(v => {
-            const o = document.createElement('option');
-            o.value = o.textContent = v;
-            kubunEl.appendChild(o);
-        });
-        // デフォルトを現在の表示タブに合わせる
-        kubunEl.value = currentTriageKubun;
-        kubunEl.addEventListener('change', () => updateTriageConditionalFields(kubunEl.value));
-    }
-
-    const tagEl = document.getElementById('triage-tag');
-    if (tagEl) {
-        tagEl.innerHTML = '<option value="">（未設定）</option>';
-        getFilteredTags().forEach(v => {
-            const o = document.createElement('option');
-            o.value = o.textContent = v;
-            tagEl.appendChild(o);
-        });
-    }
-
-    const hubEl = document.getElementById('triage-hub');
-    if (hubEl) {
-        hubEl.innerHTML = '<option value="">（未設定）</option>';
-        getFilteredHubs().forEach(v => {
-            const o = document.createElement('option');
-            o.value = o.textContent = v;
-            hubEl.appendChild(o);
-        });
-    }
-
-    updateTriageConditionalFields(currentTriageKubun);
-    updateTriageSelectionInfo();
-}
-
-/** 振り分け先データ区分に応じて条件付きフィールドの表示・選択肢を更新する */
-function updateTriageConditionalFields(kubun) {
-    const isTask      = (kubun === 'タスク');
-    const isKnowledge = (kubun === 'ナレッジ');
-
-    function show(id, visible) {
-        const el = document.getElementById(id);
-        if (el) el.style.display = visible ? '' : 'none';
-    }
-    show('triage-status-row',   isTask || isKnowledge);
-    show('triage-priority-row', isTask);
-    show('triage-deadline-row', isTask);
-    show('triage-estimate-row', isTask);
-    show('triage-input-row',    isKnowledge);
-    show('triage-output-row',   isKnowledge);
-
-    function buildSelect(id, options) {
-        const el = document.getElementById(id);
-        if (!el) return;
-        const prev = el.value;
-        el.innerHTML = '<option value="">（未設定）</option>';
-        options.forEach(v => {
-            const o = document.createElement('option');
-            o.value = o.textContent = v;
-            el.appendChild(o);
-        });
-        el.value = prev;
-    }
-
-    if (isTask || isKnowledge) {
-        const parent   = isTask ? 'タスク' : 'ナレッジ';
-        const statuses = [...new Set(
-            currentMasterData.filter(r => r['(M)ステータス_親'] === parent)
-                .map(r => r['(M)ステータス_子']).filter(Boolean)
-        )];
-        buildSelect('triage-status', statuses);
-    }
-    if (isTask) {
-        const priorities = [...new Set(currentMasterData.map(r => r['(M)優先度']).filter(Boolean))];
-        buildSelect('triage-priority', priorities);
-    }
-    if (isKnowledge) {
-        buildSelect('triage-input',  [...new Set(currentMasterData.map(r => r['(M)Input']).filter(Boolean))]);
-        buildSelect('triage-output', [...new Set(currentMasterData.map(r => r['(M)Output']).filter(Boolean))]);
-    }
-}
-
-/** 選択件数のバッジテキストを更新する。 */
-function updateTriageSelectionInfo() {
-    const el = document.getElementById('triage-selection-info');
-    if (!el) return;
-    el.textContent = selectedInboxIds.size === 0
-        ? '行を選択してください'
-        : `${selectedInboxIds.size} 件選択中`;
-}
-
-/** 1件選択時にフォームへ現在値を自動入力する（複数選択時は内容フィールドを非表示）。 */
-function prefillTriageForm() {
-    const contentRow = document.getElementById('triage-content-row');
-    const contentEl  = document.getElementById('triage-content');
-
-    if (selectedInboxIds.size !== 1) {
-        if (contentRow) contentRow.style.display = 'none';
-        if (contentEl)  contentEl.value = '';
-        document.getElementById('triage-title').value = '';
-        document.getElementById('triage-biko').value  = '';
-        return;
-    }
-
-    const row = currentMainData.find(r => String(r['ID']) === [...selectedInboxIds][0]);
-    if (!row) return;
-
-    // 内容を表示・入力
-    if (contentRow) contentRow.style.display = '';
-    if (contentEl)  contentEl.value = row['内容'] ?? '';
-
-    document.getElementById('triage-title').value = row['タイトル'] ?? '';
-    document.getElementById('triage-biko').value  = row['備考']     ?? '';
-
-    const tagEl = document.getElementById('triage-tag');
-    if (tagEl && row['タグ']) tagEl.value = row['タグ'];
-    const hubEl = document.getElementById('triage-hub');
-    if (hubEl && row['ハブ']) hubEl.value = row['ハブ'];
-
-    // データ区分をソース行に合わせて条件フィールドも更新
-    const kubunEl = document.getElementById('triage-kubun');
-    if (kubunEl) {
-        kubunEl.value = row['データ区分'] ?? '';
-        updateTriageConditionalFields(kubunEl.value);
-    }
-
-    // 条件フィールドに現在値を反映
-    const statusEl = document.getElementById('triage-status');
-    if (statusEl && row['ステータス']) statusEl.value = row['ステータス'];
-    const priorityEl = document.getElementById('triage-priority');
-    if (priorityEl && row['優先度']) priorityEl.value = row['優先度'];
-    const deadlineEl = document.getElementById('triage-deadline');
-    if (deadlineEl && row['期限']) deadlineEl.value = row['期限'];
-    const estimateEl = document.getElementById('triage-estimate');
-    if (estimateEl && row['見積時間']) estimateEl.value = row['見積時間'];
-    const inputEl = document.getElementById('triage-input');
-    if (inputEl && row['Input']) inputEl.value = row['Input'];
-}
 
 /** 更新日時が新しい順に最大10件を表示する。 */
 function renderRecentItems() {
@@ -622,682 +237,315 @@ function renderRecentItems() {
     table.replaceChildren(thead, tbody);
 }
 
-// ===== タスクページ =====
+// ===== <select> 共通ヘルパー =====
 
-const TASK_DISPLAY_COLS = ['タイトル', 'ステータス', '優先度', '期限', '見積時間', 'カテゴリ', 'タグ', 'ハブ'];
+/** <select> のoption一覧を再構築する（先頭に空選択肢 + optionsを追加）。 */
+function populateSelectOptions(el, options, placeholder) {
+    if (!el) return;
+    el.innerHTML = `<option value="">${placeholder}</option>`;
+    options.forEach(v => {
+        const o = document.createElement('option');
+        o.value = o.textContent = v;
+        el.appendChild(o);
+    });
+}
 
-function getFilteredTasks() {
-    let rows = getFilteredMainData().filter(r => r['データ区分'] === 'タスク');
-    if (taskFilters.status)       rows = rows.filter(r => r['ステータス'] === taskFilters.status);
-    if (taskFilters.priority)     rows = rows.filter(r => r['優先度']     === taskFilters.priority);
-    if (taskFilters.tag)          rows = rows.filter(r => r['タグ']       === taskFilters.tag);
-    if (taskFilters.hub)          rows = rows.filter(r => r['ハブ']       === taskFilters.hub);
-    if (taskFilters.deadlineFrom) rows = rows.filter(r => jpDateOnly(r['期限']) >= isoToJP(taskFilters.deadlineFrom));
-    if (taskFilters.deadlineTo)   rows = rows.filter(r => jpDateOnly(r['期限']) <= isoToJP(taskFilters.deadlineTo));
+/** id指定の既存<select>のoptionを再構築し、現在選択されていた値を維持する。 */
+function rebuildSelectById(id, options, placeholder = '（未設定）') {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const prev = el.value;
+    populateSelectOptions(el, options, placeholder);
+    el.value = prev;
+}
+
+/** フィルタ用に新規<select>を生成し、現在値・changeハンドラを設定して返す。 */
+function createFilterSelect(options, placeholder, currentValue, onChange) {
+    const sel = document.createElement('select');
+    populateSelectOptions(sel, options, placeholder);
+    if (currentValue) sel.value = currentValue;
+    sel.addEventListener('change', () => onChange(sel.value));
+    return sel;
+}
+
+// ===== 編集（INBOX／タスク／ナレッジ／アイデア／アーカイブ 統合） =====
+//
+// editKubun + editFilters = 上部タブ（一覧の絞り込み用フィルタ）
+// フォーム内の edit-kubun（移動先データ区分）= 新規登録・データ区分変更の対象
+// 移動先データ区分を切り替えると、そのデータ区分で必要な属性欄だけが表示される。
+
+/** editKubun に応じたテーブル列定義を返す（タスク／ナレッジは専用列、それ以外は共通列） */
+function getEditCols(kubun) {
+    if (kubun === 'タスク')   return ['タイトル', 'ステータス', '優先度', '期限', '見積時間', 'カテゴリ', 'タグ', 'ハブ'];
+    if (kubun === 'ナレッジ') return ['タイトル', 'ステータス', 'Input', 'カテゴリ', 'タグ', 'ハブ', '更新日時'];
+    return ['カテゴリ', 'タイトル', '内容', 'タグ', 'ハブ', '作成日時', '更新日時'];
+}
+
+/** editKubun + editFilters を適用したメインデータの絞り込み結果を返す */
+function getFilteredEditItems() {
+    let rows = getFilteredMainData().filter(r => r['データ区分'] === editKubun);
+
+    // 共通フィルタ
+    if (editFilters.tag)         rows = rows.filter(r => r['タグ'] === editFilters.tag);
+    if (editFilters.hub)         rows = rows.filter(r => r['ハブ'] === editFilters.hub);
+    if (editFilters.createdFrom) rows = rows.filter(r => jpDateOnly(r['作成日時']) >= isoToJP(editFilters.createdFrom));
+    if (editFilters.createdTo)   rows = rows.filter(r => jpDateOnly(r['作成日時']) <= isoToJP(editFilters.createdTo));
+    if (editFilters.updatedFrom) rows = rows.filter(r => jpDateOnly(r['更新日時']) >= isoToJP(editFilters.updatedFrom));
+    if (editFilters.updatedTo)   rows = rows.filter(r => jpDateOnly(r['更新日時']) <= isoToJP(editFilters.updatedTo));
+
+    // タスク専用フィルタ
+    if (editKubun === 'タスク') {
+        if (editFilters.priority)     rows = rows.filter(r => r['優先度']   === editFilters.priority);
+        if (editFilters.deadlineFrom) rows = rows.filter(r => (r['期限'] || '') >= isoToJP(editFilters.deadlineFrom));
+        if (editFilters.deadlineTo)   rows = rows.filter(r => (r['期限'] || '') <= isoToJP(editFilters.deadlineTo));
+        if (editFilters.status)       rows = rows.filter(r => r['ステータス'] === editFilters.status);
+    }
+
+    // ナレッジ専用フィルタ
+    if (editKubun === 'ナレッジ') {
+        if (editFilters.input)  rows = rows.filter(r => r['Input']      === editFilters.input);
+        if (editFilters.status) rows = rows.filter(r => r['ステータス'] === editFilters.status);
+    }
+
     return rows;
 }
 
-function renderTaskFilters() {
-    const area = document.getElementById('task-filter-area');
+/** 「編集」セクション全体（対象タブ・フィルタ・一覧・フォーム）を再描画する */
+function renderEdit() {
+    renderEditKubunTabs();
+    renderEditFilters();
+    renderEditTable();
+    updateEditForm();
+}
+
+/** データ区分タブ（ラジオ、一覧の絞り込み用）を描画する */
+function renderEditKubunTabs() {
+    const container = document.getElementById('edit-kubun-tabs');
+    if (!container) return;
+
+    const kubunValues = [...new Set(currentMasterData.map(r => r['(M)データ区分']).filter(Boolean))];
+    if (kubunValues.length > 0 && !kubunValues.includes(editKubun)) {
+        editKubun = kubunValues[0];
+    }
+
+    container.innerHTML = '';
+    kubunValues.forEach(val => {
+        const count = getFilteredMainData().filter(r => r['データ区分'] === val).length;
+        const label = document.createElement('label');
+        label.className = 'triage-tab-label' + (val === editKubun ? ' active' : '');
+
+        const radio = document.createElement('input');
+        radio.type    = 'radio';
+        radio.name    = 'edit-kubun-tab';
+        radio.value   = val;
+        radio.checked = (val === editKubun);
+        radio.addEventListener('change', () => {
+            editKubun = val;
+            editFilters = {};
+            selectedEditIds.clear();
+            renderEditFilters();
+            renderEditTable();
+            updateEditForm();
+            clearEditForm();
+        });
+
+        label.append(radio, document.createTextNode(` ${val}（${count}）`));
+        container.appendChild(label);
+    });
+}
+
+/** editKubun に応じたフィルタコントロールを描画する */
+function renderEditFilters() {
+    const area = document.getElementById('edit-filter-area');
     if (!area) return;
     area.innerHTML = '';
 
-    function makeSelect(options, placeholder) {
-        const sel = document.createElement('select');
-        const all = document.createElement('option');
-        all.value = ''; all.textContent = placeholder;
-        sel.appendChild(all);
-        options.forEach(v => {
-            const o = document.createElement('option');
-            o.value = o.textContent = v;
-            sel.appendChild(o);
-        });
-        return sel;
-    }
-    function makeRow(labelText, ctrl, key) {
+    function makeRow(labelText, el) {
         const row = document.createElement('div');
         row.className = 'triage-filter-row';
         const lbl = document.createElement('span');
         lbl.className = 'triage-filter-label';
         lbl.textContent = labelText;
-        row.append(lbl, ctrl);
+        row.append(lbl, el);
         area.appendChild(row);
-        ctrl.value = taskFilters[key] || '';
-        ctrl.addEventListener('change', () => { taskFilters[key] = ctrl.value; renderTaskTable(); });
+    }
+    function makeSelect(options, placeholder, key) {
+        return createFilterSelect(options, placeholder, editFilters[key], v => {
+            editFilters[key] = v;
+            renderEditTable();
+        });
+    }
+    function makeDateRange(fromKey, toKey) {
+        const wrap = document.createElement('div');
+        wrap.className = 'filter-date-range';
+        const fromInp = document.createElement('input');
+        fromInp.type = 'date'; fromInp.className = 'filter-date-input';
+        fromInp.value = editFilters[fromKey] || '';
+        fromInp.addEventListener('change', () => { editFilters[fromKey] = fromInp.value; renderEditTable(); });
+        const toInp = document.createElement('input');
+        toInp.type = 'date'; toInp.className = 'filter-date-input';
+        toInp.value = editFilters[toKey] || '';
+        toInp.addEventListener('change', () => { editFilters[toKey] = toInp.value; renderEditTable(); });
+        wrap.append(fromInp, document.createTextNode(' 〜 '), toInp);
+        return wrap;
     }
 
-    const statuses = [...new Set(
-        currentMasterData.filter(r => r['(M)ステータス_親'] === 'タスク')
-            .map(r => r['(M)ステータス_子']).filter(Boolean)
-    )];
-    const priorities = [...new Set(currentMasterData.map(r => r['(M)優先度']).filter(Boolean))];
+    // 共通フィルタ
+    makeRow('タグ',    makeSelect(getFilteredTags(), 'すべて', 'tag'));
+    makeRow('ハブ',    makeSelect(getFilteredHubs(), 'すべて', 'hub'));
+    makeRow('作成日時', makeDateRange('createdFrom', 'createdTo'));
+    makeRow('更新日時', makeDateRange('updatedFrom', 'updatedTo'));
 
-    makeRow('ステータス', makeSelect(statuses,        'すべて'), 'status');
-    makeRow('優先度',     makeSelect(priorities,       'すべて'), 'priority');
-    makeRow('タグ',       makeSelect(getFilteredTags(), 'すべて'), 'tag');
-    makeRow('ハブ',       makeSelect(getFilteredHubs(), 'すべて'), 'hub');
+    // タスク専用フィルタ
+    if (editKubun === 'タスク') {
+        const priorities = [...new Set(currentMasterData.map(r => r['(M)優先度']).filter(Boolean))];
+        makeRow('優先度', makeSelect(priorities, 'すべて', 'priority'));
+        makeRow('期限',   makeDateRange('deadlineFrom', 'deadlineTo'));
+        const taskStatuses = [...new Set(
+            currentMasterData.filter(r => r['(M)ステータス_親'] === 'タスク')
+                .map(r => r['(M)ステータス_子']).filter(Boolean)
+        )];
+        makeRow('ステータス', makeSelect(taskStatuses, 'すべて', 'status'));
+    }
 
-    // 期限 from/to
-    const dateRow  = document.createElement('div');
-    dateRow.className = 'triage-filter-row';
-    const dateLbl  = document.createElement('span');
-    dateLbl.className = 'triage-filter-label';
-    dateLbl.textContent = '期限';
-    const dateRange = document.createElement('div');
-    dateRange.className = 'filter-date-range';
-    const fromInp = document.createElement('input'); fromInp.type = 'date'; fromInp.className = 'filter-date-input';
-    const sep     = document.createElement('span');  sep.textContent = '〜';
-    const toInp   = document.createElement('input'); toInp.type = 'date'; toInp.className = 'filter-date-input';
-    fromInp.value = taskFilters.deadlineFrom || '';
-    toInp.value   = taskFilters.deadlineTo   || '';
-    fromInp.addEventListener('change', () => { taskFilters.deadlineFrom = fromInp.value; renderTaskTable(); });
-    toInp.addEventListener('change',   () => { taskFilters.deadlineTo   = toInp.value;   renderTaskTable(); });
-    dateRange.append(fromInp, sep, toInp);
-    dateRow.append(dateLbl, dateRange);
-    area.appendChild(dateRow);
+    // ナレッジ専用フィルタ
+    if (editKubun === 'ナレッジ') {
+        const inputs = [...new Set(currentMasterData.map(r => r['(M)Input']).filter(Boolean))];
+        makeRow('Input', makeSelect(inputs, 'すべて', 'input'));
+        const knowledgeStatuses = [...new Set(
+            currentMasterData.filter(r => r['(M)ステータス_親'] === 'ナレッジ')
+                .map(r => r['(M)ステータス_子']).filter(Boolean)
+        )];
+        makeRow('ステータス', makeSelect(knowledgeStatuses, 'すべて', 'status'));
+    }
 }
 
-function renderTaskTable() {
-    const tasks = getFilteredTasks();
+/** 一覧テーブルを描画する（editKubun + editFilters を適用） */
+function renderEditTable() {
+    const cols = getEditCols(editKubun);
+    const rows = getFilteredEditItems();
 
-    const summaryEl = document.getElementById('summary-task-list');
+    const summaryEl = document.getElementById('summary-edit');
     if (summaryEl) {
-        summaryEl.innerHTML =
-            `タスク一覧・編集<span class="expander-count">${tasks.length} 件</span>`;
+        summaryEl.innerHTML = `編集<span class="expander-count">${rows.length} 件</span>`;
     }
 
-    const table = document.getElementById('table-task-list');
+    const table = document.getElementById('table-edit-list');
     if (!table) return;
     table.className = 'data-table';
 
-    const thead = document.createElement('thead');
-    const hRow  = document.createElement('tr');
-    const thCb  = document.createElement('th'); thCb.textContent = '';
-    hRow.appendChild(thCb);
-    TASK_DISPLAY_COLS.forEach(col => {
+    // ヘッダー（全選択チェックボックス付き）
+    const thead   = document.createElement('thead');
+    const hRow    = document.createElement('tr');
+    const thCheck = document.createElement('th');
+    thCheck.style.width = '36px';
+    const checkAll = document.createElement('input');
+    checkAll.type  = 'checkbox';
+    checkAll.title = '全選択';
+    checkAll.addEventListener('change', e => {
+        table.querySelectorAll('tbody input[type="checkbox"]').forEach(cb => {
+            cb.checked = e.target.checked;
+            const tr   = cb.closest('tr');
+            if (e.target.checked) {
+                selectedEditIds.add(cb.value);
+                tr.classList.add('selected-row');
+            } else {
+                selectedEditIds.delete(cb.value);
+                tr.classList.remove('selected-row');
+            }
+        });
+        updateEditSelectionInfo();
+        prefillEditForm();
+    });
+    thCheck.appendChild(checkAll);
+    hRow.appendChild(thCheck);
+    cols.forEach(col => {
         const th = document.createElement('th');
         th.textContent = col;
         hRow.appendChild(th);
     });
     thead.appendChild(hRow);
 
+    // ボディ
     const tbody = document.createElement('tbody');
-    if (tasks.length === 0) {
+    if (rows.length === 0) {
         const tr = document.createElement('tr');
         const td = document.createElement('td');
-        td.colSpan = TASK_DISPLAY_COLS.length + 1;
-        td.className = 'empty-cell';
-        td.textContent = 'タスクがありません';
+        td.colSpan     = cols.length + 1;
+        td.className   = 'empty-cell';
+        td.textContent = 'データがありません';
         tr.appendChild(td);
         tbody.appendChild(tr);
     } else {
-        tasks.forEach(row => {
-            const tr = document.createElement('tr');
+        rows.forEach(row => {
             const id = String(row['ID']);
-            if (selectedTaskIds.has(id)) tr.classList.add('selected-row');
+            const tr = document.createElement('tr');
+            if (selectedEditIds.has(id)) tr.classList.add('selected-row');
 
-            const tdCb = document.createElement('td');
-            const cb   = document.createElement('input');
-            cb.type = 'checkbox';
-            cb.checked = selectedTaskIds.has(id);
+            const tdCheck = document.createElement('td');
+            tdCheck.style.textAlign = 'center';
+            const cb = document.createElement('input');
+            cb.type    = 'checkbox';
+            cb.value   = id;
+            cb.checked = selectedEditIds.has(id);
             cb.addEventListener('change', () => {
-                if (cb.checked) selectedTaskIds.add(id);
-                else            selectedTaskIds.delete(id);
-                tr.classList.toggle('selected-row', cb.checked);
-                updateTaskSelectionInfo();
-                if (selectedTaskIds.size === 1) prefillTaskForm();
-                else if (selectedTaskIds.size === 0) clearTaskForm();
+                if (cb.checked) { selectedEditIds.add(id);    tr.classList.add('selected-row'); }
+                else            { selectedEditIds.delete(id); tr.classList.remove('selected-row'); }
+                updateEditSelectionInfo();
+                prefillEditForm();
             });
-            tdCb.appendChild(cb);
-            tr.appendChild(tdCb);
+            tdCheck.appendChild(cb);
+            tr.appendChild(tdCheck);
 
-            TASK_DISPLAY_COLS.forEach(col => {
+            cols.forEach(col => {
                 const td  = document.createElement('td');
                 let   val = row[col] ?? '';
-                if (col === 'タイトル' && val.length > 30) val = val.slice(0, 30) + '…';
+                if ((col === '内容' || col === 'タイトル') && val.length > 40) val = val.slice(0, 40) + '…';
                 td.textContent = val;
                 tr.appendChild(td);
             });
-
             tbody.appendChild(tr);
         });
+        checkAll.checked = rows.every(r => selectedEditIds.has(String(r['ID'])));
     }
 
     table.replaceChildren(thead, tbody);
-    updateTaskSelectionInfo();
+    updateEditSelectionInfo();
 }
 
-function updateTaskSelectionInfo() {
-    const el = document.getElementById('task-selection-info');
+/** 選択件数のバッジテキストを更新する。 */
+function updateEditSelectionInfo() {
+    const el = document.getElementById('edit-selection-info');
     if (!el) return;
-    el.textContent = selectedTaskIds.size === 0
+    el.textContent = selectedEditIds.size === 0
         ? '行を選択してください'
-        : `${selectedTaskIds.size} 件選択中`;
+        : `${selectedEditIds.size} 件選択中`;
 }
 
-function updateTaskEditForm() {
-    function buildSelect(id, options) {
-        const el = document.getElementById(id);
-        if (!el) return;
-        const prev = el.value;
-        el.innerHTML = '<option value="">（未設定）</option>';
-        options.forEach(v => {
-            const o = document.createElement('option');
-            o.value = o.textContent = v;
-            el.appendChild(o);
-        });
-        el.value = prev;
-    }
-    const statuses = [...new Set(
-        currentMasterData.filter(r => r['(M)ステータス_親'] === 'タスク')
-            .map(r => r['(M)ステータス_子']).filter(Boolean)
-    )];
-    buildSelect('task-edit-status',   statuses);
-    buildSelect('task-edit-priority', [...new Set(currentMasterData.map(r => r['(M)優先度']).filter(Boolean))]);
-    buildSelect('task-edit-category', [...new Set(currentMasterData.map(r => r['(M)カテゴリ']).filter(Boolean))]);
-    buildSelect('task-edit-tag',      getFilteredTags());
-    buildSelect('task-edit-hub',      getFilteredHubs());
-}
-
-function prefillTaskForm() {
-    if (selectedTaskIds.size !== 1) return;
-    const id  = [...selectedTaskIds][0];
-    const row = currentMainData.find(r => String(r['ID']) === id);
-    if (!row) return;
-    function set(elId, val) {
-        const el = document.getElementById(elId);
-        if (el) el.value = val ?? '';
-    }
-    updateTaskEditForm();
-    set('task-edit-title',    row['タイトル']);
-    set('task-edit-content',  row['内容']);
-    set('task-edit-biko',     row['備考']);
-    set('task-edit-status',   row['ステータス']);
-    set('task-edit-priority', row['優先度']);
-    set('task-edit-deadline', (row['期限'] || '').replace(/\//g, '-').slice(0, 10));
-    set('task-edit-estimate', row['見積時間']);
-    set('task-edit-category', row['カテゴリ']);
-    set('task-edit-tag',      row['タグ']);
-    set('task-edit-hub',      row['ハブ']);
-}
-
-function clearTaskForm() {
-    ['task-edit-title','task-edit-content','task-edit-biko','task-edit-status',
-     'task-edit-priority','task-edit-deadline','task-edit-estimate',
-     'task-edit-category','task-edit-tag','task-edit-hub'].forEach(id => {
-        const el = document.getElementById(id);
-        if (el) el.value = '';
-    });
-}
-
-document.getElementById('task-apply-btn')?.addEventListener('click', () => {
-    if (selectedTaskIds.size === 0) { alert('編集するタスクを選択してください'); return; }
-
-    const title    = document.getElementById('task-edit-title').value.trim();
-    const content  = document.getElementById('task-edit-content').value.trim();
-    const biko     = document.getElementById('task-edit-biko').value.trim();
-    const status   = document.getElementById('task-edit-status').value;
-    const priority = document.getElementById('task-edit-priority').value;
-    const deadline = document.getElementById('task-edit-deadline').value;
-    const estimate = document.getElementById('task-edit-estimate').value;
-    const category = document.getElementById('task-edit-category').value;
-    const tag      = document.getElementById('task-edit-tag').value;
-    const hub      = document.getElementById('task-edit-hub').value;
-
-    const now = new Date();
-    const pad = n => String(n).padStart(2, '0');
-    const ts  = `${now.getFullYear()}/${pad(now.getMonth() + 1)}/${pad(now.getDate())} `
-              + `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
-
-    selectedTaskIds.forEach(id => {
-        const row = currentMainData.find(r => String(r['ID']) === id);
-        if (!row) return;
-        row['更新日時'] = ts;
-        if (title)    row['タイトル']   = title;
-        if (content)  row['内容']       = content;
-        if (biko)     row['備考']       = biko;
-        if (status)   row['ステータス'] = status;
-        if (priority) row['優先度']     = priority;
-        if (deadline) row['期限']       = deadline.replace(/-/g, '/');
-        if (estimate) row['見積時間']   = estimate;
-        if (category) row['カテゴリ']   = category;
-        if (tag)      row['タグ']       = tag;
-        if (hub)      row['ハブ']       = hub;
-    });
-
-    selectedTaskIds.clear();
-    saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
-    renderTaskList();
-});
-
-/** タスク直接入力フォームのドロップダウンを再構築する */
-function renderTaskDirectForm() {
-    function rebuildSelect(id, options, placeholder) {
-        const el = document.getElementById(id);
-        if (!el) return;
-        const prev = el.value;
-        el.innerHTML = `<option value="">${placeholder}</option>`;
-        options.forEach(v => {
-            const o = document.createElement('option');
-            o.value = o.textContent = v;
-            el.appendChild(o);
-        });
-        el.value = prev;
-    }
-    const statuses = [...new Set(
-        currentMasterData.filter(r => r['(M)ステータス_親'] === 'タスク')
-            .map(r => r['(M)ステータス_子']).filter(Boolean)
-    )];
-    rebuildSelect('task-new-status',   statuses, '（未設定）');
-    rebuildSelect('task-new-priority', [...new Set(currentMasterData.map(r => r['(M)優先度']).filter(Boolean))], '（未設定）');
-    rebuildSelect('task-new-category', [...new Set(currentMasterData.map(r => r['(M)カテゴリ']).filter(Boolean))], '（未設定）');
-    rebuildSelect('task-new-tag',      getFilteredTags(), '（未設定）');
-    rebuildSelect('task-new-hub',      getFilteredHubs(), '（未設定）');
-    const badge = document.getElementById('task-new-badge');
-    if (badge && !badge.textContent.startsWith('✓')) {
-        badge.textContent = currentCategory === 'すべて' ? 'カテゴリ: 未設定' : `カテゴリ: ${currentCategory}`;
-    }
-}
-
-document.getElementById('task-new-submit-btn')?.addEventListener('click', () => {
-    const title    = document.getElementById('task-new-title').value.trim();
-    const content  = document.getElementById('task-new-content').value.trim();
-    const biko     = document.getElementById('task-new-biko').value.trim();
-    const status   = document.getElementById('task-new-status').value;
-    const priority = document.getElementById('task-new-priority').value;
-    const deadline = document.getElementById('task-new-deadline').value;
-    const estimate = document.getElementById('task-new-estimate').value;
-    const category = document.getElementById('task-new-category').value;
-    const tag      = document.getElementById('task-new-tag').value;
-    const hub      = document.getElementById('task-new-hub').value;
-
-    const maxId = currentMainData.reduce((max, row) => {
-        const id = parseInt(row['ID'], 10);
-        return isNaN(id) ? max : Math.max(max, id);
-    }, 0);
-    const now = new Date();
-    const pad = n => String(n).padStart(2, '0');
-    const ts  = `${now.getFullYear()}/${pad(now.getMonth() + 1)}/${pad(now.getDate())} `
-              + `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
-
-    const entry = Object.fromEntries(MAIN_DATA_COLUMNS.map(col => [col, '']));
-    entry['ID']        = String(maxId + 1);
-    entry['データ区分'] = 'タスク';
-    entry['カテゴリ']   = category || (currentCategory === 'すべて' ? '' : currentCategory);
-    entry['タイトル']   = title;
-    entry['内容']       = content;
-    entry['備考']       = biko;
-    entry['ステータス'] = status;
-    entry['優先度']     = priority;
-    entry['期限']       = deadline ? deadline.replace(/-/g, '/') : '';
-    entry['見積時間']   = estimate;
-    entry['タグ']       = tag;
-    entry['ハブ']       = hub;
-    entry['作成日時']   = ts;
-    entry['更新日時']   = ts;
-
-    currentMainData.push(entry);
-    saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
-
-    ['task-new-title','task-new-content','task-new-biko','task-new-status',
-     'task-new-priority','task-new-deadline','task-new-estimate',
-     'task-new-category','task-new-tag','task-new-hub'].forEach(id => {
-        const el = document.getElementById(id);
-        if (el) el.value = '';
-    });
-
-    const badge = document.getElementById('task-new-badge');
-    if (badge) {
-        badge.textContent = `✓ 登録しました（ID: ${entry['ID']}）`;
-        setTimeout(() => renderTaskDirectForm(), 2000);
-    }
-    renderTaskTable();
-});
-
-// ===== ナレッジページ =====
-
-const KNOWLEDGE_DISPLAY_COLS = ['タイトル', 'ステータス', 'Input', 'カテゴリ', 'タグ', 'ハブ', '更新日時'];
-
-function getFilteredKnowledge() {
-    let rows = getFilteredMainData().filter(r => r['データ区分'] === 'ナレッジ');
-    if (knowledgeFilters.status) rows = rows.filter(r => r['ステータス'] === knowledgeFilters.status);
-    if (knowledgeFilters.input)  rows = rows.filter(r => r['Input']      === knowledgeFilters.input);
-    if (knowledgeFilters.tag)    rows = rows.filter(r => r['タグ']       === knowledgeFilters.tag);
-    if (knowledgeFilters.hub)    rows = rows.filter(r => r['ハブ']       === knowledgeFilters.hub);
-    return rows;
-}
-
-function renderKnowledgeDirectForm() {
-    function rebuildSelect(id, options, placeholder) {
-        const el = document.getElementById(id);
-        if (!el) return;
-        const prev = el.value;
-        el.innerHTML = `<option value="">${placeholder}</option>`;
-        options.forEach(v => {
-            const o = document.createElement('option');
-            o.value = o.textContent = v;
-            el.appendChild(o);
-        });
-        el.value = prev;
-    }
-    const statuses = [...new Set(
-        currentMasterData.filter(r => r['(M)ステータス_親'] === 'ナレッジ')
-            .map(r => r['(M)ステータス_子']).filter(Boolean)
-    )];
-    rebuildSelect('knowledge-new-status',   statuses, '（未設定）');
-    rebuildSelect('knowledge-new-input',    [...new Set(currentMasterData.map(r => r['(M)Input']).filter(Boolean))],  '（未設定）');
-    rebuildSelect('knowledge-new-output',   [...new Set(currentMasterData.map(r => r['(M)Output']).filter(Boolean))], '（未設定）');
-    rebuildSelect('knowledge-new-category', [...new Set(currentMasterData.map(r => r['(M)カテゴリ']).filter(Boolean))], '（未設定）');
-    rebuildSelect('knowledge-new-tag',      getFilteredTags(), '（未設定）');
-    rebuildSelect('knowledge-new-hub',      getFilteredHubs(), '（未設定）');
-    const badge = document.getElementById('knowledge-new-badge');
-    if (badge && !badge.textContent.startsWith('✓')) {
-        badge.textContent = currentCategory === 'すべて' ? 'カテゴリ: 未設定' : `カテゴリ: ${currentCategory}`;
-    }
-}
-
-function renderKnowledgeFilters() {
-    const area = document.getElementById('knowledge-filter-area');
-    if (!area) return;
-    area.innerHTML = '';
-
-    function makeSelect(options, placeholder) {
-        const sel = document.createElement('select');
-        const all = document.createElement('option');
-        all.value = ''; all.textContent = placeholder;
-        sel.appendChild(all);
-        options.forEach(v => {
-            const o = document.createElement('option');
-            o.value = o.textContent = v;
-            sel.appendChild(o);
-        });
-        return sel;
-    }
-    function makeRow(labelText, ctrl, key) {
-        const row = document.createElement('div');
-        row.className = 'triage-filter-row';
-        const lbl = document.createElement('span');
-        lbl.className = 'triage-filter-label';
-        lbl.textContent = labelText;
-        row.append(lbl, ctrl);
-        area.appendChild(row);
-        ctrl.value = knowledgeFilters[key] || '';
-        ctrl.addEventListener('change', () => { knowledgeFilters[key] = ctrl.value; renderKnowledgeTable(); });
-    }
-
-    const statuses = [...new Set(
-        currentMasterData.filter(r => r['(M)ステータス_親'] === 'ナレッジ')
-            .map(r => r['(M)ステータス_子']).filter(Boolean)
-    )];
-    const inputs = [...new Set(currentMasterData.map(r => r['(M)Input']).filter(Boolean))];
-
-    makeRow('ステータス', makeSelect(statuses,        'すべて'), 'status');
-    makeRow('Input',      makeSelect(inputs,           'すべて'), 'input');
-    makeRow('タグ',       makeSelect(getFilteredTags(), 'すべて'), 'tag');
-    makeRow('ハブ',       makeSelect(getFilteredHubs(), 'すべて'), 'hub');
-}
-
-function renderKnowledgeTable() {
-    const items = getFilteredKnowledge();
-
-    const summaryEl = document.getElementById('summary-knowledge-list');
-    if (summaryEl) {
-        summaryEl.innerHTML =
-            `ナレッジ一覧・編集<span class="expander-count">${items.length} 件</span>`;
-    }
-
-    const table = document.getElementById('table-knowledge-list');
-    if (!table) return;
-    table.className = 'data-table';
-
-    const thead = document.createElement('thead');
-    const hRow  = document.createElement('tr');
-    const thCb  = document.createElement('th'); thCb.textContent = '';
-    hRow.appendChild(thCb);
-    KNOWLEDGE_DISPLAY_COLS.forEach(col => {
-        const th = document.createElement('th');
-        th.textContent = col;
-        hRow.appendChild(th);
-    });
-    thead.appendChild(hRow);
-
-    const tbody = document.createElement('tbody');
-    if (items.length === 0) {
-        const tr = document.createElement('tr');
-        const td = document.createElement('td');
-        td.colSpan = KNOWLEDGE_DISPLAY_COLS.length + 1;
-        td.className = 'empty-cell';
-        td.textContent = 'ナレッジがありません';
-        tr.appendChild(td);
-        tbody.appendChild(tr);
-    } else {
-        items.forEach(row => {
-            const tr = document.createElement('tr');
-            const id = String(row['ID']);
-            if (selectedKnowledgeIds.has(id)) tr.classList.add('selected-row');
-
-            const tdCb = document.createElement('td');
-            const cb   = document.createElement('input');
-            cb.type = 'checkbox';
-            cb.checked = selectedKnowledgeIds.has(id);
-            cb.addEventListener('change', () => {
-                if (cb.checked) selectedKnowledgeIds.add(id);
-                else            selectedKnowledgeIds.delete(id);
-                tr.classList.toggle('selected-row', cb.checked);
-                updateKnowledgeSelectionInfo();
-                if (selectedKnowledgeIds.size === 1) prefillKnowledgeForm();
-                else if (selectedKnowledgeIds.size === 0) clearKnowledgeForm();
-            });
-            tdCb.appendChild(cb);
-            tr.appendChild(tdCb);
-
-            KNOWLEDGE_DISPLAY_COLS.forEach(col => {
-                const td  = document.createElement('td');
-                let   val = row[col] ?? '';
-                if (col === 'タイトル' && val.length > 30) val = val.slice(0, 30) + '…';
-                td.textContent = val;
-                tr.appendChild(td);
-            });
-
-            tbody.appendChild(tr);
-        });
-    }
-
-    table.replaceChildren(thead, tbody);
-    updateKnowledgeSelectionInfo();
-}
-
-function updateKnowledgeSelectionInfo() {
-    const el = document.getElementById('knowledge-selection-info');
-    if (!el) return;
-    el.textContent = selectedKnowledgeIds.size === 0
-        ? '行を選択してください'
-        : `${selectedKnowledgeIds.size} 件選択中`;
-}
-
-function updateKnowledgeEditForm() {
-    function buildSelect(id, options) {
-        const el = document.getElementById(id);
-        if (!el) return;
-        const prev = el.value;
-        el.innerHTML = '<option value="">（未設定）</option>';
-        options.forEach(v => {
-            const o = document.createElement('option');
-            o.value = o.textContent = v;
-            el.appendChild(o);
-        });
-        el.value = prev;
-    }
-    const statuses = [...new Set(
-        currentMasterData.filter(r => r['(M)ステータス_親'] === 'ナレッジ')
-            .map(r => r['(M)ステータス_子']).filter(Boolean)
-    )];
-    buildSelect('knowledge-edit-status',   statuses);
-    buildSelect('knowledge-edit-input',    [...new Set(currentMasterData.map(r => r['(M)Input']).filter(Boolean))]);
-    buildSelect('knowledge-edit-output',   [...new Set(currentMasterData.map(r => r['(M)Output']).filter(Boolean))]);
-    buildSelect('knowledge-edit-category', [...new Set(currentMasterData.map(r => r['(M)カテゴリ']).filter(Boolean))]);
-    buildSelect('knowledge-edit-tag',      getFilteredTags());
-    buildSelect('knowledge-edit-hub',      getFilteredHubs());
-}
-
-function prefillKnowledgeForm() {
-    if (selectedKnowledgeIds.size !== 1) return;
-    const id  = [...selectedKnowledgeIds][0];
-    const row = currentMainData.find(r => String(r['ID']) === id);
-    if (!row) return;
-    function set(elId, val) {
-        const el = document.getElementById(elId);
-        if (el) el.value = val ?? '';
-    }
-    updateKnowledgeEditForm();
-    set('knowledge-edit-title',    row['タイトル']);
-    set('knowledge-edit-content',  row['内容']);
-    set('knowledge-edit-biko',     row['備考']);
-    set('knowledge-edit-status',   row['ステータス']);
-    set('knowledge-edit-input',    row['Input']);
-    set('knowledge-edit-output',   row['Output']);
-    set('knowledge-edit-category', row['カテゴリ']);
-    set('knowledge-edit-tag',      row['タグ']);
-    set('knowledge-edit-hub',      row['ハブ']);
-}
-
-function clearKnowledgeForm() {
-    ['knowledge-edit-title','knowledge-edit-content','knowledge-edit-biko','knowledge-edit-status',
-     'knowledge-edit-input','knowledge-edit-output','knowledge-edit-category','knowledge-edit-tag','knowledge-edit-hub'].forEach(id => {
-        const el = document.getElementById(id);
-        if (el) el.value = '';
-    });
-}
-
-document.getElementById('knowledge-apply-btn')?.addEventListener('click', () => {
-    if (selectedKnowledgeIds.size === 0) { alert('編集するナレッジを選択してください'); return; }
-
-    const title    = document.getElementById('knowledge-edit-title').value.trim();
-    const content  = document.getElementById('knowledge-edit-content').value.trim();
-    const biko     = document.getElementById('knowledge-edit-biko').value.trim();
-    const status   = document.getElementById('knowledge-edit-status').value;
-    const input    = document.getElementById('knowledge-edit-input').value;
-    const output   = document.getElementById('knowledge-edit-output').value;
-    const category = document.getElementById('knowledge-edit-category').value;
-    const tag      = document.getElementById('knowledge-edit-tag').value;
-    const hub      = document.getElementById('knowledge-edit-hub').value;
-
-    const now = new Date();
-    const pad = n => String(n).padStart(2, '0');
-    const ts  = `${now.getFullYear()}/${pad(now.getMonth() + 1)}/${pad(now.getDate())} `
-              + `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
-
-    selectedKnowledgeIds.forEach(id => {
-        const row = currentMainData.find(r => String(r['ID']) === id);
-        if (!row) return;
-        row['更新日時'] = ts;
-        if (title)    row['タイトル']   = title;
-        if (content)  row['内容']       = content;
-        if (biko)     row['備考']       = biko;
-        if (status)   row['ステータス'] = status;
-        if (input)    row['Input']      = input;
-        if (output)   row['Output']     = output;
-        if (category) row['カテゴリ']   = category;
-        if (tag)      row['タグ']       = tag;
-        if (hub)      row['ハブ']       = hub;
-    });
-
-    selectedKnowledgeIds.clear();
-    saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
-    renderKnowledge();
-});
-
-document.getElementById('knowledge-new-submit-btn')?.addEventListener('click', () => {
-    const title    = document.getElementById('knowledge-new-title').value.trim();
-    const content  = document.getElementById('knowledge-new-content').value.trim();
-    const biko     = document.getElementById('knowledge-new-biko').value.trim();
-    const status   = document.getElementById('knowledge-new-status').value;
-    const input    = document.getElementById('knowledge-new-input').value;
-    const output   = document.getElementById('knowledge-new-output').value;
-    const category = document.getElementById('knowledge-new-category').value;
-    const tag      = document.getElementById('knowledge-new-tag').value;
-    const hub      = document.getElementById('knowledge-new-hub').value;
-
-    const maxId = currentMainData.reduce((max, row) => {
-        const id = parseInt(row['ID'], 10);
-        return isNaN(id) ? max : Math.max(max, id);
-    }, 0);
-    const now = new Date();
-    const pad = n => String(n).padStart(2, '0');
-    const ts  = `${now.getFullYear()}/${pad(now.getMonth() + 1)}/${pad(now.getDate())} `
-              + `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
-
-    const entry = Object.fromEntries(MAIN_DATA_COLUMNS.map(col => [col, '']));
-    entry['ID']        = String(maxId + 1);
-    entry['データ区分'] = 'ナレッジ';
-    entry['カテゴリ']   = category || (currentCategory === 'すべて' ? '' : currentCategory);
-    entry['タイトル']   = title;
-    entry['内容']       = content;
-    entry['備考']       = biko;
-    entry['ステータス'] = status;
-    entry['Input']      = input;
-    entry['Output']     = output;
-    entry['タグ']       = tag;
-    entry['ハブ']       = hub;
-    entry['作成日時']   = ts;
-    entry['更新日時']   = ts;
-
-    currentMainData.push(entry);
-    saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
-
-    ['knowledge-new-title','knowledge-new-content','knowledge-new-biko','knowledge-new-status',
-     'knowledge-new-input','knowledge-new-output','knowledge-new-category','knowledge-new-tag','knowledge-new-hub'].forEach(id => {
-        const el = document.getElementById(id);
-        if (el) el.value = '';
-    });
-
-    const badge = document.getElementById('knowledge-new-badge');
-    if (badge) {
-        badge.textContent = `✓ 登録しました（ID: ${entry['ID']}）`;
-        setTimeout(() => renderKnowledgeDirectForm(), 2000);
-    }
-    renderKnowledgeTable();
-});
-
-// ===== 直接データ入力フォーム =====
-
-/** 直接データ入力フォームのドロップダウンをマスタデータで再構築する */
-function renderDirectEntryForm() {
-    function rebuildSelect(id, options, placeholder) {
-        const el = document.getElementById(id);
-        if (!el) return;
-        const prev = el.value;
-        el.innerHTML = `<option value="">${placeholder}</option>`;
-        options.forEach(v => {
-            const o = document.createElement('option');
-            o.value = o.textContent = v;
-            el.appendChild(o);
-        });
-        el.value = prev;
-    }
-
+/** フォームを再構築する（移動先データ区分ドロップダウン・タグ・ハブ・カテゴリ・条件フィールド） */
+function updateEditForm() {
     const kubunOptions = [...new Set(currentMasterData.map(r => r['(M)データ区分']).filter(Boolean))];
-    rebuildSelect('direct-kubun', kubunOptions, '（選択してください）');
-
-    const kubunEl = document.getElementById('direct-kubun');
-    if (kubunEl && !kubunEl.dataset.directListenerAttached) {
-        kubunEl.addEventListener('change', () => updateDirectConditionalFields(kubunEl.value));
-        kubunEl.dataset.directListenerAttached = 'true';
+    rebuildSelectById('edit-kubun', kubunOptions, '（選択してください）');
+    const kubunEl = document.getElementById('edit-kubun');
+    if (kubunEl) {
+        // デフォルトを現在の表示タブに合わせる
+        kubunEl.value = editKubun;
+        if (!kubunEl.dataset.editListenerAttached) {
+            kubunEl.addEventListener('change', () => updateEditConditionalFields(kubunEl.value));
+            kubunEl.dataset.editListenerAttached = 'true';
+        }
     }
 
-    rebuildSelect('direct-tag', getFilteredTags(), '（未設定）');
-    rebuildSelect('direct-hub', getFilteredHubs(), '（未設定）');
+    rebuildSelectById('edit-tag',      getFilteredTags());
+    rebuildSelectById('edit-hub',      getFilteredHubs());
+    rebuildSelectById('edit-category', [...new Set(currentMasterData.map(r => r['(M)カテゴリ']).filter(Boolean))]);
 
-    const badge = document.getElementById('direct-category-badge');
-    if (badge) {
-        badge.textContent = currentCategory === 'すべて' ? 'カテゴリ: 未設定' : `カテゴリ: ${currentCategory}`;
-    }
-
-    updateDirectConditionalFields(kubunEl?.value || '');
+    updateEditConditionalFields(kubunEl?.value || editKubun);
+    updateEditSelectionInfo();
 }
 
-/** 直接入力フォームの条件付きフィールドをデータ区分に応じて表示/非表示・選択肢再構築する */
-function updateDirectConditionalFields(kubun) {
+/** 移動先データ区分に応じて条件付きフィールドの表示・選択肢を更新する */
+function updateEditConditionalFields(kubun) {
     const isTask      = (kubun === 'タスク');
     const isKnowledge = (kubun === 'ナレッジ');
 
@@ -1305,25 +553,12 @@ function updateDirectConditionalFields(kubun) {
         const el = document.getElementById(id);
         if (el) el.style.display = visible ? '' : 'none';
     }
-    function buildOptions(id, options) {
-        const el = document.getElementById(id);
-        if (!el) return;
-        const prev = el.value;
-        el.innerHTML = '<option value="">（未設定）</option>';
-        options.forEach(v => {
-            const o = document.createElement('option');
-            o.value = o.textContent = v;
-            el.appendChild(o);
-        });
-        el.value = prev;
-    }
-
-    show('direct-status-row',   isTask || isKnowledge);
-    show('direct-priority-row', isTask);
-    show('direct-deadline-row', isTask);
-    show('direct-estimate-row', isTask);
-    show('direct-input-row',    isKnowledge);
-    show('direct-output-row',   isKnowledge);
+    show('edit-status-row',   isTask || isKnowledge);
+    show('edit-priority-row', isTask);
+    show('edit-deadline-row', isTask);
+    show('edit-estimate-row', isTask);
+    show('edit-input-row',    isKnowledge);
+    show('edit-output-row',   isKnowledge);
 
     if (isTask || isKnowledge) {
         const parent   = isTask ? 'タスク' : 'ナレッジ';
@@ -1331,40 +566,101 @@ function updateDirectConditionalFields(kubun) {
             currentMasterData.filter(r => r['(M)ステータス_親'] === parent)
                 .map(r => r['(M)ステータス_子']).filter(Boolean)
         )];
-        buildOptions('direct-status', statuses);
+        rebuildSelectById('edit-status', statuses);
     }
     if (isTask) {
-        buildOptions('direct-priority',
-            [...new Set(currentMasterData.map(r => r['(M)優先度']).filter(Boolean))]);
+        rebuildSelectById('edit-priority', [...new Set(currentMasterData.map(r => r['(M)優先度']).filter(Boolean))]);
     }
     if (isKnowledge) {
-        buildOptions('direct-input',  [...new Set(currentMasterData.map(r => r['(M)Input']).filter(Boolean))]);
-        buildOptions('direct-output', [...new Set(currentMasterData.map(r => r['(M)Output']).filter(Boolean))]);
+        rebuildSelectById('edit-input',  [...new Set(currentMasterData.map(r => r['(M)Input']).filter(Boolean))]);
+        rebuildSelectById('edit-output', [...new Set(currentMasterData.map(r => r['(M)Output']).filter(Boolean))]);
     }
 }
 
-/** 直接データ入力フォームの登録ボタン */
-document.getElementById('direct-submit-btn')?.addEventListener('click', () => {
-    const kubun = document.getElementById('direct-kubun').value;
+/** 1件選択時にフォームへ現在値を自動入力する（複数選択時はタイトル・内容・備考をクリア）。 */
+function prefillEditForm() {
+    const contentEl = document.getElementById('edit-content');
+
+    if (selectedEditIds.size !== 1) {
+        if (contentEl) contentEl.value = '';
+        document.getElementById('edit-title').value = '';
+        document.getElementById('edit-biko').value  = '';
+        return;
+    }
+
+    const row = currentMainData.find(r => String(r['ID']) === [...selectedEditIds][0]);
+    if (!row) return;
+
+    if (contentEl) contentEl.value = row['内容'] ?? '';
+
+    document.getElementById('edit-title').value = row['タイトル'] ?? '';
+    document.getElementById('edit-biko').value  = row['備考']     ?? '';
+
+    const tagEl = document.getElementById('edit-tag');
+    if (tagEl) tagEl.value = row['タグ'] ?? '';
+    const hubEl = document.getElementById('edit-hub');
+    if (hubEl) hubEl.value = row['ハブ'] ?? '';
+    const categoryEl = document.getElementById('edit-category');
+    if (categoryEl) categoryEl.value = row['カテゴリ'] ?? '';
+
+    // 移動先データ区分をソース行に合わせて条件フィールドも更新
+    const kubunEl = document.getElementById('edit-kubun');
+    if (kubunEl) {
+        kubunEl.value = row['データ区分'] ?? '';
+        updateEditConditionalFields(kubunEl.value);
+    }
+
+    const statusEl = document.getElementById('edit-status');
+    if (statusEl) statusEl.value = row['ステータス'] ?? '';
+    const priorityEl = document.getElementById('edit-priority');
+    if (priorityEl) priorityEl.value = row['優先度'] ?? '';
+    const deadlineEl = document.getElementById('edit-deadline');
+    if (deadlineEl) deadlineEl.value = (row['期限'] || '').replace(/\//g, '-').slice(0, 10);
+    const estimateEl = document.getElementById('edit-estimate');
+    if (estimateEl) estimateEl.value = row['見積時間'] ?? '';
+    const inputEl = document.getElementById('edit-input');
+    if (inputEl) inputEl.value = row['Input'] ?? '';
+    const outputEl = document.getElementById('edit-output');
+    if (outputEl) outputEl.value = row['Output'] ?? '';
+}
+
+/** フォームをクリアし、移動先データ区分を現在の表示タブに戻す。 */
+function clearEditForm() {
+    ['edit-title', 'edit-content', 'edit-biko', 'edit-status', 'edit-priority',
+     'edit-deadline', 'edit-estimate', 'edit-input', 'edit-output',
+     'edit-category', 'edit-tag', 'edit-hub'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.value = '';
+    });
+    const kubunEl = document.getElementById('edit-kubun');
+    if (kubunEl) {
+        kubunEl.value = editKubun;
+        updateEditConditionalFields(editKubun);
+    }
+}
+
+/** 「新規登録」ボタン: 選択状態に関わらず、フォームの現在値（移動先データ区分）で新規データを追加する。 */
+document.getElementById('edit-new-btn')?.addEventListener('click', () => {
+    const kubun = document.getElementById('edit-kubun').value;
     if (!kubun) { alert('データ区分を選択してください'); return; }
 
-    const title    = document.getElementById('direct-title').value.trim();
-    const content  = document.getElementById('direct-content').value.trim();
-    const biko     = document.getElementById('direct-biko').value.trim();
-    const tag      = document.getElementById('direct-tag').value;
-    const hub      = document.getElementById('direct-hub').value;
-    const status   = document.getElementById('direct-status')?.value   || '';
-    const priority = document.getElementById('direct-priority')?.value || '';
-    const deadline = document.getElementById('direct-deadline')?.value || '';
-    const estimate = document.getElementById('direct-estimate')?.value || '';
-    const input    = document.getElementById('direct-input')?.value    || '';
-    const output   = document.getElementById('direct-output')?.value   || '';
+    const title    = document.getElementById('edit-title').value.trim();
+    const content  = document.getElementById('edit-content').value.trim();
+    const biko     = document.getElementById('edit-biko').value.trim();
+    const category = document.getElementById('edit-category').value;
+    const tag      = document.getElementById('edit-tag').value;
+    const hub      = document.getElementById('edit-hub').value;
+    const status   = document.getElementById('edit-status')?.value   || '';
+    const priority = document.getElementById('edit-priority')?.value || '';
+    const deadline = document.getElementById('edit-deadline')?.value || '';
+    const estimate = document.getElementById('edit-estimate')?.value || '';
+    const input    = document.getElementById('edit-input')?.value    || '';
+    const output   = document.getElementById('edit-output')?.value   || '';
 
     const maxId = currentMainData.reduce((max, row) => {
         const id = parseInt(row['ID'], 10);
         return isNaN(id) ? max : Math.max(max, id);
     }, 0);
-
     const now = new Date();
     const pad = n => String(n).padStart(2, '0');
     const ts  = `${now.getFullYear()}/${pad(now.getMonth() + 1)}/${pad(now.getDate())} `
@@ -1373,7 +669,7 @@ document.getElementById('direct-submit-btn')?.addEventListener('click', () => {
     const entry = Object.fromEntries(MAIN_DATA_COLUMNS.map(col => [col, '']));
     entry['ID']        = String(maxId + 1);
     entry['データ区分'] = kubun;
-    entry['カテゴリ']   = currentCategory === 'すべて' ? '' : currentCategory;
+    entry['カテゴリ']   = category || (currentCategory === 'すべて' ? '' : currentCategory);
     entry['タイトル']   = title;
     entry['内容']       = content;
     entry['備考']       = biko;
@@ -1382,63 +678,61 @@ document.getElementById('direct-submit-btn')?.addEventListener('click', () => {
     entry['作成日時']   = ts;
     entry['更新日時']   = ts;
 
-    if (kubun === 'タスク' || kubun === 'ナレッジ') { if (status)   entry['ステータス'] = status; }
-    if (kubun === 'タスク')   { if (priority) entry['優先度'] = priority; }
-    if (kubun === 'タスク')   { if (deadline) entry['期限']   = deadline; }
-    if (kubun === 'タスク')   { if (estimate) entry['見積時間'] = estimate; }
-    if (kubun === 'ナレッジ') { if (input)  entry['Input']  = input; }
-    if (kubun === 'ナレッジ') { if (output) entry['Output'] = output; }
+    if (kubun === 'タスク' || kubun === 'ナレッジ') { if (status) entry['ステータス'] = status; }
+    if (kubun === 'タスク') {
+        if (priority) entry['優先度']   = priority;
+        if (deadline) entry['期限']     = deadline.replace(/-/g, '/');
+        if (estimate) entry['見積時間'] = estimate;
+    }
+    if (kubun === 'ナレッジ') {
+        if (input)  entry['Input']  = input;
+        if (output) entry['Output'] = output;
+    }
 
     currentMainData.push(entry);
     saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
 
-    ['direct-kubun', 'direct-title', 'direct-content', 'direct-biko',
-     'direct-tag', 'direct-hub', 'direct-status', 'direct-priority',
-     'direct-deadline', 'direct-estimate', 'direct-input'].forEach(id => {
-        const el = document.getElementById(id);
-        if (el) el.value = '';
-    });
-    updateDirectConditionalFields('');
-
-    renderTriageKubunTabs();
-    if (currentTriageKubun === kubun || currentTriageKubun === 'INBOX') renderInboxList();
+    selectedEditIds.clear();
+    clearEditForm();
+    renderEditKubunTabs();
+    renderEditTable();
     renderRecentItems();
 
-    const badge = document.getElementById('direct-category-badge');
-    if (badge) {
-        const cat = entry['カテゴリ'] || '（未設定）';
-        badge.textContent = `✓ 登録しました（${kubun} / カテゴリ: ${cat}）`;
-        setTimeout(() => renderDirectEntryForm(), 2000);
+    const info = document.getElementById('edit-selection-info');
+    if (info) {
+        info.textContent = `✓ 登録しました（${kubun} / ID: ${entry['ID']}）`;
+        setTimeout(updateEditSelectionInfo, 2000);
     }
 });
 
-/** 「振り分け実行」ボタン: 選択行に全フォーム値を適用して更新日時を更新する。 */
-document.getElementById('triage-apply-btn')?.addEventListener('click', () => {
-    if (selectedInboxIds.size === 0) { alert('振り分ける行を選択してください'); return; }
+/** 「変更」ボタン: 選択行に全フォーム値を適用して更新日時を更新する（データ区分の移動も可能）。 */
+document.getElementById('edit-apply-btn')?.addEventListener('click', () => {
+    if (selectedEditIds.size === 0) { alert('変更する行を選択してください'); return; }
 
-    const kubun = document.getElementById('triage-kubun').value;
+    const kubun = document.getElementById('edit-kubun').value;
     if (!kubun) { alert('データ区分を選択してください'); return; }
 
-    const title   = document.getElementById('triage-title').value.trim();
-    const biko    = document.getElementById('triage-biko').value.trim();
-    const tag     = document.getElementById('triage-tag').value;
-    const hub     = document.getElementById('triage-hub').value;
+    const title    = document.getElementById('edit-title').value.trim();
+    const biko     = document.getElementById('edit-biko').value.trim();
+    const category = document.getElementById('edit-category').value;
+    const tag      = document.getElementById('edit-tag').value;
+    const hub      = document.getElementById('edit-hub').value;
     // 内容は1件選択時のみ適用
-    const content = selectedInboxIds.size === 1
-        ? (document.getElementById('triage-content')?.value ?? null) : null;
-    const status   = document.getElementById('triage-status')?.value   || '';
-    const priority = document.getElementById('triage-priority')?.value || '';
-    const deadline = document.getElementById('triage-deadline')?.value || '';
-    const estimate = document.getElementById('triage-estimate')?.value || '';
-    const input    = document.getElementById('triage-input')?.value    || '';
-    const output   = document.getElementById('triage-output')?.value   || '';
+    const content = selectedEditIds.size === 1
+        ? (document.getElementById('edit-content')?.value ?? null) : null;
+    const status   = document.getElementById('edit-status')?.value   || '';
+    const priority = document.getElementById('edit-priority')?.value || '';
+    const deadline = document.getElementById('edit-deadline')?.value || '';
+    const estimate = document.getElementById('edit-estimate')?.value || '';
+    const input    = document.getElementById('edit-input')?.value    || '';
+    const output   = document.getElementById('edit-output')?.value   || '';
 
     const now = new Date();
     const pad = n => String(n).padStart(2, '0');
     const ts  = `${now.getFullYear()}/${pad(now.getMonth() + 1)}/${pad(now.getDate())} `
               + `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
 
-    selectedInboxIds.forEach(id => {
+    selectedEditIds.forEach(id => {
         const row = currentMainData.find(r => String(r['ID']) === id);
         if (!row) return;
 
@@ -1446,6 +740,7 @@ document.getElementById('triage-apply-btn')?.addEventListener('click', () => {
         row['更新日時']   = ts;
         if (title)                       row['タイトル'] = title;
         if (biko)                        row['備考']     = biko;
+        if (category)                    row['カテゴリ'] = category;
         if (tag)                         row['タグ']     = tag;
         if (hub)                         row['ハブ']     = hub;
         if (content !== null && content) row['内容']     = content;
@@ -1455,7 +750,7 @@ document.getElementById('triage-apply-btn')?.addEventListener('click', () => {
         }
         if (kubun === 'タスク') {
             if (priority) row['優先度']   = priority;
-            if (deadline) row['期限']     = deadline;
+            if (deadline) row['期限']     = deadline.replace(/-/g, '/');
             if (estimate) row['見積時間'] = estimate;
         }
         if (kubun === 'ナレッジ') {
@@ -1464,9 +759,23 @@ document.getElementById('triage-apply-btn')?.addEventListener('click', () => {
         }
     });
 
-    selectedInboxIds.clear();
+    selectedEditIds.clear();
     saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
-    renderInbox();
+    renderEdit();
+    renderRecentItems();
+});
+
+/** 「削除」ボタン: 選択行をメインデータから完全に削除する。 */
+document.getElementById('edit-delete-btn')?.addEventListener('click', () => {
+    if (selectedEditIds.size === 0) { alert('削除する行を選択してください'); return; }
+    if (!confirm(`選択した ${selectedEditIds.size} 件を削除します。よろしいですか？（この操作は取り消せません）`)) return;
+
+    currentMainData = currentMainData.filter(r => !selectedEditIds.has(String(r['ID'])));
+
+    selectedEditIds.clear();
+    saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
+    renderEdit();
+    renderRecentItems();
 });
 
 // ===== マスタ管理 =====
@@ -1485,6 +794,19 @@ const VALUE_FIELDS = [
 ];
 
 /**
+ * dataModel.js の固定列（MAIN_DATA_COLUMNS/MASTER_DATA_COLUMNS）と、
+ * 実データ（currentMainData/currentMasterData）の各行に実際に存在するキーとの和集合を返す。
+ * Excelで新しい列を追加した場合でも、この関数経由でチェックすれば
+ * dataModel.jsを手動修正しなくても新しい変数名を認識できる。
+ */
+function getAllKnownColumns() {
+    const columns = new Set([...MAIN_DATA_COLUMNS, ...MASTER_DATA_COLUMNS]);
+    currentMainData.forEach(row => Object.keys(row).forEach(k => columns.add(k)));
+    currentMasterData.forEach(row => Object.keys(row).forEach(k => columns.add(k)));
+    return [...columns];
+}
+
+/**
  * MAIN_DATA_COLUMNS と currentMasterData を照合して警告リストを返す。
  * - MAIN_DATA_COLUMNSにあるがmasterData未登録の変数
  * - masterDataにあるがMAIN_DATA_COLUMNSに存在しない変数名
@@ -1492,8 +814,9 @@ const VALUE_FIELDS = [
  */
 function computeMasterWarnings() {
     const warnings = [];
-    // メイン・マスタ両方の列名を対象にする
-    const ALL_COLUMNS = [...MAIN_DATA_COLUMNS, ...MASTER_DATA_COLUMNS];
+    // メイン・マスタ両方の列名を対象にする（dataModel.jsの固定列 ＋ 実データに存在する列名の和集合。
+    // これにより、Excelで列を追加しただけでもdataModel.jsを修正せずに認識される）
+    const ALL_COLUMNS = getAllKnownColumns();
     const registered  = currentMasterData.map(r => r['(M)変数名']).filter(Boolean);
 
     const unregistered = ALL_COLUMNS.filter(col => !registered.includes(col));
@@ -1538,7 +861,7 @@ function computeMasterWarnings() {
     return warnings;
 }
 
-/** マスタ管理ページとダッシュボードの両方に警告バナーを描画する。 */
+/** 情報整理ページとダッシュボードの両方に警告バナーを描画する。 */
 function renderWarnings(warnings) {
     const masterEl = document.getElementById('master-warning');
     if (masterEl) {
@@ -1557,7 +880,7 @@ function renderWarnings(warnings) {
 
 /** 変数定義の編集テーブル（EDIT_COLS 3列 + 操作列）を描画する。 */
 function renderMasterEditTable() {
-    const summaryEl = document.getElementById('summary-edit');
+    const summaryEl = document.getElementById('summary-var-edit');
     if (summaryEl) {
         summaryEl.innerHTML =
             `変数定義の編集<span class="expander-count">${currentMasterData.length} 件</span>`;
@@ -1666,7 +989,7 @@ function applyMasterEditsToState() {
 function applyMasterEdits() {
     applyMasterEditsToState();
     renderWarnings(computeMasterWarnings());
-    renderDataTable('table-master', 'summary-master', currentMasterData, MASTER_DATA_COLUMNS, 'マスタデータ');
+    renderDataTable('table-master', 'summary-master', currentMasterData, MASTER_DATA_COLUMNS, 'マスタデータ', { editable: true, onEdit: () => renderWarnings(computeMasterWarnings()) });
     renderMasterEditTable();
 }
 
@@ -2048,12 +1371,16 @@ function applyContent(content, sha) {
 }
 
 // ===== GitHubから読み込み =====
-document.getElementById('load-btn')?.addEventListener('click', async () => {
-    const token      = document.getElementById('token-input').value.trim();
-    const contentBox = document.getElementById('content-box');
-    const statusEl   = document.getElementById('network-status');
 
-    if (!token) return alert('トークンを入力してください');
+/**
+ * GitHubからデータを読み込み、失敗時はローカルキャッシュへフォールバックする。
+ * (2) インプット: token (string), silent (boolean) - trueの場合トークン未入力時にアラートを出さない
+ */
+async function loadFromGithub(token, silent = false) {
+    const contentBox = document.getElementById('content-box');
+    const statusEl    = document.getElementById('network-status');
+
+    if (!token) { if (!silent) alert('トークンを入力してください'); return; }
     saveToken(token);
     contentBox.textContent = '読み込み中...';
 
@@ -2070,11 +1397,15 @@ document.getElementById('load-btn')?.addEventListener('click', async () => {
             applyContent(cached.content, cached.sha);
             statusEl.innerHTML   = '<span class="status-badge offline-badge">オフライン（端末内データ）</span>';
             contentBox.innerHTML = window.marked.parse(cached.content);
-            alert('通信できませんでした。スマホ内に一時保存されている前回のデータを表示します。');
+            if (!silent) alert('通信できませんでした。スマホ内に一時保存されている前回のデータを表示します。');
         } else {
             contentBox.textContent = `エラー: ${error.message}（端末内にキャッシュもありません）`;
         }
     }
+}
+
+document.getElementById('load-btn')?.addEventListener('click', () => {
+    loadFromGithub(document.getElementById('token-input').value.trim());
 });
 
 // ===== GitHubへ保存 =====
@@ -2086,10 +1417,7 @@ document.getElementById('save-btn')?.addEventListener('click', async () => {
     if (!token)      return alert('トークンを入力してください');
     if (!currentSha) return alert('先にデータを読み込んでください（またはオフラインキャッシュを読み込んでください）');
 
-    // 構造化データあり → Front Matter Markdown / なし → チェックボックスDOM読み取り（後方互換）
-    const newMarkdown = currentMainData.length > 0
-        ? stringifyMarkdown(currentMainData, currentMasterData)
-        : buildMarkdownFromDOM(contentBox);
+    const newMarkdown = stringifyMarkdown(currentMainData, currentMasterData);
 
     saveCache(newMarkdown, currentSha);
     contentBox.textContent = 'GitHubへ保存中...';
@@ -2587,7 +1915,7 @@ function buildTaskRunnerUI(container) {
             }
             saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
             renderTaskRunner();
-            renderTaskTable();
+            renderEditTable();
         });
         changeTb.appendChild(changeBtn);
         statusSec.appendChild(changeTb);
@@ -2675,7 +2003,7 @@ function renderRecurringSection() {
             currentMainData.push(child);
             saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
             renderRecurringSection();
-            renderTaskTable();
+            renderEditTable();
         });
 
         header.append(titleEl, manualBtn);
@@ -2728,14 +2056,3 @@ function renderRecurringSection() {
     });
 }
 
-// ===== 旧フォーマット用ヘルパー =====
-// Front Matterなしのシンプルなtodo.mdに対し、チェックボックスDOM状態からMarkdownを再構築する
-function buildMarkdownFromDOM(contentBox) {
-    let markdown = '# タスク一覧\n\n';
-    contentBox.querySelectorAll('li').forEach(li => {
-        const checkbox = li.querySelector('input[type="checkbox"]');
-        const text     = li.textContent.trim();
-        markdown += checkbox && checkbox.checked ? `- [x] ${text}\n` : `- [ ] ${text}\n`;
-    });
-    return markdown;
-}

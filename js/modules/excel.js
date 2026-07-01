@@ -12,13 +12,17 @@ import { MAIN_DATA_COLUMNS, MASTER_DATA_COLUMNS } from './dataModel.js';
 export function exportToExcel(mainData, masterData) {
     const wb = window.XLSX.utils.book_new();
 
+    // 固定列に加え、実データにのみ存在する列（Excelで追加された列）も末尾に含める
+    const mainHeader   = [...new Set([...MAIN_DATA_COLUMNS,   ...mainData.flatMap(r => Object.keys(r))])];
+    const masterHeader = [...new Set([...MASTER_DATA_COLUMNS, ...masterData.flatMap(r => Object.keys(r))])];
+
     const wsMain = mainData.length > 0
-        ? window.XLSX.utils.json_to_sheet(mainData,   { header: MAIN_DATA_COLUMNS })
-        : window.XLSX.utils.aoa_to_sheet([MAIN_DATA_COLUMNS]);
+        ? window.XLSX.utils.json_to_sheet(mainData,   { header: mainHeader })
+        : window.XLSX.utils.aoa_to_sheet([mainHeader]);
 
     const wsMaster = masterData.length > 0
-        ? window.XLSX.utils.json_to_sheet(masterData, { header: MASTER_DATA_COLUMNS })
-        : window.XLSX.utils.aoa_to_sheet([MASTER_DATA_COLUMNS]);
+        ? window.XLSX.utils.json_to_sheet(masterData, { header: masterHeader })
+        : window.XLSX.utils.aoa_to_sheet([masterHeader]);
 
     window.XLSX.utils.book_append_sheet(wb, wsMain,   'メインデータ');
     window.XLSX.utils.book_append_sheet(wb, wsMaster, 'マスタデータ');

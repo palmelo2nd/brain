@@ -320,6 +320,9 @@ input[type="checkbox"] {
 
 .triage-btn:hover { background: #1e7e34; }
 
+.triage-btn--danger { background: #d73a49; }
+.triage-btn--danger:hover { background: #b0202f; }
+
 /* 選択行のハイライト */
 .selected-row td { background: #e8f4fd !important; }
 
@@ -406,6 +409,22 @@ details[open] > .expander-title::after { transform: rotate(90deg); }
     padding: 20px;
     max-width: none;
     white-space: normal;
+}
+
+.editable-cell {
+    cursor: text;
+}
+.editable-cell:hover {
+    background: #fffbe6 !important;
+}
+.editable-cell:focus {
+    outline: 2px solid #28a745;
+    background: #fffbe6 !important;
+    white-space: normal;
+    overflow: visible;
+    max-width: none;
+    position: relative;
+    z-index: 1;
 }
 
 .expander-count {
