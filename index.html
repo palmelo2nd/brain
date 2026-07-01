@@ -42,9 +42,9 @@
         <!-- ページナビゲーション -->
         <nav class="sidebar-nav">
             <button class="nav-btn" data-page="dashboard">ダッシュボード</button>
-            <button class="nav-btn" data-page="inbox">情報整理</button>
             <button class="nav-btn" data-page="task">タスク</button>
             <button class="nav-btn" data-page="knowledge">ナレッジ</button>
+            <button class="nav-btn" data-page="inbox">情報整理</button>
         </nav>
 
         <!-- カテゴリフィルタ -->
@@ -81,6 +81,109 @@
             <details class="expander" open>
                 <summary class="expander-title" id="summary-task-runner-dash">タスク実行</summary>
                 <div id="task-runner-dash"></div>
+            </details>
+
+            <!-- カレンダー（デフォルト展開） -->
+            <details class="expander" open>
+                <summary class="expander-title">カレンダー</summary>
+                <!-- 月カレンダー（横幅いっぱい） -->
+                <div class="calendar-panel calendar-panel--full">
+                    <div id="calendar-filter-area" class="triage-filter-area"></div>
+                    <div class="table-wrapper">
+                        <table id="calendar-task-list-table" class="calendar-task-list-table"></table>
+                    </div>
+                    <div class="calendar-header">
+                        <button id="calendar-prev-btn" class="calendar-nav-btn">‹</button>
+                        <span id="calendar-month-label" class="calendar-month-label"></span>
+                        <button id="calendar-next-btn" class="calendar-nav-btn">›</button>
+                    </div>
+                    <div id="calendar-grid" class="calendar-grid"></div>
+                </div>
+
+                <!-- 選択した日のタイムスケジュール（左）＋ タスク編集（右） -->
+                <div class="calendar-day-section">
+                    <div class="calendar-timeline-col">
+                        <h3 id="calendar-detail-title" class="calendar-detail-title"></h3>
+
+                        <!-- 時間帯未定のタスク -->
+                        <div class="calendar-unscheduled-section">
+                            <p class="calendar-section-label">時間帯未定のタスク</p>
+                            <div id="calendar-unscheduled-list" class="calendar-unscheduled-list"></div>
+                        </div>
+
+                        <!-- 1日の予定表（上から下へ時間が進むタイムライン） -->
+                        <div class="calendar-timeline-scroll" id="calendar-timeline-scroll">
+                            <div class="calendar-timeline-wrap">
+                                <div class="calendar-timeline-hours" id="calendar-timeline-hours"></div>
+                                <div class="calendar-timeline-lanes" id="calendar-timeline-lanes"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="calendar-edit-col">
+                        <!-- 新規追加・編集（未選択時は新規登録、選択時はその行の編集） -->
+                        <div id="calendar-task-edit" class="calendar-task-edit">
+                            <p class="calendar-section-label">新規追加・編集</p>
+                            <div class="calendar-edit-row">
+                                <label>タイトル</label>
+                                <input type="text" id="dayedit-title">
+                            </div>
+                            <div class="calendar-edit-row calendar-edit-row--top">
+                                <label>内容</label>
+                                <textarea id="dayedit-content" class="calendar-edit-textarea" rows="4"></textarea>
+                            </div>
+                            <div class="calendar-edit-row">
+                                <label>備考</label>
+                                <input type="text" id="dayedit-biko">
+                            </div>
+                            <div class="calendar-edit-row">
+                                <label>ステータス</label>
+                                <select id="dayedit-status"></select>
+                            </div>
+                            <div class="calendar-edit-row">
+                                <label>優先度</label>
+                                <select id="dayedit-priority"></select>
+                            </div>
+                            <div class="calendar-edit-row">
+                                <label>開始予定</label>
+                                <input type="date" id="dayedit-start-date">
+                                <input type="number" id="dayedit-start-hour" class="calendar-time-num" min="0" max="23" placeholder="時">
+                                <span>:</span>
+                                <input type="number" id="dayedit-start-minute" class="calendar-time-num" min="0" max="59" step="15" placeholder="分">
+                            </div>
+                            <div class="calendar-edit-row">
+                                <label>終了予定</label>
+                                <input type="date" id="dayedit-end-date">
+                                <input type="number" id="dayedit-end-hour" class="calendar-time-num" min="0" max="23" placeholder="時">
+                                <span>:</span>
+                                <input type="number" id="dayedit-end-minute" class="calendar-time-num" min="0" max="59" step="15" placeholder="分">
+                            </div>
+                            <div class="calendar-edit-row">
+                                <label>完了日</label>
+                                <input type="date" id="dayedit-complete-date">
+                            </div>
+                            <div class="calendar-edit-row">
+                                <label>カテゴリ</label>
+                                <select id="dayedit-category"></select>
+                            </div>
+                            <div class="calendar-edit-row">
+                                <label>タグ</label>
+                                <select id="dayedit-tag"></select>
+                            </div>
+                            <div class="calendar-edit-row">
+                                <label>ハブ</label>
+                                <select id="dayedit-hub"></select>
+                            </div>
+                            <div class="calendar-edit-toolbar">
+                                <button id="dayedit-apply-btn">適用</button>
+                                <button id="dayedit-delete-btn" class="calendar-danger-btn">削除</button>
+                            </div>
+                            <div class="calendar-edit-toolbar">
+                                <button id="dayedit-new-btn" class="calendar-add-btn">新規登録</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </details>
         </div>
 
@@ -145,14 +248,18 @@
                         <select id="edit-status"></select>
                     </div>
 
-                    <!-- 優先度・期限・見積時間（タスク選択時のみ） -->
+                    <!-- 優先度・開始予定・終了予定・見積時間（タスク選択時のみ） -->
                     <div id="edit-priority-row" class="triage-form-row" style="display:none">
                         <label>優先度</label>
                         <select id="edit-priority"></select>
                     </div>
-                    <div id="edit-deadline-row" class="triage-form-row" style="display:none">
-                        <label>期限</label>
-                        <input type="date" id="edit-deadline">
+                    <div id="edit-start-row" class="triage-form-row" style="display:none">
+                        <label>開始予定</label>
+                        <input type="date" id="edit-start">
+                    </div>
+                    <div id="edit-end-row" class="triage-form-row" style="display:none">
+                        <label>終了予定</label>
+                        <input type="date" id="edit-end">
                     </div>
                     <div id="edit-estimate-row" class="triage-form-row" style="display:none">
                         <label>見積時間（h）</label>
@@ -178,70 +285,14 @@
                 </div>
             </details>
 
-            <!-- 変数定義の編集（デフォルト折り畳み） -->
-            <details class="expander">
-                <summary class="expander-title" id="summary-var-edit">
-                    変数定義の編集
-                </summary>
-                <div class="edit-table-toolbar">
-                    <button id="apply-master-btn">変更を適用する</button>
-                </div>
-                <div class="table-wrapper">
-                    <table id="table-edit-master"></table>
-                </div>
-            </details>
-
-            <!-- マスタ値 編集（ラジオ切り替え） -->
-            <details class="expander">
-                <summary class="expander-title" id="summary-master-values">マスタ値の編集</summary>
-                <div class="master-value-switcher">
-                    <div class="master-radio-group">
-                        <label class="master-radio-label">
-                            <input type="radio" name="master-value-type" value="kubun">
-                            データ区分
-                        </label>
-                        <label class="master-radio-label">
-                            <input type="radio" name="master-value-type" value="category">
-                            カテゴリ
-                        </label>
-                        <label class="master-radio-label">
-                            <input type="radio" name="master-value-type" value="tag">
-                            タグ
-                        </label>
-                        <label class="master-radio-label">
-                            <input type="radio" name="master-value-type" value="hub">
-                            ハブ
-                        </label>
-                        <label class="master-radio-label">
-                            <input type="radio" name="master-value-type" value="status">
-                            ステータス
-                        </label>
-                        <label class="master-radio-label">
-                            <input type="radio" name="master-value-type" value="priority">
-                            優先度
-                        </label>
-                        <label class="master-radio-label">
-                            <input type="radio" name="master-value-type" value="input">
-                            Input
-                        </label>
-                        <label class="master-radio-label">
-                            <input type="radio" name="master-value-type" value="output">
-                            Output
-                        </label>
-                        <label class="master-radio-label">
-                            <input type="radio" name="master-value-type" value="frequency">
-                            繰返し頻度
-                        </label>
-                    </div>
-                    <div id="section-master-value-editor"></div>
-                </div>
-            </details>
-
             <!-- データ閲覧・直接編集（デフォルト折り畳み） -->
             <details class="expander">
                 <summary class="expander-title" id="summary-main">
                     メインデータ 一覧
                 </summary>
+                <div class="edit-table-toolbar">
+                    <button id="add-main-row-btn">行を追加</button>
+                </div>
                 <div class="table-wrapper">
                     <table id="table-main"></table>
                 </div>
@@ -251,6 +302,9 @@
                 <summary class="expander-title" id="summary-master">
                     マスタデータ 一覧
                 </summary>
+                <div class="edit-table-toolbar">
+                    <button id="add-master-data-row-btn">行を追加</button>
+                </div>
                 <div class="table-wrapper">
                     <table id="table-master"></table>
                 </div>

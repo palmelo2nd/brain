@@ -15,13 +15,18 @@ let currentMasterData = [];
 let currentPage       = 'dashboard';
 let currentCategory   = 'すべて';        // カテゴリフィルタの選択値
 let categoryInitialized = false;         // 初回ロード時にデフォルトカテゴリを設定済みか
-let currentMasterValueType = 'kubun';   // マスタ値エディタの選択タイプ
 let selectedEditIds = new Set();       // 編集セクションで選択中の行ID
 let editFilters      = {};             // 編集セクションのフィルタ値
 let editKubun         = 'INBOX';       // 編集セクションの対象データ区分（一覧の絞り込みタブ）
 let selectedRunTaskId    = null;       // タスク実行で選択中のタスクID
 let timerIsRunning       = false;      // タイマー動作中フラグ
 let timerInterval        = null;       // setInterval ハンドル
+const todayForCalendar   = new Date();
+let calendarYear         = todayForCalendar.getFullYear(); // カレンダーの表示年
+let calendarMonth        = todayForCalendar.getMonth();    // カレンダーの表示月（0-11）
+let selectedCalendarDate = null;       // カレンダーで選択中の日付（"YYYY/MM/DD"）
+let selectedCalendarTaskId = null;     // 日別予定表で選択中のタスクID（属性編集パネル用）
+let calendarFilters = { tag: new Set(), hub: new Set(), status: new Set() }; // カレンダーのタグ／ハブ／ステータスフィルタ値（複数選択）
 
 // ===== 初期化 =====
 window.addEventListener('DOMContentLoaded', () => {
@@ -54,14 +59,6 @@ document.querySelectorAll('.nav-btn').forEach(btn => {
     btn.addEventListener('click', () => switchPage(btn.dataset.page));
 });
 
-// マスタ値エディタのラジオ切り替え
-document.querySelectorAll('input[name="master-value-type"]').forEach(radio => {
-    radio.addEventListener('change', () => {
-        currentMasterValueType = radio.value;
-        renderCurrentMasterValueEditor();
-    });
-});
-
 // ===== ページレンダラー =====
 
 /** 現在ページに対応するレンダラーをディスパッチする。 */
@@ -84,6 +81,7 @@ function renderDashboard() {
             : `カテゴリ: ${currentCategory}`;
     }
     renderTaskRunner();
+    renderCalendar();
 }
 function renderInbox() {
     renderEdit();
@@ -91,8 +89,6 @@ function renderInbox() {
     renderDataTable('table-main',   'summary-main',   getFilteredMainData(),   MAIN_DATA_COLUMNS,   'メインデータ',   { editable: true, idColumn: 'ID' });
     renderDataTable('table-master', 'summary-master', currentMasterData, MASTER_DATA_COLUMNS, 'マスタデータ', { editable: true, onEdit: () => renderWarnings(computeMasterWarnings()) });
     renderWarnings(computeMasterWarnings());
-    renderMasterEditTable();
-    renderMasterValueEditors();
 }
 function renderTaskList() {
     renderTaskRunner();
@@ -276,7 +272,7 @@ function createFilterSelect(options, placeholder, currentValue, onChange) {
 
 /** editKubun に応じたテーブル列定義を返す（タスク／ナレッジは専用列、それ以外は共通列） */
 function getEditCols(kubun) {
-    if (kubun === 'タスク')   return ['タイトル', 'ステータス', '優先度', '期限', '見積時間', 'カテゴリ', 'タグ', 'ハブ'];
+    if (kubun === 'タスク')   return ['タイトル', 'ステータス', '優先度', '開始予定', '終了予定', '見積時間', 'カテゴリ', 'タグ', 'ハブ'];
     if (kubun === 'ナレッジ') return ['タイトル', 'ステータス', 'Input', 'カテゴリ', 'タグ', 'ハブ', '更新日時'];
     return ['カテゴリ', 'タイトル', '内容', 'タグ', 'ハブ', '作成日時', '更新日時'];
 }
@@ -295,10 +291,12 @@ function getFilteredEditItems() {
 
     // タスク専用フィルタ
     if (editKubun === 'タスク') {
-        if (editFilters.priority)     rows = rows.filter(r => r['優先度']   === editFilters.priority);
-        if (editFilters.deadlineFrom) rows = rows.filter(r => (r['期限'] || '') >= isoToJP(editFilters.deadlineFrom));
-        if (editFilters.deadlineTo)   rows = rows.filter(r => (r['期限'] || '') <= isoToJP(editFilters.deadlineTo));
-        if (editFilters.status)       rows = rows.filter(r => r['ステータス'] === editFilters.status);
+        if (editFilters.priority)   rows = rows.filter(r => r['優先度'] === editFilters.priority);
+        if (editFilters.startFrom)  rows = rows.filter(r => (r['開始予定'] || '') >= isoToJP(editFilters.startFrom));
+        if (editFilters.startTo)    rows = rows.filter(r => (r['開始予定'] || '') <= isoToJP(editFilters.startTo));
+        if (editFilters.endFrom)    rows = rows.filter(r => (r['終了予定'] || '') >= isoToJP(editFilters.endFrom));
+        if (editFilters.endTo)      rows = rows.filter(r => (r['終了予定'] || '') <= isoToJP(editFilters.endTo));
+        if (editFilters.status)     rows = rows.filter(r => r['ステータス'] === editFilters.status);
     }
 
     // ナレッジ専用フィルタ
@@ -399,8 +397,9 @@ function renderEditFilters() {
     // タスク専用フィルタ
     if (editKubun === 'タスク') {
         const priorities = [...new Set(currentMasterData.map(r => r['(M)優先度']).filter(Boolean))];
-        makeRow('優先度', makeSelect(priorities, 'すべて', 'priority'));
-        makeRow('期限',   makeDateRange('deadlineFrom', 'deadlineTo'));
+        makeRow('優先度',   makeSelect(priorities, 'すべて', 'priority'));
+        makeRow('開始予定', makeDateRange('startFrom', 'startTo'));
+        makeRow('終了予定', makeDateRange('endFrom', 'endTo'));
         const taskStatuses = [...new Set(
             currentMasterData.filter(r => r['(M)ステータス_親'] === 'タスク')
                 .map(r => r['(M)ステータス_子']).filter(Boolean)
@@ -555,7 +554,8 @@ function updateEditConditionalFields(kubun) {
     }
     show('edit-status-row',   isTask || isKnowledge);
     show('edit-priority-row', isTask);
-    show('edit-deadline-row', isTask);
+    show('edit-start-row',    isTask);
+    show('edit-end-row',      isTask);
     show('edit-estimate-row', isTask);
     show('edit-input-row',    isKnowledge);
     show('edit-output-row',   isKnowledge);
@@ -614,8 +614,10 @@ function prefillEditForm() {
     if (statusEl) statusEl.value = row['ステータス'] ?? '';
     const priorityEl = document.getElementById('edit-priority');
     if (priorityEl) priorityEl.value = row['優先度'] ?? '';
-    const deadlineEl = document.getElementById('edit-deadline');
-    if (deadlineEl) deadlineEl.value = (row['期限'] || '').replace(/\//g, '-').slice(0, 10);
+    const startEl = document.getElementById('edit-start');
+    if (startEl) startEl.value = (row['開始予定'] || '').replace(/\//g, '-').slice(0, 10);
+    const endEl = document.getElementById('edit-end');
+    if (endEl) endEl.value = (row['終了予定'] || '').replace(/\//g, '-').slice(0, 10);
     const estimateEl = document.getElementById('edit-estimate');
     if (estimateEl) estimateEl.value = row['見積時間'] ?? '';
     const inputEl = document.getElementById('edit-input');
@@ -627,7 +629,7 @@ function prefillEditForm() {
 /** フォームをクリアし、移動先データ区分を現在の表示タブに戻す。 */
 function clearEditForm() {
     ['edit-title', 'edit-content', 'edit-biko', 'edit-status', 'edit-priority',
-     'edit-deadline', 'edit-estimate', 'edit-input', 'edit-output',
+     'edit-start', 'edit-end', 'edit-estimate', 'edit-input', 'edit-output',
      'edit-category', 'edit-tag', 'edit-hub'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.value = '';
@@ -652,7 +654,8 @@ document.getElementById('edit-new-btn')?.addEventListener('click', () => {
     const hub      = document.getElementById('edit-hub').value;
     const status   = document.getElementById('edit-status')?.value   || '';
     const priority = document.getElementById('edit-priority')?.value || '';
-    const deadline = document.getElementById('edit-deadline')?.value || '';
+    const start    = document.getElementById('edit-start')?.value    || '';
+    const end      = document.getElementById('edit-end')?.value      || '';
     const estimate = document.getElementById('edit-estimate')?.value || '';
     const input    = document.getElementById('edit-input')?.value    || '';
     const output   = document.getElementById('edit-output')?.value   || '';
@@ -681,7 +684,8 @@ document.getElementById('edit-new-btn')?.addEventListener('click', () => {
     if (kubun === 'タスク' || kubun === 'ナレッジ') { if (status) entry['ステータス'] = status; }
     if (kubun === 'タスク') {
         if (priority) entry['優先度']   = priority;
-        if (deadline) entry['期限']     = deadline.replace(/-/g, '/');
+        if (start)    entry['開始予定'] = start.replace(/-/g, '/');
+        if (end)      entry['終了予定'] = end.replace(/-/g, '/');
         if (estimate) entry['見積時間'] = estimate;
     }
     if (kubun === 'ナレッジ') {
@@ -722,7 +726,8 @@ document.getElementById('edit-apply-btn')?.addEventListener('click', () => {
         ? (document.getElementById('edit-content')?.value ?? null) : null;
     const status   = document.getElementById('edit-status')?.value   || '';
     const priority = document.getElementById('edit-priority')?.value || '';
-    const deadline = document.getElementById('edit-deadline')?.value || '';
+    const start    = document.getElementById('edit-start')?.value    || '';
+    const end      = document.getElementById('edit-end')?.value      || '';
     const estimate = document.getElementById('edit-estimate')?.value || '';
     const input    = document.getElementById('edit-input')?.value    || '';
     const output   = document.getElementById('edit-output')?.value   || '';
@@ -750,7 +755,8 @@ document.getElementById('edit-apply-btn')?.addEventListener('click', () => {
         }
         if (kubun === 'タスク') {
             if (priority) row['優先度']   = priority;
-            if (deadline) row['期限']     = deadline.replace(/-/g, '/');
+            if (start)    row['開始予定'] = start.replace(/-/g, '/');
+            if (end)      row['終了予定'] = end.replace(/-/g, '/');
             if (estimate) row['見積時間'] = estimate;
         }
         if (kubun === 'ナレッジ') {
@@ -779,19 +785,6 @@ document.getElementById('edit-delete-btn')?.addEventListener('click', () => {
 });
 
 // ===== マスタ管理 =====
-
-// 編集対象の3列
-const EDIT_COLS = ['(M)変数名', '(M)変数分類', '(M)変数説明'];
-
-// マスタ値フィールド（行が"値専用行"か判定するために使用）
-const VALUE_FIELDS = [
-    '(M)データ区分', '(M)カテゴリ',
-    '(M)タグ_親', '(M)タグ_子',
-    '(M)ハブ_親', '(M)ハブ_子',
-    '(M)ステータス_親', '(M)ステータス_子',
-    '(M)優先度', '(M)Input', '(M)Output',
-    '(M)繰返し頻度', '(M)繰返し頻度_詳細'
-];
 
 /**
  * dataModel.js の固定列（MAIN_DATA_COLUMNS/MASTER_DATA_COLUMNS）と、
@@ -878,468 +871,38 @@ function renderWarnings(warnings) {
     }
 }
 
-/** 変数定義の編集テーブル（EDIT_COLS 3列 + 操作列）を描画する。 */
-function renderMasterEditTable() {
-    const summaryEl = document.getElementById('summary-var-edit');
-    if (summaryEl) {
-        summaryEl.innerHTML =
-            `変数定義の編集<span class="expander-count">${currentMasterData.length} 件</span>`;
-    }
-
-    const table = document.getElementById('table-edit-master');
-    if (!table) return;
-    table.className = 'data-table edit-table';
-
-    // ヘッダー
-    const thead = document.createElement('thead');
-    const hRow  = document.createElement('tr');
-    const thCtrl = document.createElement('th');
-    thCtrl.textContent = '操作';
-    thCtrl.className   = 'col-ctrl';
-    hRow.appendChild(thCtrl);
-    EDIT_COLS.forEach(col => {
-        const th = document.createElement('th');
-        th.textContent = col;
-        hRow.appendChild(th);
-    });
-    thead.appendChild(hRow);
-
-    // ボディ
-    const tbody = document.createElement('tbody');
-    if (currentMasterData.length === 0) {
-        const tr = document.createElement('tr');
-        const td = document.createElement('td');
-        td.colSpan     = EDIT_COLS.length + 1;
-        td.className   = 'empty-cell';
-        td.textContent = 'データがありません。GitHubから読み込んでください。';
-        tr.appendChild(td);
-        tbody.appendChild(tr);
-    } else {
-        currentMasterData.forEach((row, idx) => {
-            tbody.appendChild(buildEditRow(row, idx, currentMasterData.length));
-        });
-    }
-
-    table.replaceChildren(thead, tbody);
-}
-
-/** 編集テーブルの1行（↑↓ボタン + input 3つ）を生成して返す。 */
-function buildEditRow(row, idx, total) {
-    const tr = document.createElement('tr');
-    tr.dataset.idx = idx;
-
-    // 操作列
-    const tdCtrl  = document.createElement('td');
-    tdCtrl.className = 'col-ctrl';
-
-    const btnUp   = document.createElement('button');
-    btnUp.textContent = '↑';
-    btnUp.className   = 'row-move-btn';
-    btnUp.disabled    = (idx === 0);
-    btnUp.addEventListener('click', () => moveMasterRow(idx, -1));
-
-    const btnDown = document.createElement('button');
-    btnDown.textContent = '↓';
-    btnDown.className   = 'row-move-btn';
-    btnDown.disabled    = (idx === total - 1);
-    btnDown.addEventListener('click', () => moveMasterRow(idx, +1));
-
-    tdCtrl.append(btnUp, btnDown);
-    tr.appendChild(tdCtrl);
-
-    // 編集列
-    EDIT_COLS.forEach(col => {
-        const td    = document.createElement('td');
-        const input = document.createElement('input');
-        input.type        = 'text';
-        input.value       = row[col] ?? '';
-        input.className   = 'edit-input';
-        input.dataset.col = col;
-        td.appendChild(input);
-        tr.appendChild(td);
-    });
-
-    return tr;
-}
-
-/** ↑↓ボタン押下: 現在のinput値を状態に保存してから行を入れ替え、再描画する。 */
-function moveMasterRow(idx, dir) {
-    const newIdx = idx + dir;
-    if (newIdx < 0 || newIdx >= currentMasterData.length) return;
-
-    applyMasterEditsToState();
-    [currentMasterData[idx], currentMasterData[newIdx]] =
-        [currentMasterData[newIdx], currentMasterData[idx]];
-    renderMasterEditTable();
-}
-
-/** 編集テーブルのinput値を currentMasterData に書き戻す（DOM → state）。 */
-function applyMasterEditsToState() {
-    document.querySelectorAll('#table-edit-master tbody tr[data-idx]').forEach(tr => {
-        const idx = parseInt(tr.dataset.idx, 10);
-        if (isNaN(idx) || !currentMasterData[idx]) return;
-        EDIT_COLS.forEach(col => {
-            const input = tr.querySelector(`input[data-col="${col}"]`);
-            if (input) currentMasterData[idx][col] = input.value;
-        });
-    });
-}
-
-/** 「変更を適用する」ボタン: stateを更新 → 警告・ビューテーブル・編集テーブルを再描画。 */
-function applyMasterEdits() {
-    applyMasterEditsToState();
-    renderWarnings(computeMasterWarnings());
-    renderDataTable('table-master', 'summary-master', currentMasterData, MASTER_DATA_COLUMNS, 'マスタデータ', { editable: true, onEdit: () => renderWarnings(computeMasterWarnings()) });
-    renderMasterEditTable();
-}
-
-document.getElementById('apply-master-btn')?.addEventListener('click', applyMasterEdits);
-
-// ===== マスタ値 CRUD =====
-
+/** マスタデータの空行を生成する。 */
 function createEmptyMasterRow() {
     return Object.fromEntries(MASTER_DATA_COLUMNS.map(c => [c, '']));
 }
 
-/** (M)変数名が空の行について、指定フィールドの oldVal を newVal に置換する */
-function masterUpdateSingle(field, oldVal, newVal) {
-    currentMasterData.forEach(r => {
-        if (!r['(M)変数名'] && r[field] === oldVal) r[field] = newVal;
-    });
+/** 空のマスタデータ行を1件追加し、マスタデータ一覧テーブルを再描画する。 */
+function addMasterRow() {
+    currentMasterData.push(createEmptyMasterRow());
     saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
-}
-
-/** (M)変数名が空の行について、指定フィールドが val の行からそのフィールドを削除し、
- *  全 VALUE_FIELDS が空になった行は除去する */
-function masterDeleteSingle(field, val) {
-    currentMasterData = currentMasterData.filter(r => {
-        if (r['(M)変数名']) return true;
-        if (r[field] !== val) return true;
-        r[field] = '';
-        return VALUE_FIELDS.some(f => r[f]);
-    });
-    saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
-}
-
-/** 新しい単一値行を追加する */
-function masterAddSingle(field, val) {
-    const row = createEmptyMasterRow();
-    row[field] = val;
-    currentMasterData.push(row);
-    saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
-}
-
-/** ペア (oldP, oldC) を (newP, newC) に更新する */
-function masterUpdatePair(pf, cf, oldP, oldC, newP, newC) {
-    const row = currentMasterData.find(r => !r['(M)変数名'] && r[pf] === oldP && r[cf] === oldC);
-    if (row) { row[pf] = newP; row[cf] = newC; }
-    saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
-}
-
-/** ペア行を削除し、全 VALUE_FIELDS が空になった行は除去する */
-function masterDeletePair(pf, cf, parent, child) {
-    currentMasterData = currentMasterData.filter(r => {
-        if (r['(M)変数名']) return true;
-        if (r[pf] !== parent || r[cf] !== child) return true;
-        r[pf] = ''; r[cf] = '';
-        return VALUE_FIELDS.some(f => r[f]);
-    });
-    saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
-}
-
-/** 新しいペア行を追加する */
-function masterAddPair(pf, cf, parent, child) {
-    const row = createEmptyMasterRow();
-    row[pf] = parent; row[cf] = child;
-    currentMasterData.push(row);
-    saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
-}
-
-// -- 再描画のトリガー（値エディタ共通） --
-function refreshAfterMasterEdit() {
-    renderCurrentMasterValueEditor();
+    renderDataTable('table-master', 'summary-master', currentMasterData, MASTER_DATA_COLUMNS, 'マスタデータ', { editable: true, onEdit: () => renderWarnings(computeMasterWarnings()) });
     renderWarnings(computeMasterWarnings());
-    renderCategoryFilter();
 }
 
-/** ラジオボタンを同期し、選択中のエディタを描画する */
-function renderMasterValueEditors() {
-    document.querySelectorAll('input[name="master-value-type"]').forEach(r => {
-        r.checked = (r.value === currentMasterValueType);
-    });
-    renderCurrentMasterValueEditor();
-}
+document.getElementById('add-master-data-row-btn')?.addEventListener('click', addMasterRow);
 
-/** 現在選択中のタイプのエディタのみを描画する */
-function renderCurrentMasterValueEditor() {
-    const registeredCategories = [...new Set(currentMasterData.map(r => r['(M)カテゴリ']).filter(Boolean))];
+/** 空のメインデータ行を1件追加し、メインデータ一覧テーブルを再描画する。 */
+document.getElementById('add-main-row-btn')?.addEventListener('click', () => {
+    const maxId = currentMainData.reduce((max, row) => {
+        const id = parseInt(row['ID'], 10);
+        return isNaN(id) ? max : Math.max(max, id);
+    }, 0);
 
-    const CONFIGS = {
-        kubun: () => renderSingleValueEditor({
-            sectionId: 'section-master-value-editor',
-            label:     'データ区分',
-            field:     '(M)データ区分',
-        }),
-        category: () => renderSingleValueEditor({
-            sectionId: 'section-master-value-editor',
-            label:     'カテゴリ',
-            field:     '(M)カテゴリ',
-        }),
-        tag: () => renderPairValueEditor({
-            sectionId:      'section-master-value-editor',
-            label:          'タグ',
-            parentField:    '(M)タグ_親',
-            childField:     '(M)タグ_子',
-            validateParent: p => registeredCategories.includes(p) ? null
-                : `「${p}」はカテゴリに登録されていません`,
-        }),
-        hub: () => renderPairValueEditor({
-            sectionId:      'section-master-value-editor',
-            label:          'ハブ',
-            parentField:    '(M)ハブ_親',
-            childField:     '(M)ハブ_子',
-            validateParent: p => registeredCategories.includes(p) ? null
-                : `「${p}」はカテゴリに登録されていません`,
-        }),
-        status: () => renderPairValueEditor({
-            sectionId:      'section-master-value-editor',
-            label:          'ステータス',
-            parentField:    '(M)ステータス_親',
-            childField:     '(M)ステータス_子',
-            validateParent: p => ['タスク', 'ナレッジ'].includes(p) ? null
-                : `「${p}」は「タスク」か「ナレッジ」である必要があります`,
-        }),
-        priority: () => renderSingleValueEditor({
-            sectionId: 'section-master-value-editor',
-            label:     '優先度',
-            field:     '(M)優先度',
-        }),
-        input: () => renderSingleValueEditor({
-            sectionId: 'section-master-value-editor',
-            label:     'Input',
-            field:     '(M)Input',
-        }),
-        output: () => renderSingleValueEditor({
-            sectionId: 'section-master-value-editor',
-            label:     'Output',
-            field:     '(M)Output',
-        }),
-        frequency: () => renderPairValueEditor({
-            sectionId:   'section-master-value-editor',
-            label:       '繰返し頻度',
-            parentField: '(M)繰返し頻度',
-            childField:  '(M)繰返し頻度_詳細',
-        }),
-    };
-    CONFIGS[currentMasterValueType]?.();
-}
+    const entry = Object.fromEntries(MAIN_DATA_COLUMNS.map(col => [col, '']));
+    entry['ID']      = String(maxId + 1);
+    entry['カテゴリ'] = currentCategory === 'すべて' ? '' : currentCategory;
 
-/** 単一値（データ区分・カテゴリ）用エディタを描画する */
-function renderSingleValueEditor({ sectionId, label, field }) {
-    const values = [...new Set(currentMasterData.map(r => r[field]).filter(Boolean))];
+    currentMainData.push(entry);
+    saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
 
-    const section = document.getElementById(sectionId);
-    if (!section) return;
-    section.innerHTML = '';
-
-    // テーブル
-    const table = document.createElement('table');
-    table.className = 'data-table edit-table';
-
-    const thead = document.createElement('thead');
-    const hRow  = document.createElement('tr');
-    ['値', '操作'].forEach(text => {
-        const th = document.createElement('th');
-        th.textContent = text;
-        if (text === '操作') th.className = 'col-ctrl';
-        hRow.appendChild(th);
-    });
-    thead.appendChild(hRow);
-
-    const tbody = document.createElement('tbody');
-    if (values.length === 0) {
-        const tr = document.createElement('tr');
-        const td = document.createElement('td');
-        td.colSpan = 2; td.className = 'empty-cell';
-        td.textContent = 'データがありません';
-        tr.appendChild(td); tbody.appendChild(tr);
-    } else {
-        values.forEach(val => {
-            const tr = document.createElement('tr');
-            let cur = val;
-
-            const tdVal = document.createElement('td');
-            const inp   = document.createElement('input');
-            inp.type = 'text'; inp.value = val; inp.className = 'edit-input';
-            inp.addEventListener('blur', () => {
-                const n = inp.value.trim();
-                if (!n || n === cur) { inp.value = cur; return; }
-                masterUpdateSingle(field, cur, n);
-                cur = n;
-                refreshAfterMasterEdit();
-            });
-            inp.addEventListener('keydown', e => { if (e.key === 'Enter') inp.blur(); });
-            tdVal.appendChild(inp);
-            tr.appendChild(tdVal);
-
-            const tdOp  = document.createElement('td');
-            tdOp.className = 'col-ctrl';
-            const btnDel = document.createElement('button');
-            btnDel.textContent = '削除'; btnDel.className = 'row-delete-btn';
-            btnDel.addEventListener('click', () => {
-                if (!confirm(`「${cur}」を削除しますか？`)) return;
-                masterDeleteSingle(field, cur);
-                refreshAfterMasterEdit();
-            });
-            tdOp.appendChild(btnDel);
-            tr.appendChild(tdOp);
-            tbody.appendChild(tr);
-        });
-    }
-    table.replaceChildren(thead, tbody);
-    section.appendChild(table);
-
-    // 追加フォーム
-    const addRow = document.createElement('div');
-    addRow.className = 'master-value-add-row';
-    const addInp = document.createElement('input');
-    addInp.type = 'text'; addInp.className = 'edit-input';
-    addInp.placeholder = `新しい${label}を入力...`;
-    const addBtn = document.createElement('button');
-    addBtn.textContent = '追加'; addBtn.className = 'master-add-btn';
-    addBtn.addEventListener('click', () => {
-        const v = addInp.value.trim();
-        if (!v) { addInp.focus(); return; }
-        if (values.includes(v)) { alert(`「${v}」はすでに登録されています`); return; }
-        masterAddSingle(field, v);
-        addInp.value = '';
-        refreshAfterMasterEdit();
-    });
-    addInp.addEventListener('keydown', e => { if (e.key === 'Enter') addBtn.click(); });
-    addRow.append(addInp, addBtn);
-    section.appendChild(addRow);
-}
-
-/** ペア値（タグ・ハブ・ステータス）用エディタを描画する */
-function renderPairValueEditor({ sectionId, label, parentField, childField, validateParent }) {
-    const seen  = new Set();
-    const pairs = [];
-    currentMasterData.forEach(r => {
-        const p = r[parentField], c = r[childField];
-        if (!p) return;
-        const key = `${p}${c}`;
-        if (seen.has(key)) return;
-        seen.add(key);
-        pairs.push({ parent: p, child: c });
-    });
-    pairs.sort((a, b) => a.parent.localeCompare(b.parent) || a.child.localeCompare(b.child));
-
-    const section = document.getElementById(sectionId);
-    if (!section) return;
-    section.innerHTML = '';
-
-    const table = document.createElement('table');
-    table.className = 'data-table edit-table';
-
-    const thead = document.createElement('thead');
-    const hRow  = document.createElement('tr');
-    ['親', '子', '操作'].forEach(text => {
-        const th = document.createElement('th');
-        th.textContent = text;
-        if (text === '操作') th.className = 'col-ctrl';
-        hRow.appendChild(th);
-    });
-    thead.appendChild(hRow);
-
-    const tbody = document.createElement('tbody');
-    if (pairs.length === 0) {
-        const tr = document.createElement('tr');
-        const td = document.createElement('td');
-        td.colSpan = 3; td.className = 'empty-cell';
-        td.textContent = 'データがありません';
-        tr.appendChild(td); tbody.appendChild(tr);
-    } else {
-        pairs.forEach(({ parent, child }) => {
-            const tr = document.createElement('tr');
-            let curP = parent, curC = child;
-
-            // 親の検証結果に応じて行をハイライト
-            const warn = validateParent ? validateParent(curP) : null;
-            if (warn) tr.classList.add('invalid-row');
-
-            ['parent', 'child'].forEach(which => {
-                const td  = document.createElement('td');
-                const inp = document.createElement('input');
-                inp.type      = 'text';
-                inp.value     = which === 'parent' ? curP : curC;
-                inp.className = 'edit-input';
-                if (which === 'parent' && warn) inp.title = warn;
-
-                inp.addEventListener('blur', () => {
-                    const n = inp.value.trim();
-                    if (!n) { inp.value = which === 'parent' ? curP : curC; return; }
-                    const newP = which === 'parent' ? n : curP;
-                    const newC = which === 'child'  ? n : curC;
-                    if (newP === curP && newC === curC) return;
-                    masterUpdatePair(parentField, childField, curP, curC, newP, newC);
-                    curP = newP; curC = newC;
-                    refreshAfterMasterEdit();
-                });
-                inp.addEventListener('keydown', e => { if (e.key === 'Enter') inp.blur(); });
-                td.appendChild(inp);
-                tr.appendChild(td);
-            });
-
-            const tdOp  = document.createElement('td');
-            tdOp.className = 'col-ctrl';
-            const btnDel = document.createElement('button');
-            btnDel.textContent = '削除'; btnDel.className = 'row-delete-btn';
-            btnDel.addEventListener('click', () => {
-                if (!confirm(`「${curP} / ${curC}」を削除しますか？`)) return;
-                masterDeletePair(parentField, childField, curP, curC);
-                refreshAfterMasterEdit();
-            });
-            tdOp.appendChild(btnDel);
-            tr.appendChild(tdOp);
-            tbody.appendChild(tr);
-        });
-    }
-    table.replaceChildren(thead, tbody);
-    section.appendChild(table);
-
-    // 追加フォーム
-    const addRow = document.createElement('div');
-    addRow.className = 'master-value-add-row';
-    const addParentInp = document.createElement('input');
-    addParentInp.type = 'text'; addParentInp.className = 'edit-input';
-    addParentInp.placeholder = '親';
-    const addChildInp = document.createElement('input');
-    addChildInp.type = 'text'; addChildInp.className = 'edit-input';
-    addChildInp.placeholder = '子';
-    const addBtn = document.createElement('button');
-    addBtn.textContent = '追加'; addBtn.className = 'master-add-btn';
-    addBtn.addEventListener('click', () => {
-        const p = addParentInp.value.trim();
-        const c = addChildInp.value.trim();
-        if (!p) { addParentInp.focus(); return; }
-        if (!c) { addChildInp.focus(); return; }
-        if (pairs.some(pair => pair.parent === p && pair.child === c)) {
-            alert('すでに登録されています'); return;
-        }
-        if (validateParent) {
-            const w = validateParent(p);
-            if (w && !confirm(`注意: ${w}\nそれでも追加しますか？`)) return;
-        }
-        masterAddPair(parentField, childField, p, c);
-        addParentInp.value = ''; addChildInp.value = '';
-        refreshAfterMasterEdit();
-    });
-    [addParentInp, addChildInp].forEach(inp => {
-        inp.addEventListener('keydown', e => { if (e.key === 'Enter') addBtn.click(); });
-    });
-    addRow.append(addParentInp, addChildInp, addBtn);
-    section.appendChild(addRow);
-}
+    renderDataTable('table-main', 'summary-main', getFilteredMainData(), MAIN_DATA_COLUMNS, 'メインデータ', { editable: true, idColumn: 'ID' });
+    renderRecentItems();
+});
 
 // ===== データ読み込みヘルパー =====
 
@@ -1924,6 +1487,619 @@ function buildTaskRunnerUI(container) {
 
     container.appendChild(panel);
 }
+
+// ===== カレンダー =====
+
+/** 選択肢（Set）が空なら常にtrue、そうでなければ値がSetに含まれるかを判定する。 */
+function matchesMultiFilter(selectedSet, value) {
+    return selectedSet.size === 0 || selectedSet.has(value);
+}
+
+/** データ区分がタスクで、開始予定または終了予定が dateJP（"YYYY/MM/DD"）と一致する行を、calendarFilters で絞り込んで返す。 */
+function getTasksForDate(dateJP) {
+    return currentMainData.filter(r => {
+        if (r['データ区分'] !== 'タスク') return false;
+        if (jpDateOnly(r['開始予定']) !== dateJP && jpDateOnly(r['終了予定']) !== dateJP) return false;
+        if (!matchesMultiFilter(calendarFilters.tag, r['タグ'])) return false;
+        if (!matchesMultiFilter(calendarFilters.hub, r['ハブ'])) return false;
+        if (!matchesMultiFilter(calendarFilters.status, r['ステータス'])) return false;
+        return true;
+    });
+}
+
+/** データ区分がタスクで、指定フィールドが value と一致し、ステータスが完了・中断以外の件数を返す。 */
+function countActiveTasksByField(field, value) {
+    return currentMainData.filter(r =>
+        r['データ区分'] === 'タスク' && r[field] === value &&
+        r['ステータス'] !== '完了' && r['ステータス'] !== '中断'
+    ).length;
+}
+
+/** データ区分がタスクで、指定フィールドが value と一致する件数を（ステータスを問わず）返す。 */
+function countTasksByField(field, value) {
+    return currentMainData.filter(r => r['データ区分'] === 'タスク' && r[field] === value).length;
+}
+
+/** 選択肢を複数選択可能なチップ（チェックボックス）群として描画し、選択中はハイライトする。 */
+function createCalendarMultiFilter(options, selectedSet, buildLabel, onChange) {
+    const wrap = document.createElement('div');
+    wrap.className = 'calendar-multi-filter';
+    options.forEach(v => {
+        const label = document.createElement('label');
+        label.className = 'calendar-multi-filter-chip' + (selectedSet.has(v) ? ' calendar-multi-filter-chip--active' : '');
+
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.checked = selectedSet.has(v);
+        cb.addEventListener('change', () => {
+            if (cb.checked) selectedSet.add(v); else selectedSet.delete(v);
+            onChange();
+        });
+
+        label.append(cb, document.createTextNode(buildLabel(v)));
+        wrap.appendChild(label);
+    });
+    return wrap;
+}
+
+/** カレンダー上部のタグ／ハブ／ステータスフィルタ（いずれも複数選択可）を描画する。 */
+function renderCalendarFilters() {
+    const area = document.getElementById('calendar-filter-area');
+    if (!area) return;
+    area.innerHTML = '';
+
+    function makeRow(labelText, ctrl) {
+        const row = document.createElement('div');
+        row.className = 'triage-filter-row';
+        const lbl = document.createElement('span');
+        lbl.className = 'triage-filter-label';
+        lbl.textContent = labelText;
+        row.append(lbl, ctrl);
+        area.appendChild(row);
+    }
+
+    makeRow('タグ', createCalendarMultiFilter(
+        getFilteredTags(), calendarFilters.tag,
+        v => `${v} (${countActiveTasksByField('タグ', v)}/${countTasksByField('タグ', v)})`,
+        () => renderCalendar()
+    ));
+    makeRow('ハブ', createCalendarMultiFilter(
+        getFilteredHubs(), calendarFilters.hub,
+        v => `${v} (${countActiveTasksByField('ハブ', v)}/${countTasksByField('ハブ', v)})`,
+        () => renderCalendar()
+    ));
+
+    const taskStatuses = [...new Set(
+        currentMasterData.filter(r => r['(M)ステータス_親'] === 'タスク')
+            .map(r => r['(M)ステータス_子']).filter(Boolean)
+    )];
+    makeRow('ステータス', createCalendarMultiFilter(
+        taskStatuses, calendarFilters.status,
+        v => v,
+        () => renderCalendar()
+    ));
+}
+
+/** タグ／ハブ／ステータスでフィルタ中のタスク一覧（日付を問わず全件）を、開始予定・終了予定の早い順に返す。 */
+function getCalendarFilteredTaskList() {
+    if (calendarFilters.tag.size === 0 && calendarFilters.hub.size === 0 && calendarFilters.status.size === 0) return [];
+
+    const tasks = currentMainData.filter(r => {
+        if (r['データ区分'] !== 'タスク') return false;
+        if (!matchesMultiFilter(calendarFilters.tag, r['タグ'])) return false;
+        if (!matchesMultiFilter(calendarFilters.hub, r['ハブ'])) return false;
+        if (!matchesMultiFilter(calendarFilters.status, r['ステータス'])) return false;
+        return true;
+    });
+
+    tasks.sort((a, b) => {
+        const aKey = a['開始予定'] || a['終了予定'] || '';
+        const bKey = b['開始予定'] || b['終了予定'] || '';
+        if (!aKey && !bKey) return 0;
+        if (!aKey) return 1;
+        if (!bKey) return -1;
+        return aKey.localeCompare(bKey);
+    });
+
+    return tasks;
+}
+
+/** タグ／ハブでフィルタ中のタスク一覧テーブルを描画する（未フィルタ時は非表示）。 */
+function renderCalendarTaskList() {
+    const table = document.getElementById('calendar-task-list-table');
+    if (!table) return;
+
+    const tasks = getCalendarFilteredTaskList();
+    const wrapper = table.closest('.table-wrapper');
+
+    if (tasks.length === 0) {
+        if (wrapper) wrapper.style.display = 'none';
+        table.replaceChildren();
+        return;
+    }
+    if (wrapper) wrapper.style.display = '';
+
+    table.className = 'data-table';
+    const cols = ['タイトル', 'ステータス', '開始予定', '終了予定'];
+
+    const thead = document.createElement('thead');
+    const hRow  = document.createElement('tr');
+    cols.forEach(col => {
+        const th = document.createElement('th');
+        th.textContent = col;
+        hRow.appendChild(th);
+    });
+    thead.appendChild(hRow);
+
+    const tbody = document.createElement('tbody');
+    tasks.forEach(row => {
+        const tr = document.createElement('tr');
+        if (String(row['ID']) === selectedCalendarTaskId) tr.classList.add('selected-row');
+        cols.forEach(col => {
+            const td = document.createElement('td');
+            td.textContent = row[col] ?? '';
+            tr.appendChild(td);
+        });
+        tr.addEventListener('click', () => selectCalendarTaskFromList(row));
+        tbody.appendChild(tr);
+    });
+
+    table.replaceChildren(thead, tbody);
+}
+
+/** タスク一覧から選択した行を、対応する日付・月へカレンダーを連動させつつ編集対象にする。 */
+function selectCalendarTaskFromList(row) {
+    const dateValue = row['開始予定'] || row['終了予定'];
+    if (dateValue) {
+        const datePart = dateValue.split(' ')[0];
+        const [y, m, d] = datePart.split('/').map(Number);
+        if (y && m && d) {
+            calendarYear  = y;
+            calendarMonth = m - 1;
+            selectedCalendarDate = datePart;
+        }
+    }
+    selectedCalendarTaskId = String(row['ID']);
+    renderCalendar();
+}
+
+/** カレンダーセクション全体（フィルタ・タスク一覧・月グリッド・詳細ビュー）を再描画する。 */
+function renderCalendar() {
+    renderCalendarFilters();
+    renderCalendarTaskList();
+    renderCalendarGrid();
+    renderCalendarDetail();
+}
+
+/** 現在の calendarYear / calendarMonth に基づいて月カレンダーを描画する。 */
+function renderCalendarGrid() {
+    const label = document.getElementById('calendar-month-label');
+    if (label) label.textContent = `${calendarYear}年${calendarMonth + 1}月`;
+
+    const grid = document.getElementById('calendar-grid');
+    if (!grid) return;
+    grid.innerHTML = '';
+
+    ['日', '月', '火', '水', '木', '金', '土'].forEach(d => {
+        const head = document.createElement('div');
+        head.className = 'calendar-day-head';
+        head.textContent = d;
+        grid.appendChild(head);
+    });
+
+    const todayJP        = jpDateOnly(formatJpDatetime(new Date()));
+    const startWeekday   = new Date(calendarYear, calendarMonth, 1).getDay();
+    const daysInMonth    = new Date(calendarYear, calendarMonth + 1, 0).getDate();
+    const pad            = n => String(n).padStart(2, '0');
+
+    for (let i = 0; i < startWeekday; i++) {
+        const cell = document.createElement('div');
+        cell.className = 'calendar-day calendar-day--empty';
+        grid.appendChild(cell);
+    }
+
+    for (let d = 1; d <= daysInMonth; d++) {
+        const dateJP = `${calendarYear}/${pad(calendarMonth + 1)}/${pad(d)}`;
+        const cell = document.createElement('div');
+        cell.className = 'calendar-day';
+        if (dateJP === todayJP)             cell.classList.add('calendar-day--today');
+        if (dateJP === selectedCalendarDate) cell.classList.add('calendar-day--selected');
+
+        const num = document.createElement('div');
+        num.className = 'calendar-day-num';
+        num.textContent = String(d);
+        cell.appendChild(num);
+
+        const count = getTasksForDate(dateJP).length;
+        if (count > 0) {
+            const badge = document.createElement('span');
+            badge.className = 'calendar-day-badge';
+            badge.textContent = '●';
+            badge.title = `${count} 件の予定`;
+            cell.appendChild(badge);
+        }
+
+        cell.addEventListener('click', () => {
+            selectedCalendarDate   = dateJP;
+            selectedCalendarTaskId = null;
+            renderCalendar();
+        });
+        grid.appendChild(cell);
+    }
+}
+
+/** value（"YYYY/MM/DD" または "YYYY/MM/DD HH:mm"）が dateJP と同じ日付かどうかを調べ、時刻情報を返す。 */
+function extractTimeOnDate(value, dateJP) {
+    if (!value) return null;
+    const [datePart, timePart] = value.split(' ');
+    if (datePart !== dateJP) return null;
+    if (!timePart) return { hasTime: false, minutes: null };
+    const [h, m] = timePart.split(':').map(Number);
+    if (isNaN(h) || isNaN(m)) return { hasTime: false, minutes: null };
+    return { hasTime: true, minutes: h * 60 + m };
+}
+
+/**
+ * dateJP のタスクを「時間帯が決まっているもの（timed）」と「時間帯未定（unscheduled）」に分ける。
+ * timed の各要素は { row, startMin, endMin }（分単位、0〜1440）。
+ */
+function getCalendarSegmentsForDate(dateJP) {
+    const timed = [];
+    const unscheduled = [];
+
+    getTasksForDate(dateJP).forEach(row => {
+        const startInfo = extractTimeOnDate(row['開始予定'], dateJP);
+        const endInfo   = extractTimeOnDate(row['終了予定'], dateJP);
+        const hasStartTime = !!(startInfo && startInfo.hasTime);
+        const hasEndTime   = !!(endInfo && endInfo.hasTime);
+
+        if (!hasStartTime && !hasEndTime) {
+            unscheduled.push(row);
+            return;
+        }
+
+        let startMin = hasStartTime ? startInfo.minutes : endInfo.minutes - 30;
+        let endMin   = hasEndTime   ? endInfo.minutes   : startInfo.minutes + 30;
+        if (endMin <= startMin) endMin = startMin + 30;
+        startMin = Math.max(0, Math.min(1439, startMin));
+        endMin   = Math.max(startMin + 15, Math.min(1440, endMin));
+
+        timed.push({ row, startMin, endMin });
+    });
+
+    timed.sort((a, b) => a.startMin - b.startMin);
+    return { timed, unscheduled };
+}
+
+/** 時間帯が重なるタスクを横に並べるためのレーン番号を割り振る。 */
+function assignCalendarLanes(timed) {
+    const laneEnds = [];
+    timed.forEach(seg => {
+        let lane = laneEnds.findIndex(endMin => endMin <= seg.startMin);
+        if (lane === -1) { lane = laneEnds.length; laneEnds.push(0); }
+        laneEnds[lane] = seg.endMin;
+        seg.lane = lane;
+    });
+    const laneCount = laneEnds.length || 1;
+    timed.forEach(seg => { seg.laneCount = laneCount; });
+}
+
+const CALENDAR_HOUR_HEIGHT = 40; // 1時間あたりの高さ(px)
+
+/** タスクのステータスに応じたタイムラインブロックの配色クラスを返す（未着手=灰／進行中=青／連絡待ち・報告待ち・中断=紫／その他=緑）。 */
+function getCalendarStatusClass(status) {
+    if (status === '未着手') return 'calendar-time-block--todo';
+    if (status === '進行中') return 'calendar-time-block--doing';
+    if (['連絡待ち', '報告待ち', '中断'].includes(status)) return 'calendar-time-block--waiting';
+    return 'calendar-time-block--done';
+}
+
+/** 1日の時間軸（0:00〜24:00の目盛り）とタスクの時間帯ブロックを描画する。 */
+function renderCalendarTimeline(dateJP) {
+    const hoursEl = document.getElementById('calendar-timeline-hours');
+    const lanesEl = document.getElementById('calendar-timeline-lanes');
+    if (!hoursEl || !lanesEl) return;
+
+    const totalHeight = CALENDAR_HOUR_HEIGHT * 24;
+    hoursEl.style.height = `${totalHeight}px`;
+    lanesEl.style.height = `${totalHeight}px`;
+
+    hoursEl.innerHTML = '';
+    for (let h = 0; h < 24; h++) {
+        const row = document.createElement('div');
+        row.className = 'calendar-hour-row';
+        row.style.height = `${CALENDAR_HOUR_HEIGHT}px`;
+        row.textContent = `${String(h).padStart(2, '0')}:00`;
+        hoursEl.appendChild(row);
+    }
+
+    lanesEl.innerHTML = '';
+    const { timed } = getCalendarSegmentsForDate(dateJP);
+    assignCalendarLanes(timed);
+
+    const pxPerMin = CALENDAR_HOUR_HEIGHT / 60;
+    const fmt = m => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+
+    timed.forEach(seg => {
+        const laneWidthPct = 100 / seg.laneCount;
+        const block = document.createElement('div');
+        block.className = `calendar-time-block ${getCalendarStatusClass(seg.row['ステータス'])}`;
+        if (String(seg.row['ID']) === selectedCalendarTaskId) block.classList.add('calendar-time-block--selected');
+        block.style.top    = `${seg.startMin * pxPerMin}px`;
+        block.style.height = `${(seg.endMin - seg.startMin) * pxPerMin}px`;
+        block.style.left   = `${seg.lane * laneWidthPct}%`;
+        block.style.width  = `calc(${laneWidthPct}% - 4px)`;
+        block.textContent  = `${fmt(seg.startMin)}–${fmt(seg.endMin)} ${seg.row['タイトル'] || '（無題）'}`;
+        block.addEventListener('click', () => openCalendarTaskEdit(String(seg.row['ID'])));
+        lanesEl.appendChild(block);
+    });
+
+    // デフォルトで 8:00〜18:00 が見える位置までスクロールする
+    const scrollEl = document.getElementById('calendar-timeline-scroll');
+    if (scrollEl) scrollEl.scrollTop = 8 * CALENDAR_HOUR_HEIGHT;
+}
+
+/** 選択中の日付の詳細ビュー（時間帯未定タスク・1日の予定表・属性編集パネル）を描画する。 */
+function renderCalendarDetail() {
+    const titleEl       = document.getElementById('calendar-detail-title');
+    const unscheduledEl = document.getElementById('calendar-unscheduled-list');
+    if (!titleEl) return;
+
+    if (!selectedCalendarDate) {
+        titleEl.textContent = 'カレンダーで日付を選択してください';
+        if (unscheduledEl) unscheduledEl.innerHTML = '';
+        const hoursEl = document.getElementById('calendar-timeline-hours');
+        const lanesEl = document.getElementById('calendar-timeline-lanes');
+        if (hoursEl) hoursEl.innerHTML = '';
+        if (lanesEl) lanesEl.innerHTML = '';
+        renderCalendarTaskEdit();
+        return;
+    }
+
+    titleEl.textContent = selectedCalendarDate;
+
+    const { unscheduled } = getCalendarSegmentsForDate(selectedCalendarDate);
+    if (unscheduledEl) {
+        unscheduledEl.innerHTML = '';
+        if (unscheduled.length === 0) {
+            const p = document.createElement('p');
+            p.className = 'calendar-empty-text';
+            p.textContent = '時間帯未定のタスクはありません';
+            unscheduledEl.appendChild(p);
+        } else {
+            unscheduled.forEach(row => {
+                const chip = document.createElement('button');
+                chip.type = 'button';
+                chip.className = 'calendar-unscheduled-chip';
+                if (String(row['ID']) === selectedCalendarTaskId) chip.classList.add('calendar-unscheduled-chip--selected');
+                chip.textContent = row['タイトル'] || '（無題）';
+                chip.addEventListener('click', () => openCalendarTaskEdit(String(row['ID'])));
+                unscheduledEl.appendChild(chip);
+            });
+        }
+    }
+
+    renderCalendarTimeline(selectedCalendarDate);
+    renderCalendarTaskEdit();
+}
+
+/** 指定タスクを属性編集パネルの対象にする。 */
+function openCalendarTaskEdit(taskId) {
+    selectedCalendarTaskId = taskId;
+    renderCalendarDetail();
+}
+
+/**
+ * 属性編集パネルを描画する。選択中タスクがあれば編集モード（値を反映）、
+ * 無ければ新規登録モード（フォームをクリアし、開始予定を選択中の日付で初期化）にする。
+ */
+function renderCalendarTaskEdit() {
+    const panel = document.getElementById('calendar-task-edit');
+    if (!panel) return;
+
+    const statuses = [...new Set(
+        currentMasterData.filter(r => r['(M)ステータス_親'] === 'タスク')
+            .map(r => r['(M)ステータス_子']).filter(Boolean)
+    )];
+    rebuildSelectById('dayedit-status',   statuses);
+    rebuildSelectById('dayedit-priority', [...new Set(currentMasterData.map(r => r['(M)優先度']).filter(Boolean))]);
+    rebuildSelectById('dayedit-category', [...new Set(currentMasterData.map(r => r['(M)カテゴリ']).filter(Boolean))]);
+    rebuildSelectById('dayedit-tag',      getFilteredTags());
+    rebuildSelectById('dayedit-hub',      getFilteredHubs());
+
+    const row = selectedCalendarTaskId
+        ? currentMainData.find(r => String(r['ID']) === selectedCalendarTaskId)
+        : null;
+
+    if (!row) {
+        selectedCalendarTaskId = null;
+        clearCalendarTaskEditForm();
+        return;
+    }
+
+    document.getElementById('dayedit-title').value    = row['タイトル']   ?? '';
+    document.getElementById('dayedit-content').value  = row['内容']       ?? '';
+    document.getElementById('dayedit-biko').value     = row['備考']       ?? '';
+    document.getElementById('dayedit-status').value   = row['ステータス'] ?? '';
+    document.getElementById('dayedit-priority').value = row['優先度']     ?? '';
+    document.getElementById('dayedit-category').value = row['カテゴリ']   ?? '';
+    document.getElementById('dayedit-tag').value      = row['タグ']       ?? '';
+    document.getElementById('dayedit-hub').value      = row['ハブ']       ?? '';
+
+    const [startDate, startTime] = (row['開始予定'] || '').split(' ');
+    const [endDate,   endTime]   = (row['終了予定'] || '').split(' ');
+    const [startHour, startMinute] = (startTime || '').split(':');
+    const [endHour,   endMinute]   = (endTime   || '').split(':');
+    document.getElementById('dayedit-start-date').value   = startDate ? startDate.replace(/\//g, '-') : '';
+    document.getElementById('dayedit-start-hour').value   = startHour   || '';
+    document.getElementById('dayedit-start-minute').value = startMinute || '';
+    document.getElementById('dayedit-end-date').value     = endDate ? endDate.replace(/\//g, '-') : '';
+    document.getElementById('dayedit-end-hour').value     = endHour     || '';
+    document.getElementById('dayedit-end-minute').value   = endMinute   || '';
+    document.getElementById('dayedit-complete-date').value = (row['完了日'] || '').replace(/\//g, '-');
+}
+
+/**
+ * 編集フォームをクリアし、新規登録モードの初期値を設定する。
+ * - 開始予定・終了予定の日付: 選択中のカレンダー日付
+ * - タグ／ハブ: カレンダーで絞り込み中の値があればそれ
+ * - ステータス: 未着手／優先度: 中（マスタに存在する場合のみ反映）
+ * - カテゴリ: サイドバーで選択中のカテゴリ（「すべて」以外）
+ */
+function clearCalendarTaskEditForm() {
+    ['dayedit-title', 'dayedit-content', 'dayedit-biko', 'dayedit-status', 'dayedit-priority',
+     'dayedit-start-hour', 'dayedit-start-minute', 'dayedit-end-hour', 'dayedit-end-minute',
+     'dayedit-complete-date', 'dayedit-category', 'dayedit-tag', 'dayedit-hub'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.value = '';
+    });
+
+    const dateValue = selectedCalendarDate ? selectedCalendarDate.replace(/\//g, '-') : '';
+    const startDateEl = document.getElementById('dayedit-start-date');
+    if (startDateEl) startDateEl.value = dateValue;
+    const endDateEl = document.getElementById('dayedit-end-date');
+    if (endDateEl) endDateEl.value = dateValue;
+
+    // タグ／ハブが1つだけ選択されている場合のみ、新規タスクの初期値として反映する
+    const tagEl = document.getElementById('dayedit-tag');
+    if (tagEl && calendarFilters.tag.size === 1) tagEl.value = [...calendarFilters.tag][0];
+    const hubEl = document.getElementById('dayedit-hub');
+    if (hubEl && calendarFilters.hub.size === 1) hubEl.value = [...calendarFilters.hub][0];
+
+    const statusEl = document.getElementById('dayedit-status');
+    if (statusEl) statusEl.value = '未着手';
+    const priorityEl = document.getElementById('dayedit-priority');
+    if (priorityEl) priorityEl.value = '中';
+
+    const categoryEl = document.getElementById('dayedit-category');
+    if (categoryEl && currentCategory !== 'すべて') categoryEl.value = currentCategory;
+}
+
+/** 時・分の2つの<input type="number">から "HH:mm" 文字列を組み立てる（いずれか未入力なら空文字）。 */
+function readCalendarTime(hourId, minuteId) {
+    const hour   = document.getElementById(hourId).value;
+    const minute = document.getElementById(minuteId).value;
+    if (hour === '' || minute === '') return '';
+    const pad = n => String(n).padStart(2, '0');
+    return `${pad(hour)}:${pad(minute)}`;
+}
+
+/** 「適用」ボタン: 属性編集パネルの内容を選択中タスクへ書き戻す。 */
+document.getElementById('dayedit-apply-btn')?.addEventListener('click', () => {
+    if (!selectedCalendarTaskId) return;
+    const row = currentMainData.find(r => String(r['ID']) === selectedCalendarTaskId);
+    if (!row) return;
+
+    row['タイトル']   = document.getElementById('dayedit-title').value.trim();
+    row['内容']       = document.getElementById('dayedit-content').value.trim();
+    row['備考']       = document.getElementById('dayedit-biko').value.trim();
+    row['ステータス'] = document.getElementById('dayedit-status').value;
+    row['優先度']     = document.getElementById('dayedit-priority').value;
+    row['カテゴリ']   = document.getElementById('dayedit-category').value;
+    row['タグ']       = document.getElementById('dayedit-tag').value;
+    row['ハブ']       = document.getElementById('dayedit-hub').value;
+
+    const startDate = document.getElementById('dayedit-start-date').value;
+    const startTime = readCalendarTime('dayedit-start-hour', 'dayedit-start-minute');
+    const endDate    = document.getElementById('dayedit-end-date').value;
+    const endTime    = readCalendarTime('dayedit-end-hour', 'dayedit-end-minute');
+
+    row['開始予定'] = startDate ? `${startDate.replace(/-/g, '/')}${startTime ? ' ' + startTime : ''}` : '';
+    row['終了予定'] = endDate   ? `${endDate.replace(/-/g, '/')}${endTime ? ' ' + endTime : ''}`       : '';
+    row['完了日']   = document.getElementById('dayedit-complete-date').value.replace(/-/g, '/');
+    row['更新日時'] = formatJpDatetime(new Date());
+
+    saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
+    renderCalendar();
+    renderTaskRunner();
+});
+
+/** 「削除」ボタン: 選択中タスクをメインデータから完全に削除する。 */
+document.getElementById('dayedit-delete-btn')?.addEventListener('click', () => {
+    if (!selectedCalendarTaskId) return;
+    if (!confirm('このタスクを削除します。よろしいですか？（この操作は取り消せません）')) return;
+
+    currentMainData = currentMainData.filter(r => String(r['ID']) !== selectedCalendarTaskId);
+    selectedCalendarTaskId = null;
+
+    saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
+    renderCalendar();
+    renderTaskRunner();
+});
+
+/** 開始予定の時刻を入力したら、終了予定に1時間後を自動セットする（日付をまたぐ場合は終了予定日も繰り上げる）。手動で修正可能。 */
+function autoFillCalendarEndTime() {
+    const startDateEl   = document.getElementById('dayedit-start-date');
+    const startHourEl   = document.getElementById('dayedit-start-hour');
+    const startMinuteEl = document.getElementById('dayedit-start-minute');
+    const endDateEl     = document.getElementById('dayedit-end-date');
+    const endHourEl      = document.getElementById('dayedit-end-hour');
+    const endMinuteEl    = document.getElementById('dayedit-end-minute');
+    if (!startDateEl.value || startHourEl.value === '' || startMinuteEl.value === '') return;
+
+    const [y, m, d] = startDateEl.value.split('-').map(Number);
+    const startDt = new Date(y, m - 1, d, Number(startHourEl.value), Number(startMinuteEl.value));
+    const endDt   = new Date(startDt.getTime() + 60 * 60 * 1000);
+
+    const pad = n => String(n).padStart(2, '0');
+    endDateEl.value   = `${endDt.getFullYear()}-${pad(endDt.getMonth() + 1)}-${pad(endDt.getDate())}`;
+    endHourEl.value   = endDt.getHours();
+    endMinuteEl.value = endDt.getMinutes();
+}
+document.getElementById('dayedit-start-hour')?.addEventListener('change', autoFillCalendarEndTime);
+document.getElementById('dayedit-start-minute')?.addEventListener('change', autoFillCalendarEndTime);
+
+/** 「新規登録」ボタン: フォームの現在値で新規タスクを追加する（選択中タスクの有無は無関係）。 */
+document.getElementById('dayedit-new-btn')?.addEventListener('click', () => {
+    const title = document.getElementById('dayedit-title').value.trim();
+
+    const startDate = document.getElementById('dayedit-start-date').value;
+    const startTime = readCalendarTime('dayedit-start-hour', 'dayedit-start-minute');
+    const endDate    = document.getElementById('dayedit-end-date').value;
+    const endTime    = readCalendarTime('dayedit-end-hour', 'dayedit-end-minute');
+
+    const maxId = currentMainData.reduce((max, row) => {
+        const id = parseInt(row['ID'], 10);
+        return isNaN(id) ? max : Math.max(max, id);
+    }, 0);
+    const ts = formatJpDatetime(new Date());
+
+    const entry = Object.fromEntries(MAIN_DATA_COLUMNS.map(col => [col, '']));
+    entry['ID']        = String(maxId + 1);
+    entry['データ区分'] = 'タスク';
+    entry['タイトル']   = title;
+    entry['内容']       = document.getElementById('dayedit-content').value.trim();
+    entry['備考']       = document.getElementById('dayedit-biko').value.trim();
+    entry['ステータス'] = document.getElementById('dayedit-status').value;
+    entry['優先度']     = document.getElementById('dayedit-priority').value;
+    entry['カテゴリ']   = document.getElementById('dayedit-category').value || (currentCategory === 'すべて' ? '' : currentCategory);
+    entry['タグ']       = document.getElementById('dayedit-tag').value;
+    entry['ハブ']       = document.getElementById('dayedit-hub').value;
+    entry['開始予定']   = startDate ? `${startDate.replace(/-/g, '/')}${startTime ? ' ' + startTime : ''}` : '';
+    entry['終了予定']   = endDate   ? `${endDate.replace(/-/g, '/')}${endTime ? ' ' + endTime : ''}`       : '';
+    entry['完了日']     = document.getElementById('dayedit-complete-date').value.replace(/-/g, '/');
+    entry['作成日時']   = ts;
+    entry['更新日時']   = ts;
+
+    currentMainData.push(entry);
+    saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
+
+    selectedCalendarTaskId = null;
+    renderCalendar();
+    renderTaskRunner();
+});
+
+document.getElementById('calendar-prev-btn')?.addEventListener('click', () => {
+    calendarMonth--;
+    if (calendarMonth < 0) { calendarMonth = 11; calendarYear--; }
+    renderCalendarGrid();
+});
+
+document.getElementById('calendar-next-btn')?.addEventListener('click', () => {
+    calendarMonth++;
+    if (calendarMonth > 11) { calendarMonth = 0; calendarYear++; }
+    renderCalendarGrid();
+});
 
 // ===== 繰り返しタスク =====
 
