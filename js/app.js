@@ -27,6 +27,8 @@ let calendarMonth        = todayForCalendar.getMonth();    // カレンダーの
 let selectedCalendarDate = null;       // カレンダーで選択中の日付（"YYYY/MM/DD"）
 let selectedCalendarTaskId = null;     // 日別予定表で選択中のタスクID（属性編集パネル用）
 let calendarFilters = { tag: new Set(), hub: new Set(), status: new Set() }; // カレンダーのタグ／ハブ／ステータスフィルタ値（複数選択）
+let calendarQuickNewMode = false;      // true時: タスク一覧の「（新規作成）」行から起動した新規登録モード（日付は空欄のまま）
+let taskOrgView = 'calendar';          // 「タスク整理」の表示ビュー（'calendar' | 'gantt'）。年月・タグ/ハブ/ステータスフィルタ・選択中タスクは両ビューで共有する
 
 // ===== 初期化 =====
 window.addEventListener('DOMContentLoaded', () => {
@@ -66,7 +68,6 @@ function renderPage(pageId) {
     const renderers = {
         dashboard: renderDashboard,
         inbox:     renderInbox,
-        task:      renderTaskList,
     };
     renderers[pageId]?.();
 }
@@ -81,18 +82,16 @@ function renderDashboard() {
             : `カテゴリ: ${currentCategory}`;
     }
     renderTaskRunner();
+    renderRecurringSection();
     renderCalendar();
 }
 function renderInbox() {
     renderEdit();
     renderRecentItems();
     renderDataTable('table-main',   'summary-main',   getFilteredMainData(),   MAIN_DATA_COLUMNS,   'メインデータ',   { editable: true, idColumn: 'ID' });
-    renderDataTable('table-master', 'summary-master', currentMasterData, MASTER_DATA_COLUMNS, 'マスタデータ', { editable: true, onEdit: () => renderWarnings(computeMasterWarnings()) });
+    renderDataTable('table-master', 'summary-master', currentMasterData, MASTER_DATA_COLUMNS, 'マスタデータ', { editable: true, onEdit: () => { renderWarnings(computeMasterWarnings()); renderHubAdmin(); } });
     renderWarnings(computeMasterWarnings());
-}
-function renderTaskList() {
-    renderTaskRunner();
-    renderRecurringSection();
+    renderHubAdmin();
 }
 
 /**
@@ -886,6 +885,250 @@ function addMasterRow() {
 
 document.getElementById('add-master-data-row-btn')?.addEventListener('click', addMasterRow);
 
+// ===== ハブ管理（名前変更・削除・統合） =====
+
+let hubAdminDeletePending = null; // 削除確認中のハブ名（使用中の場合、再割り当てUIを表示するため）
+
+/** マスタに登録済みの全ハブ名（重複除去、有効/無効を問わない）を返す。1日タスク用の予約ハブは対象外。 */
+function getAllHubNamesForAdmin() {
+    return [...new Set(
+        currentMasterData.map(r => r['(M)ハブ_子']).filter(Boolean)
+    )].filter(name => name !== DAYPLAN_HUB);
+}
+
+/** 指定ハブ名がメインデータ（タスク／ナレッジ等）で使用されている件数を返す。 */
+function countHubUsage(name) {
+    return currentMainData.filter(r => r['ハブ'] === name).length;
+}
+
+/**
+ * ハブ名を旧名から新名へ変更する。メインデータの参照とマスタの(M)ハブ_子を書き換える。
+ * newName が既存の別ハブ名と一致する場合は実質的に統合（mergeHubInto）と同じ結果になる。
+ */
+function renameHubMaster(oldName, newName) {
+    if (getAllHubNamesForAdmin().includes(newName) && newName !== oldName) {
+        mergeHubInto(oldName, newName);
+        return;
+    }
+    currentMainData.forEach(r => { if (r['ハブ'] === oldName) r['ハブ'] = newName; });
+    currentMasterData.forEach(r => { if (r['(M)ハブ_子'] === oldName) r['(M)ハブ_子'] = newName; });
+    saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
+}
+
+/**
+ * マスタ行の (M)ハブ_親／(M)ハブ_子／(M)ハブ_ステータス のみを空欄化する。
+ * マスタ行は複数の属性（変数登録・タグ・ハブ・ステータス等）を同じ行に持つ場合があるため、
+ * ハブに関する列以外は保持する。全列が空になった行だけ最後に取り除く。
+ */
+function clearHubFieldsInMaster(hubName) {
+    currentMasterData.forEach(r => {
+        if (r['(M)ハブ_子'] === hubName) {
+            r['(M)ハブ_親']       = '';
+            r['(M)ハブ_子']       = '';
+            r['(M)ハブ_ステータス'] = '';
+        }
+    });
+    currentMasterData = currentMasterData.filter(r => Object.values(r).some(v => v !== '' && v != null));
+}
+
+/** sourceName のハブを targetName に統合する。メインデータの参照を付け替え、source側のマスタ行のハブ関連列だけを消す。 */
+function mergeHubInto(sourceName, targetName) {
+    currentMainData.forEach(r => { if (r['ハブ'] === sourceName) r['ハブ'] = targetName; });
+    clearHubFieldsInMaster(sourceName);
+    saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
+}
+
+/** ハブを削除する。reassignTo を指定すればそのハブへ再割り当てしてから削除、未指定なら参照を空欄にして削除する。 */
+function deleteHub(name, reassignTo) {
+    if (reassignTo) {
+        mergeHubInto(name, reassignTo);
+        return;
+    }
+    currentMainData.forEach(r => { if (r['ハブ'] === name) r['ハブ'] = ''; });
+    clearHubFieldsInMaster(name);
+    saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
+}
+
+/** 指定ハブ名の (M)ハブ_ステータス を切り替える（同名の全マスタ行に反映）。 */
+function toggleHubStatus(name) {
+    const nowActive = currentMasterData.some(r => r['(M)ハブ_子'] === name && isHubActive(r));
+    currentMasterData.forEach(r => {
+        if (r['(M)ハブ_子'] === name) r['(M)ハブ_ステータス'] = nowActive ? '0' : '';
+    });
+    saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
+}
+
+/** ハブ管理テーブルを描画する。名前変更・統合・削除の操作列を持つ。 */
+function renderHubAdmin() {
+    const table = document.getElementById('hub-admin-table');
+    if (!table) return;
+
+    const hubNames = getAllHubNamesForAdmin();
+    table.className = 'data-table';
+
+    if (hubNames.length === 0) {
+        const tbody = document.createElement('tbody');
+        const tr = document.createElement('tr');
+        const td = document.createElement('td');
+        td.className = 'empty-cell';
+        td.textContent = '登録済みのハブがありません';
+        tr.appendChild(td);
+        tbody.appendChild(tr);
+        table.replaceChildren(tbody);
+        return;
+    }
+
+    const thead = document.createElement('thead');
+    const hRow  = document.createElement('tr');
+    ['ハブ名', '使用件数', '状態', '名前変更', '統合', '削除'].forEach(col => {
+        const th = document.createElement('th');
+        th.textContent = col;
+        hRow.appendChild(th);
+    });
+    thead.appendChild(hRow);
+
+    const tbody = document.createElement('tbody');
+    hubNames.forEach(name => {
+        const count = countHubUsage(name);
+        const otherNames = hubNames.filter(n => n !== name);
+
+        const tr = document.createElement('tr');
+
+        const nameTd = document.createElement('td');
+        nameTd.textContent = name;
+        tr.appendChild(nameTd);
+
+        const countTd = document.createElement('td');
+        countTd.textContent = String(count);
+        tr.appendChild(countTd);
+
+        // 状態（表示/非表示の切り替え）
+        const statusTd = document.createElement('td');
+        const active = currentMasterData.some(r => r['(M)ハブ_子'] === name && isHubActive(r));
+        const statusBtn = document.createElement('button');
+        statusBtn.textContent = active ? '表示中' : '非表示中';
+        statusBtn.className = active ? 'hub-admin-status-btn hub-admin-status-btn--on' : 'hub-admin-status-btn hub-admin-status-btn--off';
+        statusBtn.addEventListener('click', () => {
+            toggleHubStatus(name);
+            renderHubAdmin();
+            renderCalendar();
+        });
+        statusTd.appendChild(statusBtn);
+        tr.appendChild(statusTd);
+
+        // 名前変更
+        const renameTd = document.createElement('td');
+        const renameInput = document.createElement('input');
+        renameInput.type = 'text';
+        renameInput.placeholder = '新しい名前';
+        renameInput.className = 'hub-admin-input';
+        const renameBtn = document.createElement('button');
+        renameBtn.textContent = '変更';
+        renameBtn.addEventListener('click', () => {
+            const newName = renameInput.value.trim();
+            if (!newName || newName === name) return;
+            renameHubMaster(name, newName);
+            hubAdminDeletePending = null;
+            renderHubAdmin();
+            renderCalendar();
+        });
+        renameTd.append(renameInput, renameBtn);
+        tr.appendChild(renameTd);
+
+        // 統合
+        const mergeTd = document.createElement('td');
+        if (otherNames.length > 0) {
+            const mergeSelect = document.createElement('select');
+            otherNames.forEach(n => {
+                const opt = document.createElement('option');
+                opt.value = n;
+                opt.textContent = n;
+                mergeSelect.appendChild(opt);
+            });
+            const mergeBtn = document.createElement('button');
+            mergeBtn.textContent = 'このハブへ統合';
+            mergeBtn.addEventListener('click', () => {
+                if (!confirm(`「${name}」を「${mergeSelect.value}」に統合します。「${name}」を使用中の全タスク／ナレッジが「${mergeSelect.value}」に書き換わります。よろしいですか？`)) return;
+                mergeHubInto(name, mergeSelect.value);
+                hubAdminDeletePending = null;
+                renderHubAdmin();
+                renderCalendar();
+            });
+            mergeTd.append(mergeSelect, mergeBtn);
+        } else {
+            mergeTd.textContent = '（統合先なし）';
+        }
+        tr.appendChild(mergeTd);
+
+        // 削除
+        const deleteTd = document.createElement('td');
+        if (hubAdminDeletePending === name) {
+            const p = document.createElement('p');
+            p.className = 'warning-text';
+            p.textContent = `「${name}」は${count}件のタスク／ナレッジに割り当てられています。`;
+            deleteTd.appendChild(p);
+
+            if (otherNames.length > 0) {
+                const reassignSelect = document.createElement('select');
+                otherNames.forEach(n => {
+                    const opt = document.createElement('option');
+                    opt.value = n;
+                    opt.textContent = n;
+                    reassignSelect.appendChild(opt);
+                });
+                const reassignBtn = document.createElement('button');
+                reassignBtn.textContent = '再割り当てして削除';
+                reassignBtn.addEventListener('click', () => {
+                    deleteHub(name, reassignSelect.value);
+                    hubAdminDeletePending = null;
+                    renderHubAdmin();
+                    renderCalendar();
+                });
+                deleteTd.append(reassignSelect, reassignBtn);
+            }
+
+            const unassignBtn = document.createElement('button');
+            unassignBtn.className = 'calendar-danger-btn';
+            unassignBtn.textContent = '割り当てずに削除';
+            unassignBtn.addEventListener('click', () => {
+                if (!confirm(`「${name}」を削除し、割り当てられていた${count}件のハブを空欄にします。よろしいですか？`)) return;
+                deleteHub(name, null);
+                hubAdminDeletePending = null;
+                renderHubAdmin();
+                renderCalendar();
+            });
+            const cancelBtn = document.createElement('button');
+            cancelBtn.textContent = 'キャンセル';
+            cancelBtn.addEventListener('click', () => {
+                hubAdminDeletePending = null;
+                renderHubAdmin();
+            });
+            deleteTd.append(unassignBtn, cancelBtn);
+        } else {
+            const deleteBtn = document.createElement('button');
+            deleteBtn.className = 'calendar-danger-btn';
+            deleteBtn.textContent = '削除';
+            deleteBtn.addEventListener('click', () => {
+                if (count === 0) {
+                    if (!confirm(`「${name}」を削除します。よろしいですか？`)) return;
+                    deleteHub(name, null);
+                    renderHubAdmin();
+                    renderCalendar();
+                } else {
+                    hubAdminDeletePending = name;
+                    renderHubAdmin();
+                }
+            });
+            deleteTd.appendChild(deleteBtn);
+        }
+        tr.appendChild(deleteTd);
+
+        tbody.appendChild(tr);
+    });
+
+    table.replaceChildren(thead, tbody);
+}
+
 /** 空のメインデータ行を1件追加し、メインデータ一覧テーブルを再描画する。 */
 document.getElementById('add-main-row-btn')?.addEventListener('click', () => {
     const maxId = currentMainData.reduce((max, row) => {
@@ -1152,18 +1395,25 @@ export function getFilteredTags() {
         .filter(Boolean);
 }
 
+/** (M)ハブ_ステータスが '0'（無効）でない行かどうかを判定する。未入力は有効扱いにする。 */
+function isHubActive(row) {
+    return row['(M)ハブ_ステータス'] !== '0' && row['(M)ハブ_ステータス'] !== 0;
+}
+
 /**
- * 選択中のカテゴリに属するハブ名一覧を返す。
+ * 選択中のカテゴリに属する、有効な（(M)ハブ_ステータスが0でない）ハブ名一覧を返す。
  * 「すべて」選択時は (M)ハブ_子 の全値を返す。
  * それ以外は (M)ハブ_親 === currentCategory の行の (M)ハブ_子 を返す。
  * @returns {string[]}
  */
 export function getFilteredHubs() {
     if (currentCategory === 'すべて') {
-        return [...new Set(currentMasterData.map(r => r['(M)ハブ_子']).filter(Boolean))];
+        return [...new Set(
+            currentMasterData.filter(isHubActive).map(r => r['(M)ハブ_子']).filter(Boolean)
+        )];
     }
     return currentMasterData
-        .filter(r => r['(M)ハブ_親'] === currentCategory)
+        .filter(r => r['(M)ハブ_親'] === currentCategory && isHubActive(r))
         .map(r => r['(M)ハブ_子'])
         .filter(Boolean);
 }
@@ -1227,12 +1477,10 @@ function updateRunnerTimerDisplay() {
     document.querySelectorAll('.runner-elapsed-display').forEach(el => { el.textContent = text; });
 }
 
-/** 両コンテナにタスク実行UIを描画 */
+/** タスク実行UIを描画 */
 function renderTaskRunner() {
-    ['task-runner-dash', 'task-runner-task'].forEach(id => {
-        const container = document.getElementById(id);
-        if (container) buildTaskRunnerUI(container);
-    });
+    const container = document.getElementById('task-runner-dash');
+    if (container) buildTaskRunnerUI(container);
 }
 
 /** 単一コンテナにタスク実行UIを構築 */
@@ -1495,10 +1743,14 @@ function matchesMultiFilter(selectedSet, value) {
     return selectedSet.size === 0 || selectedSet.has(value);
 }
 
-/** データ区分がタスクで、開始予定または終了予定が dateJP（"YYYY/MM/DD"）と一致する行を、calendarFilters で絞り込んで返す。 */
+/** 1日タスク（その日のタイムスケジュールを文法で記述する特殊タスク）を表す予約ハブ名。 */
+const DAYPLAN_HUB = '1日タスク';
+
+/** データ区分がタスクで、開始予定または終了予定が dateJP（"YYYY/MM/DD"）と一致する行を、カテゴリ・calendarFilters で絞り込んで返す。1日タスク自体は含まない。 */
 function getTasksForDate(dateJP) {
-    return currentMainData.filter(r => {
+    return getFilteredMainData().filter(r => {
         if (r['データ区分'] !== 'タスク') return false;
+        if (r['ハブ'] === DAYPLAN_HUB) return false;
         if (jpDateOnly(r['開始予定']) !== dateJP && jpDateOnly(r['終了予定']) !== dateJP) return false;
         if (!matchesMultiFilter(calendarFilters.tag, r['タグ'])) return false;
         if (!matchesMultiFilter(calendarFilters.hub, r['ハブ'])) return false;
@@ -1507,17 +1759,46 @@ function getTasksForDate(dateJP) {
     });
 }
 
-/** データ区分がタスクで、指定フィールドが value と一致し、ステータスが完了・中断以外の件数を返す。 */
+/** 指定日の1日タスク（ハブ=DAYPLAN_HUB、開始予定=dateJP のタスク行）を返す。無ければ null。 */
+function getDayPlanTask(dateJP) {
+    return currentMainData.find(r =>
+        r['データ区分'] === 'タスク' && r['ハブ'] === DAYPLAN_HUB && jpDateOnly(r['開始予定']) === dateJP
+    ) || null;
+}
+
+/**
+ * 1日タスクの内容欄を「HH:MM-HH:MM [#ID] [ラベル]」形式の行としてパースする。
+ * @returns {Array<{startMin:number, endMin:number, refId:?string, label:string}>}
+ */
+function parseDayPlanContent(content) {
+    if (!content) return [];
+    const lineRe = /^(\d{1,2}):(\d{2})-(\d{1,2}):(\d{2})\s*(?:#(\S+))?\s*(.*)$/;
+    return content.split('\n').map(line => line.trim()).filter(Boolean).map(line => {
+        const m = line.match(lineRe);
+        if (!m) return null;
+        const startMin = Number(m[1]) * 60 + Number(m[2]);
+        let endMin = Number(m[3]) * 60 + Number(m[4]);
+        if (endMin <= startMin) endMin = startMin + 15;
+        return {
+            startMin: Math.max(0, Math.min(1439, startMin)),
+            endMin:   Math.max(startMin + 15, Math.min(1440, endMin)),
+            refId:    m[5] || null,
+            label:    (m[6] || '').trim()
+        };
+    }).filter(Boolean);
+}
+
+/** データ区分がタスクで、指定フィールドが value と一致し、ステータスが完了・中断以外の件数を、カテゴリで絞り込んで返す。 */
 function countActiveTasksByField(field, value) {
-    return currentMainData.filter(r =>
+    return getFilteredMainData().filter(r =>
         r['データ区分'] === 'タスク' && r[field] === value &&
         r['ステータス'] !== '完了' && r['ステータス'] !== '中断'
     ).length;
 }
 
-/** データ区分がタスクで、指定フィールドが value と一致する件数を（ステータスを問わず）返す。 */
+/** データ区分がタスクで、指定フィールドが value と一致する件数を（ステータスを問わず）、カテゴリで絞り込んで返す。 */
 function countTasksByField(field, value) {
-    return currentMainData.filter(r => r['データ区分'] === 'タスク' && r[field] === value).length;
+    return getFilteredMainData().filter(r => r['データ区分'] === 'タスク' && r[field] === value).length;
 }
 
 /** 選択肢を複数選択可能なチップ（チェックボックス）群として描画し、選択中はハイライトする。 */
@@ -1542,9 +1823,19 @@ function createCalendarMultiFilter(options, selectedSet, buildLabel, onChange) {
     return wrap;
 }
 
-/** カレンダー上部のタグ／ハブ／ステータスフィルタ（いずれも複数選択可）を描画する。 */
-function renderCalendarFilters() {
-    const area = document.getElementById('calendar-filter-area');
+/** options を件数（N）の多い順にソートして返す。 */
+function sortByTotalCountDesc(options, field) {
+    return [...options].sort((a, b) => countTasksByField(field, b) - countTasksByField(field, a));
+}
+
+/**
+ * タグ／ハブ／ステータスの絞り込みチップ（いずれも複数選択可、件数(n/N)併記・N降順）を area に描画する。
+ * カレンダー・ガントチャートなど複数箇所から共通利用する。
+ * @param {HTMLElement} area     - チップ群を描画する要素
+ * @param {{tag:Set, hub:Set, status:Set}} filters - 選択状態を持つフィルタ値（複数選択）
+ * @param {Function} onChange    - 選択変更時に呼ぶ再描画コールバック
+ */
+function renderTagHubStatusFilters(area, filters, onChange) {
     if (!area) return;
     area.innerHTML = '';
 
@@ -1559,14 +1850,14 @@ function renderCalendarFilters() {
     }
 
     makeRow('タグ', createCalendarMultiFilter(
-        getFilteredTags(), calendarFilters.tag,
+        sortByTotalCountDesc(getFilteredTags(), 'タグ'), filters.tag,
         v => `${v} (${countActiveTasksByField('タグ', v)}/${countTasksByField('タグ', v)})`,
-        () => renderCalendar()
+        onChange
     ));
     makeRow('ハブ', createCalendarMultiFilter(
-        getFilteredHubs(), calendarFilters.hub,
+        sortByTotalCountDesc(getFilteredHubs(), 'ハブ'), filters.hub,
         v => `${v} (${countActiveTasksByField('ハブ', v)}/${countTasksByField('ハブ', v)})`,
-        () => renderCalendar()
+        onChange
     ));
 
     const taskStatuses = [...new Set(
@@ -1574,18 +1865,24 @@ function renderCalendarFilters() {
             .map(r => r['(M)ステータス_子']).filter(Boolean)
     )];
     makeRow('ステータス', createCalendarMultiFilter(
-        taskStatuses, calendarFilters.status,
-        v => v,
-        () => renderCalendar()
+        sortByTotalCountDesc(taskStatuses, 'ステータス'), filters.status,
+        v => `${v} (${countActiveTasksByField('ステータス', v)}/${countTasksByField('ステータス', v)})`,
+        onChange
     ));
+}
+
+/** カレンダー上部のタグ／ハブ／ステータスフィルタ（いずれも複数選択可）を描画する。 */
+function renderCalendarFilters() {
+    renderTagHubStatusFilters(document.getElementById('calendar-filter-area'), calendarFilters, () => renderCalendar());
 }
 
 /** タグ／ハブ／ステータスでフィルタ中のタスク一覧（日付を問わず全件）を、開始予定・終了予定の早い順に返す。 */
 function getCalendarFilteredTaskList() {
     if (calendarFilters.tag.size === 0 && calendarFilters.hub.size === 0 && calendarFilters.status.size === 0) return [];
 
-    const tasks = currentMainData.filter(r => {
+    const tasks = getFilteredMainData().filter(r => {
         if (r['データ区分'] !== 'タスク') return false;
+        if (r['ハブ'] === DAYPLAN_HUB) return false;
         if (!matchesMultiFilter(calendarFilters.tag, r['タグ'])) return false;
         if (!matchesMultiFilter(calendarFilters.hub, r['ハブ'])) return false;
         if (!matchesMultiFilter(calendarFilters.status, r['ステータス'])) return false;
@@ -1611,16 +1908,10 @@ function renderCalendarTaskList() {
 
     const tasks = getCalendarFilteredTaskList();
     const wrapper = table.closest('.table-wrapper');
-
-    if (tasks.length === 0) {
-        if (wrapper) wrapper.style.display = 'none';
-        table.replaceChildren();
-        return;
-    }
     if (wrapper) wrapper.style.display = '';
 
     table.className = 'data-table';
-    const cols = ['タイトル', 'ステータス', '開始予定', '終了予定'];
+    const cols = ['ID', 'タイトル', 'ステータス', '開始予定', '終了予定', '完了日'];
 
     const thead = document.createElement('thead');
     const hRow  = document.createElement('tr');
@@ -1644,6 +1935,18 @@ function renderCalendarTaskList() {
         tbody.appendChild(tr);
     });
 
+    // 末尾に新規作成用の行を追加（日付遷移なしで空欄のタスク登録モードを開く）
+    const newTr = document.createElement('tr');
+    newTr.className = 'calendar-task-list-new-row';
+    if (calendarQuickNewMode) newTr.classList.add('selected-row');
+    cols.forEach(col => {
+        const td = document.createElement('td');
+        td.textContent = col === 'タイトル' ? '（新規作成）' : '';
+        newTr.appendChild(td);
+    });
+    newTr.addEventListener('click', startCalendarQuickNewTask);
+    tbody.appendChild(newTr);
+
     table.replaceChildren(thead, tbody);
 }
 
@@ -1660,14 +1963,40 @@ function selectCalendarTaskFromList(row) {
         }
     }
     selectedCalendarTaskId = String(row['ID']);
+    calendarQuickNewMode   = false;
     renderCalendar();
 }
 
-/** カレンダーセクション全体（フィルタ・タスク一覧・月グリッド・詳細ビュー）を再描画する。 */
+/** タスク一覧末尾の「（新規作成）」行をクリックした際、日付を空欄にした新規登録モードで編集パネルを開く。 */
+function startCalendarQuickNewTask() {
+    selectedCalendarTaskId = null;
+    calendarQuickNewMode   = true;
+    renderCalendarDetail();
+}
+
+/** 「タスク整理」のビュー切り替えボタン（カレンダー／ガントチャート）の表示状態を反映する。 */
+function renderTaskOrgViewToggle() {
+    document.getElementById('taskorg-tab-calendar')?.classList.toggle('taskorg-view-btn--active', taskOrgView === 'calendar');
+    document.getElementById('taskorg-tab-gantt')?.classList.toggle('taskorg-view-btn--active', taskOrgView === 'gantt');
+    const calEl   = document.getElementById('taskorg-view-calendar');
+    const ganttEl = document.getElementById('taskorg-view-gantt');
+    if (calEl)   calEl.style.display   = taskOrgView === 'calendar' ? '' : 'none';
+    if (ganttEl) ganttEl.style.display = taskOrgView === 'gantt'    ? '' : 'none';
+}
+
+document.getElementById('taskorg-tab-calendar')?.addEventListener('click', () => { taskOrgView = 'calendar'; renderCalendar(); });
+document.getElementById('taskorg-tab-gantt')?.addEventListener('click', () => { taskOrgView = 'gantt'; renderCalendar(); });
+
+/** 「タスク整理」セクション全体（ビュー切替・フィルタ・カレンダー/ガントチャート・詳細ビュー）を再描画する。 */
 function renderCalendar() {
+    renderTaskOrgViewToggle();
     renderCalendarFilters();
-    renderCalendarTaskList();
-    renderCalendarGrid();
+    if (taskOrgView === 'calendar') {
+        renderCalendarTaskList();
+        renderCalendarGrid();
+    } else {
+        renderGanttChart();
+    }
     renderCalendarDetail();
 }
 
@@ -1722,6 +2051,7 @@ function renderCalendarGrid() {
         cell.addEventListener('click', () => {
             selectedCalendarDate   = dateJP;
             selectedCalendarTaskId = null;
+            calendarQuickNewMode   = false;
             renderCalendar();
         });
         grid.appendChild(cell);
@@ -1742,12 +2072,19 @@ function extractTimeOnDate(value, dateJP) {
 /**
  * dateJP のタスクを「時間帯が決まっているもの（timed）」と「時間帯未定（unscheduled）」に分ける。
  * timed の各要素は { row, startMin, endMin }（分単位、0〜1440）。
+ * 1日タスクの内容欄で#ID参照されているタスクは、元タスク側の時間帯表示を省き1日タスク側のブロックのみ表示する。
  */
 function getCalendarSegmentsForDate(dateJP) {
+    const dayPlanTask   = getDayPlanTask(dateJP);
+    const dayPlanBlocks = dayPlanTask ? parseDayPlanContent(dayPlanTask['内容']) : [];
+    const referencedIds = new Set(dayPlanBlocks.map(b => b.refId).filter(Boolean));
+
     const timed = [];
     const unscheduled = [];
 
     getTasksForDate(dateJP).forEach(row => {
+        if (referencedIds.has(String(row['ID']))) return;
+
         const startInfo = extractTimeOnDate(row['開始予定'], dateJP);
         const endInfo   = extractTimeOnDate(row['終了予定'], dateJP);
         const hasStartTime = !!(startInfo && startInfo.hasTime);
@@ -1765,6 +2102,16 @@ function getCalendarSegmentsForDate(dateJP) {
         endMin   = Math.max(startMin + 15, Math.min(1440, endMin));
 
         timed.push({ row, startMin, endMin });
+    });
+
+    dayPlanBlocks.forEach(b => {
+        const linkedRow = b.refId ? currentMainData.find(r => String(r['ID']) === b.refId) : null;
+        timed.push({
+            row: linkedRow || { ID: null, タイトル: b.label || '（ラベルなし）', ステータス: null },
+            startMin: b.startMin,
+            endMin: b.endMin,
+            isDayPlanBlock: true
+        });
     });
 
     timed.sort((a, b) => a.startMin - b.startMin);
@@ -1823,14 +2170,15 @@ function renderCalendarTimeline(dateJP) {
     timed.forEach(seg => {
         const laneWidthPct = 100 / seg.laneCount;
         const block = document.createElement('div');
-        block.className = `calendar-time-block ${getCalendarStatusClass(seg.row['ステータス'])}`;
-        if (String(seg.row['ID']) === selectedCalendarTaskId) block.classList.add('calendar-time-block--selected');
+        const hasLinkedTask = seg.row['ID'] != null;
+        block.className = `calendar-time-block ${hasLinkedTask ? getCalendarStatusClass(seg.row['ステータス']) : 'calendar-time-block--dayplan'}`;
+        if (hasLinkedTask && String(seg.row['ID']) === selectedCalendarTaskId) block.classList.add('calendar-time-block--selected');
         block.style.top    = `${seg.startMin * pxPerMin}px`;
         block.style.height = `${(seg.endMin - seg.startMin) * pxPerMin}px`;
         block.style.left   = `${seg.lane * laneWidthPct}%`;
         block.style.width  = `calc(${laneWidthPct}% - 4px)`;
         block.textContent  = `${fmt(seg.startMin)}–${fmt(seg.endMin)} ${seg.row['タイトル'] || '（無題）'}`;
-        block.addEventListener('click', () => openCalendarTaskEdit(String(seg.row['ID'])));
+        if (hasLinkedTask) block.addEventListener('click', () => openCalendarTaskEdit(String(seg.row['ID'])));
         lanesEl.appendChild(block);
     });
 
@@ -1838,6 +2186,84 @@ function renderCalendarTimeline(dateJP) {
     const scrollEl = document.getElementById('calendar-timeline-scroll');
     if (scrollEl) scrollEl.scrollTop = 8 * CALENDAR_HOUR_HEIGHT;
 }
+
+/** 1日タスクの作成ボタン／編集エリアを、選択中の日付の状態に合わせて描画する。 */
+function renderDayPlanSection() {
+    const createBtn = document.getElementById('dayplan-create-btn');
+    const editor     = document.getElementById('dayplan-editor');
+    const contentEl  = document.getElementById('dayplan-content');
+    if (!createBtn || !editor || !contentEl) return;
+
+    if (!selectedCalendarDate) {
+        createBtn.style.display = 'none';
+        editor.style.display = 'none';
+        return;
+    }
+
+    const dayPlan = getDayPlanTask(selectedCalendarDate);
+    if (dayPlan) {
+        createBtn.style.display = 'none';
+        editor.style.display = '';
+        if (document.activeElement !== contentEl) contentEl.value = dayPlan['内容'] || '';
+    } else {
+        createBtn.style.display = '';
+        editor.style.display = 'none';
+        contentEl.value = '';
+    }
+}
+
+/** 選択中日付の1日タスクを新規作成する（ハブ=DAYPLAN_HUB、開始予定=選択中日付、内容は空欄）。 */
+function createDayPlanTask() {
+    if (!selectedCalendarDate) return;
+
+    const maxId = currentMainData.reduce((max, row) => {
+        const id = parseInt(row['ID'], 10);
+        return isNaN(id) ? max : Math.max(max, id);
+    }, 0);
+    const ts = formatJpDatetime(new Date());
+
+    const entry = Object.fromEntries(MAIN_DATA_COLUMNS.map(col => [col, '']));
+    entry['ID']        = String(maxId + 1);
+    entry['データ区分'] = 'タスク';
+    entry['タイトル']   = `1日タスク ${selectedCalendarDate}`;
+    entry['ハブ']       = DAYPLAN_HUB;
+    entry['開始予定']   = selectedCalendarDate;
+    entry['ステータス'] = '未着手';
+    entry['作成日時']   = ts;
+    entry['更新日時']   = ts;
+
+    currentMainData.push(entry);
+    saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
+    renderCalendarDetail();
+    renderCalendarGrid();
+}
+
+/** 編集エリアの内容をその日の1日タスクに保存する。 */
+function saveDayPlanContent() {
+    if (!selectedCalendarDate) return;
+    const dayPlan = getDayPlanTask(selectedCalendarDate);
+    if (!dayPlan) return;
+    const contentEl = document.getElementById('dayplan-content');
+    dayPlan['内容']     = contentEl ? contentEl.value : '';
+    dayPlan['更新日時'] = formatJpDatetime(new Date());
+    saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
+    renderCalendarTimeline(selectedCalendarDate);
+}
+
+/** 選択中日付の1日タスクを削除する。 */
+function deleteDayPlanTask() {
+    if (!selectedCalendarDate) return;
+    const dayPlan = getDayPlanTask(selectedCalendarDate);
+    if (!dayPlan) return;
+    currentMainData = currentMainData.filter(r => r !== dayPlan);
+    saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
+    renderCalendarDetail();
+    renderCalendarGrid();
+}
+
+document.getElementById('dayplan-create-btn')?.addEventListener('click', createDayPlanTask);
+document.getElementById('dayplan-save-btn')?.addEventListener('click', saveDayPlanContent);
+document.getElementById('dayplan-delete-btn')?.addEventListener('click', deleteDayPlanTask);
 
 /** 選択中の日付の詳細ビュー（時間帯未定タスク・1日の予定表・属性編集パネル）を描画する。 */
 function renderCalendarDetail() {
@@ -1852,11 +2278,13 @@ function renderCalendarDetail() {
         const lanesEl = document.getElementById('calendar-timeline-lanes');
         if (hoursEl) hoursEl.innerHTML = '';
         if (lanesEl) lanesEl.innerHTML = '';
+        renderDayPlanSection();
         renderCalendarTaskEdit();
         return;
     }
 
     titleEl.textContent = selectedCalendarDate;
+    renderDayPlanSection();
 
     const { unscheduled } = getCalendarSegmentsForDate(selectedCalendarDate);
     if (unscheduledEl) {
@@ -1886,6 +2314,7 @@ function renderCalendarDetail() {
 /** 指定タスクを属性編集パネルの対象にする。 */
 function openCalendarTaskEdit(taskId) {
     selectedCalendarTaskId = taskId;
+    calendarQuickNewMode = false;
     renderCalendarDetail();
 }
 
@@ -1917,6 +2346,7 @@ function renderCalendarTaskEdit() {
         return;
     }
 
+    document.getElementById('dayedit-id').value        = row['ID']         ?? '';
     document.getElementById('dayedit-title').value    = row['タイトル']   ?? '';
     document.getElementById('dayedit-content').value  = row['内容']       ?? '';
     document.getElementById('dayedit-biko').value     = row['備考']       ?? '';
@@ -1947,14 +2377,15 @@ function renderCalendarTaskEdit() {
  * - カテゴリ: サイドバーで選択中のカテゴリ（「すべて」以外）
  */
 function clearCalendarTaskEditForm() {
-    ['dayedit-title', 'dayedit-content', 'dayedit-biko', 'dayedit-status', 'dayedit-priority',
+    ['dayedit-id', 'dayedit-title', 'dayedit-content', 'dayedit-biko', 'dayedit-status', 'dayedit-priority',
      'dayedit-start-hour', 'dayedit-start-minute', 'dayedit-end-hour', 'dayedit-end-minute',
      'dayedit-complete-date', 'dayedit-category', 'dayedit-tag', 'dayedit-hub'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.value = '';
     });
 
-    const dateValue = selectedCalendarDate ? selectedCalendarDate.replace(/\//g, '-') : '';
+    // 一覧末尾の「（新規作成）」から起動した場合は、日付をカレンダー選択日で埋めずに空欄のままにする
+    const dateValue = (!calendarQuickNewMode && selectedCalendarDate) ? selectedCalendarDate.replace(/\//g, '-') : '';
     const startDateEl = document.getElementById('dayedit-start-date');
     if (startDateEl) startDateEl.value = dateValue;
     const endDateEl = document.getElementById('dayedit-end-date');
@@ -2092,14 +2523,140 @@ document.getElementById('dayedit-new-btn')?.addEventListener('click', () => {
 document.getElementById('calendar-prev-btn')?.addEventListener('click', () => {
     calendarMonth--;
     if (calendarMonth < 0) { calendarMonth = 11; calendarYear--; }
-    renderCalendarGrid();
+    if (taskOrgView === 'calendar') renderCalendarGrid(); else renderGanttChart();
 });
 
 document.getElementById('calendar-next-btn')?.addEventListener('click', () => {
     calendarMonth++;
     if (calendarMonth > 11) { calendarMonth = 0; calendarYear++; }
-    renderCalendarGrid();
+    if (taskOrgView === 'calendar') renderCalendarGrid(); else renderGanttChart();
 });
+
+// ===== ガントチャート（タスクページ） =====
+
+/** カテゴリ・calendarFilters（タグ／ハブ／ステータス）で絞り込んだタスク一覧を返す。1日タスクは除外し、日付未設定の行も除外する。 */
+function getGanttTasks() {
+    return getFilteredMainData().filter(r => {
+        if (r['データ区分'] !== 'タスク') return false;
+        if (r['ハブ'] === DAYPLAN_HUB) return false;
+        if (!r['開始予定'] && !r['終了予定']) return false;
+        if (!matchesMultiFilter(calendarFilters.tag, r['タグ'])) return false;
+        if (!matchesMultiFilter(calendarFilters.hub, r['ハブ'])) return false;
+        if (!matchesMultiFilter(calendarFilters.status, r['ステータス'])) return false;
+        return true;
+    });
+}
+
+/**
+ * dateJP が [startJP, endJP] の範囲内かどうかの表示マーカーを返す。
+ * 開始日=▷／終了日=◁／その間=ー／どちらか一方のみ設定時はその日だけに印。
+ * 完了日と重なる日は▼で上書きする。
+ */
+function getGanttMarker(row, dateJP) {
+    const s = jpDateOnly(row['開始予定']);
+    const e = jpDateOnly(row['終了予定']);
+    const c = jpDateOnly(row['完了日']);
+
+    let marker = '';
+    if (s && e) {
+        if (dateJP >= s && dateJP <= e) {
+            marker = dateJP === s ? '▷' : (dateJP === e ? '◁' : 'ー');
+        }
+    } else if (s && dateJP === s) {
+        marker = '▷';
+    } else if (e && dateJP === e) {
+        marker = '◁';
+    }
+
+    if (c && dateJP === c) marker = '▼';
+    return marker;
+}
+
+/** ガントチャート（「タスク整理」のガントチャートビュー）を描画する。表示範囲は calendarYear/calendarMonth の月。 */
+function renderGanttChart() {
+    const label = document.getElementById('calendar-month-label');
+    if (label) label.textContent = `${calendarYear}年${calendarMonth + 1}月`;
+
+    const table = document.getElementById('gantt-table');
+    if (!table) return;
+
+    const daysInMonth = new Date(calendarYear, calendarMonth + 1, 0).getDate();
+    const pad = n => String(n).padStart(2, '0');
+    const dates = Array.from({ length: daysInMonth }, (_, i) => `${calendarYear}/${pad(calendarMonth + 1)}/${pad(i + 1)}`);
+    const todayJP = jpDateOnly(formatJpDatetime(new Date()));
+
+    const tasks = getGanttTasks();
+
+    table.className = 'gantt-table';
+    const thead = document.createElement('thead');
+    const hRow  = document.createElement('tr');
+    ['ID', 'タイトル'].forEach(col => {
+        const th = document.createElement('th');
+        th.textContent = col;
+        th.className = 'gantt-fixed-col';
+        hRow.appendChild(th);
+    });
+    dates.forEach(d => {
+        const th = document.createElement('th');
+        th.className = 'gantt-day-col';
+        if (d === todayJP) th.classList.add('gantt-day-col--today');
+        if (d === selectedCalendarDate) th.classList.add('gantt-day-col--selected');
+        th.textContent = String(Number(d.slice(-2)));
+        th.addEventListener('click', () => {
+            selectedCalendarDate   = d;
+            selectedCalendarTaskId = null;
+            calendarQuickNewMode   = false;
+            renderCalendar();
+        });
+        hRow.appendChild(th);
+    });
+    thead.appendChild(hRow);
+
+    const tbody = document.createElement('tbody');
+    if (tasks.length === 0) {
+        const tr = document.createElement('tr');
+        const td = document.createElement('td');
+        td.className = 'empty-cell';
+        td.colSpan = dates.length + 2;
+        td.textContent = '該当するタスクがありません';
+        tr.appendChild(td);
+        tbody.appendChild(tr);
+    } else {
+        tasks.forEach(row => {
+            const tr = document.createElement('tr');
+            tr.className = 'gantt-task-row';
+            if (String(row['ID']) === selectedCalendarTaskId) tr.classList.add('selected-row');
+
+            const idTd = document.createElement('td');
+            idTd.className = 'gantt-fixed-col';
+            idTd.textContent = row['ID'] ?? '';
+            tr.appendChild(idTd);
+
+            const statusClass = getCalendarStatusClass(row['ステータス']);
+
+            const titleTd = document.createElement('td');
+            titleTd.className = `gantt-fixed-col gantt-title-col gantt-title-text ${statusClass}`;
+            titleTd.textContent = row['タイトル'] || '（無題）';
+            tr.appendChild(titleTd);
+
+            dates.forEach(d => {
+                const td = document.createElement('td');
+                td.className = 'gantt-day-col';
+                const marker = getGanttMarker(row, d);
+                if (marker) {
+                    td.textContent = marker;
+                    td.classList.add('gantt-marker', statusClass);
+                }
+                tr.appendChild(td);
+            });
+
+            tr.addEventListener('click', () => openCalendarTaskEdit(String(row['ID'])));
+            tbody.appendChild(tr);
+        });
+    }
+
+    table.replaceChildren(thead, tbody);
+}
 
 // ===== 繰り返しタスク =====
 

@@ -41,10 +41,8 @@
 
         <!-- ページナビゲーション -->
         <nav class="sidebar-nav">
-            <button class="nav-btn" data-page="dashboard">ダッシュボード</button>
-            <button class="nav-btn" data-page="task">タスク</button>
-            <button class="nav-btn" data-page="knowledge">ナレッジ</button>
-            <button class="nav-btn" data-page="inbox">情報整理</button>
+            <button class="nav-btn" data-page="dashboard">Studio</button>
+            <button class="nav-btn" data-page="inbox">Setting</button>
         </nav>
 
         <!-- カテゴリフィルタ -->
@@ -61,12 +59,12 @@
     <main class="main-content">
 
         <div id="page-dashboard" class="page">
-            <h2>ダッシュボード</h2>
+            <h2>Studio</h2>
             <div id="dashboard-warning"></div>
 
             <!-- INBOX（デフォルト展開） -->
             <details class="expander" open>
-                <summary class="expander-title">INBOX — 思いついたことをすぐ記録</summary>
+                <summary class="expander-title">INBOX</summary>
                 <div class="inbox-form">
                     <textarea id="inbox-content" class="inbox-textarea"
                               placeholder="内容を入力してください..." rows="4"></textarea>
@@ -83,27 +81,64 @@
                 <div id="task-runner-dash"></div>
             </details>
 
-            <!-- カレンダー（デフォルト展開） -->
+            <!-- タスク整理（カレンダー／ガントチャート切り替え、デフォルト展開） -->
             <details class="expander" open>
-                <summary class="expander-title">カレンダー</summary>
-                <!-- 月カレンダー（横幅いっぱい） -->
-                <div class="calendar-panel calendar-panel--full">
-                    <div id="calendar-filter-area" class="triage-filter-area"></div>
-                    <div class="table-wrapper">
+                <summary class="expander-title">タスク整理</summary>
+
+                <div class="taskorg-view-toggle">
+                    <button type="button" id="taskorg-tab-calendar" class="taskorg-view-btn taskorg-view-btn--active" data-view="calendar">カレンダー</button>
+                    <button type="button" id="taskorg-tab-gantt" class="taskorg-view-btn" data-view="gantt">ガントチャート</button>
+                </div>
+
+                <div id="calendar-filter-area" class="triage-filter-area"></div>
+
+                <div class="calendar-header">
+                    <button id="calendar-prev-btn" class="calendar-nav-btn">‹</button>
+                    <span id="calendar-month-label" class="calendar-month-label"></span>
+                    <button id="calendar-next-btn" class="calendar-nav-btn">›</button>
+                </div>
+
+                <!-- カレンダービュー（横幅いっぱい） -->
+                <div id="taskorg-view-calendar" class="calendar-panel calendar-panel--full">
+                    <div class="table-wrapper table-wrapper--limited">
                         <table id="calendar-task-list-table" class="calendar-task-list-table"></table>
                     </div>
-                    <div class="calendar-header">
-                        <button id="calendar-prev-btn" class="calendar-nav-btn">‹</button>
-                        <span id="calendar-month-label" class="calendar-month-label"></span>
-                        <button id="calendar-next-btn" class="calendar-nav-btn">›</button>
-                    </div>
                     <div id="calendar-grid" class="calendar-grid"></div>
+                </div>
+
+                <!-- ガントチャートビュー（横幅いっぱい） -->
+                <div id="taskorg-view-gantt" class="calendar-panel calendar-panel--full" style="display:none">
+                    <div class="gantt-legend">
+                        <span class="gantt-legend-item"><span class="gantt-swatch calendar-time-block--todo"></span>未着手</span>
+                        <span class="gantt-legend-item"><span class="gantt-swatch calendar-time-block--doing"></span>進行中</span>
+                        <span class="gantt-legend-item"><span class="gantt-swatch calendar-time-block--waiting"></span>中断・連絡待ち・報告待ち</span>
+                        <span class="gantt-legend-item"><span class="gantt-swatch calendar-time-block--done"></span>完了</span>
+                    </div>
+                    <div class="table-wrapper table-wrapper--limited">
+                        <table id="gantt-table" class="gantt-table"></table>
+                    </div>
                 </div>
 
                 <!-- 選択した日のタイムスケジュール（左）＋ タスク編集（右） -->
                 <div class="calendar-day-section">
                     <div class="calendar-timeline-col">
                         <h3 id="calendar-detail-title" class="calendar-detail-title"></h3>
+
+                        <!-- 1日タスク（その日のタイムスケジュールを文法で記述して管理） -->
+                        <div class="calendar-dayplan-section">
+                            <div class="calendar-dayplan-toolbar">
+                                <p class="calendar-section-label">1日タスク</p>
+                                <button id="dayplan-create-btn" class="calendar-add-btn">1日タスクを作成</button>
+                            </div>
+                            <div id="dayplan-editor" class="calendar-dayplan-editor" style="display:none">
+                                <p class="calendar-dayplan-hint">1行1件、「HH:MM-HH:MM 内容」または「HH:MM-HH:MM #ID ラベル」の形式で入力してください（#IDを書くと既存タスクにリンクします）</p>
+                                <textarea id="dayplan-content" class="calendar-dayplan-textarea" rows="6" placeholder="10:00-12:00 #123 資料作成の続き&#10;13:00-13:30 昼会"></textarea>
+                                <div class="calendar-dayplan-toolbar">
+                                    <button id="dayplan-save-btn" class="calendar-add-btn">保存</button>
+                                    <button id="dayplan-delete-btn" class="calendar-danger-btn">1日タスクを削除</button>
+                                </div>
+                            </div>
+                        </div>
 
                         <!-- 時間帯未定のタスク -->
                         <div class="calendar-unscheduled-section">
@@ -124,6 +159,10 @@
                         <!-- 新規追加・編集（未選択時は新規登録、選択時はその行の編集） -->
                         <div id="calendar-task-edit" class="calendar-task-edit">
                             <p class="calendar-section-label">新規追加・編集</p>
+                            <div class="calendar-edit-row">
+                                <label>ID</label>
+                                <input type="text" id="dayedit-id" readonly placeholder="（新規登録時は未採番）">
+                            </div>
                             <div class="calendar-edit-row">
                                 <label>タイトル</label>
                                 <input type="text" id="dayedit-title">
@@ -185,10 +224,19 @@
                     </div>
                 </div>
             </details>
+
+            <!-- 繰り返しタスク -->
+            <details class="expander" open>
+                <summary class="expander-title" id="summary-recurring">繰り返しタスク</summary>
+                <div id="recurring-section"></div>
+            </details>
+
+            <!-- load-btn / save-btn ハンドラが参照する要素（非表示） -->
+            <div id="content-box" style="display:none"></div>
         </div>
 
         <div id="page-inbox" class="page">
-            <h2>情報整理</h2>
+            <h2>Setting</h2>
 
             <!-- 警告バナー（1行） -->
             <div id="master-warning"></div>
@@ -293,7 +341,7 @@
                 <div class="edit-table-toolbar">
                     <button id="add-main-row-btn">行を追加</button>
                 </div>
-                <div class="table-wrapper">
+                <div class="table-wrapper table-wrapper--limited">
                     <table id="table-main"></table>
                 </div>
             </details>
@@ -305,8 +353,19 @@
                 <div class="edit-table-toolbar">
                     <button id="add-master-data-row-btn">行を追加</button>
                 </div>
-                <div class="table-wrapper">
+                <div class="table-wrapper table-wrapper--limited">
                     <table id="table-master"></table>
+                </div>
+            </details>
+
+            <!-- ハブ管理（名前変更・削除・統合） -->
+            <details class="expander">
+                <summary class="expander-title" id="summary-hub-admin">
+                    ハブ管理
+                </summary>
+                <p class="calendar-dayplan-hint">名前変更・統合は既存タスク／ナレッジの「ハブ」を一括で書き換えます。削除は使用中の場合、別のハブへの再割り当て、または未割り当てにしてから削除できます。</p>
+                <div class="table-wrapper table-wrapper--limited">
+                    <table id="hub-admin-table"></table>
                 </div>
             </details>
 
@@ -319,29 +378,6 @@
                     <table id="table-recent"></table>
                 </div>
             </details>
-        </div>
-
-        <div id="page-task" class="page">
-            <h2>タスク</h2>
-
-            <!-- タスク実行（デフォルト展開） -->
-            <details class="expander" open>
-                <summary class="expander-title" id="summary-task-runner-task">タスク実行</summary>
-                <div id="task-runner-task"></div>
-            </details>
-
-            <!-- 繰り返しタスク -->
-            <details class="expander" open>
-                <summary class="expander-title" id="summary-recurring">繰り返しタスク</summary>
-                <div id="recurring-section"></div>
-            </details>
-
-            <!-- load-btn / save-btn ハンドラが参照する要素（非表示） -->
-            <div id="content-box" style="display:none"></div>
-        </div>
-
-        <div id="page-knowledge" class="page">
-            <h2>ナレッジ</h2>
         </div>
 
     </main>
