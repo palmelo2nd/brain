@@ -888,27 +888,8 @@ details[open] > .expander-title::after { transform: rotate(90deg); }
 
 /* ===== 繰り返しタスク ===== */
 
-.recurring-parent-block {
-    border: 1px solid #e1e4e8;
-    border-radius: 8px;
-    padding: 14px 16px;
-    margin-bottom: 16px;
-    background: #fff;
-}
-
-.recurring-parent-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    margin-bottom: 10px;
-}
-
-.recurring-parent-title {
-    font-weight: 600;
-    font-size: 14px;
-    color: #24292e;
-}
+.recurring-parent-row { cursor: pointer; }
+.recurring-parent-row:hover td { background: #eef5ff; }
 
 .recurring-manual-btn {
     flex-shrink: 0;
@@ -1126,9 +1107,16 @@ details[open] > .expander-title::after { transform: rotate(90deg); }
     gap: 6px;
 }
 
+.calendar-unscheduled-chip-wrap {
+    display: inline-flex;
+    align-items: stretch;
+    border-radius: 14px;
+    overflow: hidden;
+}
+
 .calendar-unscheduled-chip {
     border: 1px solid transparent;
-    border-radius: 14px;
+    border-radius: 14px 0 0 14px;
     padding: 4px 12px;
     font-size: 12px;
     cursor: pointer;
@@ -1137,6 +1125,18 @@ details[open] > .expander-title::after { transform: rotate(90deg); }
 .calendar-unscheduled-chip--selected {
     outline: 2px solid #fd7e14;
 }
+
+.calendar-unscheduled-chip-add {
+    border: 1px solid transparent;
+    border-radius: 0 14px 14px 0;
+    padding: 4px 10px;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    color: #fff;
+    background: rgba(0, 0, 0, 0.2);
+}
+.calendar-unscheduled-chip-add:hover { background: rgba(0, 0, 0, 0.35); }
 
 /* --- 1日の予定表（タイムライン） --- */
 .calendar-timeline-scroll {
@@ -1246,6 +1246,14 @@ details[open] > .expander-title::after { transform: rotate(90deg); }
 
 .calendar-edit-row--top {
     align-items: flex-start;
+}
+
+.calendar-checkbox-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    cursor: pointer;
 }
 
 .calendar-edit-row label {

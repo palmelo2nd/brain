@@ -12,6 +12,12 @@ export function formatYYYYMMDD(date) {
     return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}`;
 }
 
+/** date を "YYYY/MM/DD" 形式の文字列で返す（開始予定・重複判定キーに使用） */
+function formatSlashDate(date) {
+    const pad = n => String(n).padStart(2, '0');
+    return `${date.getFullYear()}/${pad(date.getMonth() + 1)}/${pad(date.getDate())}`;
+}
+
 /** 親タスクの頻度設定が date に一致するか判定する（AND ロジック・空=全て対象） */
 function matchesSchedule(parent, date) {
     const months   = (parent['繰返し頻度_月']  || '').split(',').map(s => s.trim()).filter(Boolean);
@@ -38,7 +44,12 @@ function maxIdIn(mainData) {
     }, 0);
 }
 
-function buildChild(parent, dateStr, id, ts) {
+/** 親ID＋対象日（開始予定）で、既に同じ子タスクが生成済みかどうかを判定する。親タイトルの変更に影響されないキー。 */
+function childAlreadyGenerated(mainData, parentId, slashDate) {
+    return mainData.some(r => r['繰返し親ID'] === String(parentId) && r['開始予定'] === slashDate);
+}
+
+function buildChild(parent, dateStr, slashDate, id, ts) {
     const child = Object.fromEntries(MAIN_DATA_COLUMNS.map(col => [col, '']));
     child['ID']           = String(id);
     child['データ区分']   = 'タスク';
@@ -48,6 +59,7 @@ function buildChild(parent, dateStr, id, ts) {
     child['ハブ']         = parent['ハブ']      || '';
     child['優先度']       = parent['優先度']    || '';
     child['見積時間']     = parent['見積時間']  || '';
+    child['開始予定']     = slashDate;
     child['繰返し識別子'] = '1';
     child['繰返し親ID']   = String(parent['ID']);
     child['作成日時']     = ts;
@@ -59,14 +71,16 @@ function buildChild(parent, dateStr, id, ts) {
 
 /**
  * アプリ起動・データ読み込み時に繰り返し子タスクを自動生成する。
- * ステータス「進行中」の親のみ対象。頻度条件を満たさない日はスキップ。
- * タイトル「親タイトル_YYYYMMDD」が既存であれば重複生成しない。
+ * 「繰返し識別子=1」かつステータス「進行中」の親のみ対象（進行中以外は非アクティブ扱いで生成しない）。
+ * 頻度条件を満たさない日はスキップ。
+ * 親ID＋対象日（開始予定）が既存であれば重複生成しない（親タイトル変更の影響を受けない）。
  *
  * (4) アウトプット: 生成された子タスクの配列（0件の場合は空配列）
  */
 export function checkAndGenerateChildren(mainData, today) {
-    const ts      = makeTsStr(today);
-    const dateStr = formatYYYYMMDD(today);
+    const ts        = makeTsStr(today);
+    const dateStr   = formatYYYYMMDD(today);
+    const slashDate = formatSlashDate(today);
 
     const parents = mainData.filter(r =>
         r['繰返し識別子'] === '1' && !r['繰返し親ID'] && r['ステータス'] === '進行中'
@@ -77,15 +91,10 @@ export function checkAndGenerateChildren(mainData, today) {
 
     parents.forEach(parent => {
         if (!matchesSchedule(parent, today)) return;
-
-        const expectedTitle = `${parent['タイトル']}_${dateStr}`;
-        const alreadyExists = mainData.some(r =>
-            r['繰返し親ID'] === String(parent['ID']) && r['タイトル'] === expectedTitle
-        );
-        if (alreadyExists) return;
+        if (childAlreadyGenerated(mainData, parent['ID'], slashDate)) return;
 
         currentMaxId++;
-        generated.push(buildChild(parent, dateStr, currentMaxId, ts));
+        generated.push(buildChild(parent, dateStr, slashDate, currentMaxId, ts));
     });
 
     return generated;
@@ -93,20 +102,17 @@ export function checkAndGenerateChildren(mainData, today) {
 
 /**
  * 親タスクから子タスクを任意タイミングで生成する（手動生成）。
- * 当日分が既に存在する場合は null を返す。
+ * 頻度条件はチェックしない。当日分（親ID＋開始予定）が既に存在する場合は null を返す。
  *
  * (4) アウトプット: 生成した子タスクオブジェクト、または null（重複時）
  */
 export function generateChildManually(parent, mainData) {
-    const today   = new Date();
-    const ts      = makeTsStr(today);
-    const dateStr = formatYYYYMMDD(today);
+    const today     = new Date();
+    const ts        = makeTsStr(today);
+    const dateStr   = formatYYYYMMDD(today);
+    const slashDate = formatSlashDate(today);
 
-    const expectedTitle = `${parent['タイトル']}_${dateStr}`;
-    const alreadyExists = mainData.some(r =>
-        r['繰返し親ID'] === String(parent['ID']) && r['タイトル'] === expectedTitle
-    );
-    if (alreadyExists) return null;
+    if (childAlreadyGenerated(mainData, parent['ID'], slashDate)) return null;
 
-    return buildChild(parent, dateStr, maxIdIn(mainData) + 1, ts);
+    return buildChild(parent, dateStr, slashDate, maxIdIn(mainData) + 1, ts);
 }

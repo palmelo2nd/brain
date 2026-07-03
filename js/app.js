@@ -1488,7 +1488,7 @@ function renderTaskRunner() {
 function buildTaskRunnerUI(container) {
     container.innerHTML = '';
 
-    const inProgress = currentMainData.filter(r =>
+    const inProgress = getFilteredMainData().filter(r =>
         r['データ区分'] === 'タスク' && r['ステータス'] === '進行中'
     );
 
@@ -2220,12 +2220,12 @@ function assignCalendarLanes(timed) {
 
 const CALENDAR_HOUR_HEIGHT = 40; // 1時間あたりの高さ(px)
 
-/** タスクのステータスに応じたタイムラインブロックの配色クラスを返す（未着手=灰／進行中=青／連絡待ち・報告待ち・中断=紫／その他=緑）。 */
+/** タスクのステータスに応じたタイムラインブロックの配色クラスを返す（未着手・未選択=灰／進行中=青／連絡待ち・報告待ち・中断=紫／完了=緑）。 */
 function getCalendarStatusClass(status) {
-    if (status === '未着手') return 'calendar-time-block--todo';
     if (status === '進行中') return 'calendar-time-block--doing';
     if (['連絡待ち', '報告待ち', '中断'].includes(status)) return 'calendar-time-block--waiting';
-    return 'calendar-time-block--done';
+    if (status === '完了') return 'calendar-time-block--done';
+    return 'calendar-time-block--todo'; // 未着手・未選択（空欄）はいずれも灰色
 }
 
 /** 1日の時間軸（0:00〜24:00の目盛り）とタスクの時間帯ブロックを描画する。 */
@@ -2352,7 +2352,37 @@ document.getElementById('dayplan-create-btn')?.addEventListener('click', createD
 document.getElementById('dayplan-save-btn')?.addEventListener('click', saveDayPlanContent);
 document.getElementById('dayplan-delete-btn')?.addEventListener('click', deleteDayPlanTask);
 
-/** チップ群（{row, label}の配列）を container に描画する。空なら emptyText を表示する。 */
+/** 現在時刻を30分刻みで切り上げた開始時刻と、その1時間後の終了時刻を "HH:MM" 形式で返す。 */
+function computeDayPlanTimeSlot() {
+    const now = new Date();
+    const minutesNow = now.getHours() * 60 + now.getMinutes();
+    const startMin = Math.ceil(minutesNow / 30) * 30;
+    const endMin   = startMin + 60;
+    const fmt = m => {
+        const wrapped = ((m % 1440) + 1440) % 1440;
+        return `${String(Math.floor(wrapped / 60)).padStart(2, '0')}:${String(wrapped % 60).padStart(2, '0')}`;
+    };
+    return { startStr: fmt(startMin), endStr: fmt(endMin) };
+}
+
+/** タスクを選択中日付の1日タスクに「HH:MM-HH:MM #ID タイトル」の1行として追加する。1日タスクが無ければ新規作成する。 */
+function addTaskToDayPlan(row) {
+    if (!selectedCalendarDate) return;
+    let dayPlan = getDayPlanTask(selectedCalendarDate);
+    if (!dayPlan) {
+        createDayPlanTask();
+        dayPlan = getDayPlanTask(selectedCalendarDate);
+        if (!dayPlan) return;
+    }
+    const { startStr, endStr } = computeDayPlanTimeSlot();
+    const line = `${startStr}-${endStr} #${row['ID']} ${row['タイトル'] || '（無題）'}`;
+    dayPlan['内容']     = dayPlan['内容'] ? `${dayPlan['内容']}\n${line}` : line;
+    dayPlan['更新日時'] = formatJpDatetime(new Date());
+    saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
+    renderCalendarDetail();
+}
+
+/** チップ群（{row, label}の配列）を container に描画する。空なら emptyText を表示する。各チップには1日タスクへ追加する＋ボタンを併設する。 */
 function renderCalendarChipList(container, chipEntries, emptyText) {
     if (!container) return;
     container.innerHTML = '';
@@ -2364,13 +2394,28 @@ function renderCalendarChipList(container, chipEntries, emptyText) {
         return;
     }
     chipEntries.forEach(({ row, label }) => {
+        const wrap = document.createElement('span');
+        wrap.className = 'calendar-unscheduled-chip-wrap';
+
         const chip = document.createElement('button');
         chip.type = 'button';
         chip.className = `calendar-unscheduled-chip ${getCalendarStatusClass(row['ステータス'])}`;
         if (String(row['ID']) === selectedCalendarTaskId) chip.classList.add('calendar-unscheduled-chip--selected');
         chip.textContent = label;
         chip.addEventListener('click', () => openCalendarTaskEdit(String(row['ID'])));
-        container.appendChild(chip);
+
+        const addBtn = document.createElement('button');
+        addBtn.type = 'button';
+        addBtn.className = 'calendar-unscheduled-chip-add';
+        addBtn.title = '1日タスクに追加';
+        addBtn.textContent = '+';
+        addBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            addTaskToDayPlan(row);
+        });
+
+        wrap.append(chip, addBtn);
+        container.appendChild(wrap);
     });
 }
 
@@ -2419,6 +2464,7 @@ function renderCalendarDetail() {
         ...timed.filter(seg => seg.row['ID'] != null)
                 .map(seg => ({ row: seg.row, label: `${fmt(seg.startMin)}–${fmt(seg.endMin)} ${seg.row['タイトル'] || '（無題）'}` })),
     ];
+    chipEntries.sort((a, b) => compareDateAscEmptyLast(a.row['終了予定'], b.row['終了予定']));
     renderCalendarChipList(unscheduledEl, chipEntries, 'この日のタスクはありません');
 
     renderCalendarTimeline(selectedCalendarDate);
@@ -2436,6 +2482,31 @@ function openCalendarTaskEdit(taskId) {
  * 属性編集パネルを描画する。選択中タスクがあれば編集モード（値を反映）、
  * 無ければ新規登録モード（フォームをクリアし、開始予定を選択中の日付で初期化）にする。
  */
+const dayeditFreq = { month: new Set(), day: new Set(), weekday: new Set() }; // 属性編集パネルの頻度チップの選択状態
+
+/** 「繰り返しタスクの親として管理する」チェックボックスの状態に応じて頻度（月/日/曜日）チップの表示・非表示を切り替える。 */
+function updateDayeditFreqVisibility() {
+    const section = document.getElementById('dayedit-freq-section');
+    const checkbox = document.getElementById('dayedit-recurring-parent');
+    if (section) section.style.display = (checkbox && checkbox.checked) ? '' : 'none';
+}
+
+/** 属性編集パネルの頻度（月/日/曜日）チップを描画する。 */
+function renderDayeditFreqChips() {
+    const monthOptions   = [...new Set(currentMasterData.map(r => r['(M)繰返し頻度_月']).filter(Boolean))];
+    const dayOptions     = [...new Set(currentMasterData.map(r => r['(M)繰返し頻度_日']).filter(Boolean))];
+    const weekdayOptions = [...new Set(currentMasterData.map(r => r['(M)繰返し頻度_曜日']).filter(Boolean))];
+
+    const monthEl   = document.getElementById('dayedit-freq-month');
+    const dayEl     = document.getElementById('dayedit-freq-day');
+    const weekdayEl = document.getElementById('dayedit-freq-weekday');
+    if (monthEl)   monthEl.replaceChildren(createCalendarMultiFilter(monthOptions, dayeditFreq.month, v => v, renderDayeditFreqChips));
+    if (dayEl)     dayEl.replaceChildren(createCalendarMultiFilter(dayOptions, dayeditFreq.day, v => v, renderDayeditFreqChips));
+    if (weekdayEl) weekdayEl.replaceChildren(createCalendarMultiFilter(weekdayOptions, dayeditFreq.weekday, v => v, renderDayeditFreqChips));
+}
+
+document.getElementById('dayedit-recurring-parent')?.addEventListener('change', updateDayeditFreqVisibility);
+
 function renderCalendarTaskEdit() {
     const panel = document.getElementById('calendar-task-edit');
     if (!panel) return;
@@ -2457,6 +2528,8 @@ function renderCalendarTaskEdit() {
     if (!row) {
         selectedCalendarTaskId = null;
         clearCalendarTaskEditForm();
+        renderDayeditFreqChips();
+        updateDayeditFreqVisibility();
         return;
     }
 
@@ -2481,6 +2554,15 @@ function renderCalendarTaskEdit() {
     document.getElementById('dayedit-end-hour').value     = endHour     || '';
     document.getElementById('dayedit-end-minute').value   = endMinute   || '';
     document.getElementById('dayedit-complete-date').value = (row['完了日'] || '').replace(/\//g, '-');
+
+    const recurringCheckbox = document.getElementById('dayedit-recurring-parent');
+    if (recurringCheckbox) recurringCheckbox.checked = row['繰返し識別子'] === '1' && !row['繰返し親ID'];
+
+    dayeditFreq.month.clear();   (row['繰返し頻度_月']   || '').split(',').map(s => s.trim()).filter(Boolean).forEach(v => dayeditFreq.month.add(v));
+    dayeditFreq.day.clear();     (row['繰返し頻度_日']   || '').split(',').map(s => s.trim()).filter(Boolean).forEach(v => dayeditFreq.day.add(v));
+    dayeditFreq.weekday.clear(); (row['繰返し頻度_曜日'] || '').split(',').map(s => s.trim()).filter(Boolean).forEach(v => dayeditFreq.weekday.add(v));
+    renderDayeditFreqChips();
+    updateDayeditFreqVisibility();
 }
 
 /**
@@ -2497,6 +2579,11 @@ function clearCalendarTaskEditForm() {
         const el = document.getElementById(id);
         if (el) el.value = '';
     });
+    dayeditFreq.month.clear();
+    dayeditFreq.day.clear();
+    dayeditFreq.weekday.clear();
+    const recurringCheckbox = document.getElementById('dayedit-recurring-parent');
+    if (recurringCheckbox) recurringCheckbox.checked = false;
 
     // 一覧末尾の「（新規作成）」から起動した場合は、日付をカレンダー選択日で埋めずに空欄のままにする
     const dateValue = (!calendarQuickNewMode && selectedCalendarDate) ? selectedCalendarDate.replace(/\//g, '-') : '';
@@ -2540,20 +2627,44 @@ document.getElementById('dayedit-fill-date-from-complete-btn')?.addEventListener
     if (!endDateEl.value)   endDateEl.value   = completeDate;
 });
 
+/**
+ * 「繰り返しタスクの親として管理する」チェックボックスがONなら、target を繰り返しタスクの親として
+ * 繰返し識別子・繰返し頻度_月/日/曜日 を設定する。OFFなら関連フィールドを空にする。
+ * 自動生成の有効/無効はここでは扱わず、ステータスが「進行中」かどうかで別途判定する。
+ */
+function applyRecurringFieldsFromForm(target) {
+    const isRecurringParent = document.getElementById('dayedit-recurring-parent')?.checked;
+    if (isRecurringParent) {
+        target['繰返し識別子']   = '1';
+        target['繰返し親ID']     = target['繰返し親ID'] || '';
+        target['繰返し頻度_月']  = [...dayeditFreq.month].join(',');
+        target['繰返し頻度_日']  = [...dayeditFreq.day].join(',');
+        target['繰返し頻度_曜日'] = [...dayeditFreq.weekday].join(',');
+    } else {
+        target['繰返し識別子']   = '';
+        target['繰返し頻度_月']  = '';
+        target['繰返し頻度_日']  = '';
+        target['繰返し頻度_曜日'] = '';
+    }
+}
+
 /** 「適用」ボタン: 属性編集パネルの内容を選択中タスクへ書き戻す。 */
 document.getElementById('dayedit-apply-btn')?.addEventListener('click', () => {
     if (!selectedCalendarTaskId) return;
     const row = currentMainData.find(r => String(r['ID']) === selectedCalendarTaskId);
     if (!row) return;
 
+    const status = document.getElementById('dayedit-status').value;
+
     row['タイトル']   = document.getElementById('dayedit-title').value.trim();
     row['内容']       = document.getElementById('dayedit-content').value.trim();
     row['備考']       = document.getElementById('dayedit-biko').value.trim();
-    row['ステータス'] = document.getElementById('dayedit-status').value;
+    row['ステータス'] = status;
     row['優先度']     = document.getElementById('dayedit-priority').value;
     row['カテゴリ']   = document.getElementById('dayedit-category').value;
     row['タグ']       = document.getElementById('dayedit-tag').value;
     row['ハブ']       = document.getElementById('dayedit-hub').value;
+    applyRecurringFieldsFromForm(row);
 
     const startDate = document.getElementById('dayedit-start-date').value;
     const startTime = readCalendarTime('dayedit-start-hour', 'dayedit-start-minute');
@@ -2568,6 +2679,7 @@ document.getElementById('dayedit-apply-btn')?.addEventListener('click', () => {
     saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
     renderCalendar();
     renderTaskRunner();
+    renderRecurringSection();
 });
 
 /** 「削除」ボタン: 選択中タスクをメインデータから完全に削除する。 */
@@ -2581,6 +2693,7 @@ document.getElementById('dayedit-delete-btn')?.addEventListener('click', () => {
     saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
     renderCalendar();
     renderTaskRunner();
+    renderRecurringSection();
 });
 
 /** 開始予定の時刻を入力したら、終了予定に1時間後を自動セットする（日付をまたぐ場合は終了予定日も繰り上げる）。手動で修正可能。 */
@@ -2631,6 +2744,7 @@ document.getElementById('dayedit-new-btn')?.addEventListener('click', () => {
     entry['カテゴリ']   = document.getElementById('dayedit-category').value || (currentCategory === 'すべて' ? '' : currentCategory);
     entry['タグ']       = document.getElementById('dayedit-tag').value;
     entry['ハブ']       = document.getElementById('dayedit-hub').value;
+    applyRecurringFieldsFromForm(entry);
     entry['開始予定']   = startDate ? `${startDate.replace(/-/g, '/')}${startTime ? ' ' + startTime : ''}` : '';
     entry['終了予定']   = endDate   ? `${endDate.replace(/-/g, '/')}${endTime ? ' ' + endTime : ''}`       : '';
     entry['完了日']     = document.getElementById('dayedit-complete-date').value.replace(/-/g, '/');
@@ -2842,7 +2956,19 @@ function renderGanttChart() {
 
 // ===== 繰り返しタスク =====
 
-const recurringChartInstances = new Map();
+let recurringEditChart = null;
+let selectedRecurringParentId = null; // 親タスク一覧・子タスク一覧の表示対象として選択中の親タスクID
+let selectedRecurringEditId   = null; // 編集パネルに読み込み中のタスクID（親または子。nullなら新規登録モード）
+const recurEditFreq = { month: new Set(), day: new Set(), weekday: new Set() }; // 親タスク編集パネルの頻度チップの選択状態
+
+/** 親タスクの頻度設定（月/日/曜日）を一覧表示用の文字列にまとめる。すべて空欄なら「毎日」。 */
+function formatRecurringFrequencyLabel(parent) {
+    const parts = [];
+    if (parent['繰返し頻度_月'])  parts.push(`月:${parent['繰返し頻度_月']}`);
+    if (parent['繰返し頻度_日'])  parts.push(`日:${parent['繰返し頻度_日']}`);
+    if (parent['繰返し頻度_曜日']) parts.push(`曜日:${parent['繰返し頻度_曜日']}`);
+    return parts.length > 0 ? parts.join(' / ') : '毎日';
+}
 
 /** 子タスク配列から Chart.js 用の labels / data を作成する */
 function buildChildChartData(children) {
@@ -2865,17 +2991,13 @@ function buildChildChartData(children) {
     return { labels, data };
 }
 
-/** タスクページの繰り返しタスクセクションを描画する */
-function renderRecurringSection() {
+/** 親タスク一覧テーブル（ハブ・親タスク名・子タスク数・ステータス・頻度）を描画する。行クリックで編集パネルに読み込む。 */
+function renderRecurringParentTable() {
     const container = document.getElementById('recurring-section');
     if (!container) return;
-
-    // 既存チャートインスタンスを破棄してからDOMをリセット
-    recurringChartInstances.forEach(chart => chart.destroy());
-    recurringChartInstances.clear();
     container.innerHTML = '';
 
-    const parents = currentMainData.filter(r =>
+    const parents = getFilteredMainData().filter(r =>
         r['繰返し識別子'] === '1' && !r['繰返し親ID']
     );
 
@@ -2894,80 +3016,381 @@ function renderRecurringSection() {
         return;
     }
 
+    const table = document.createElement('table');
+    table.className = 'data-table recurring-parent-table';
+    const thead = document.createElement('thead');
+    const hRow  = document.createElement('tr');
+    ['ハブ', '親タスク名', '子タスク数', 'ステータス', '頻度'].forEach(col => {
+        const th = document.createElement('th');
+        th.textContent = col;
+        hRow.appendChild(th);
+    });
+    thead.appendChild(hRow);
+
+    const tbody = document.createElement('tbody');
     parents.forEach(parent => {
         const parentId = String(parent['ID']);
-        const children = currentMainData.filter(r => r['繰返し親ID'] === parentId);
+        const childCount = currentMainData.filter(r => r['繰返し親ID'] === parentId).length;
 
-        const block = document.createElement('div');
-        block.className = 'recurring-parent-block';
-
-        // ヘッダー行（タイトル + 手動生成ボタン）
-        const header = document.createElement('div');
-        header.className = 'recurring-parent-header';
-
-        const titleEl = document.createElement('span');
-        titleEl.className   = 'recurring-parent-title';
-        titleEl.textContent = `${parent['タイトル'] || '（無題）'} — ${parent['ステータス'] || '未設定'} / 子タスク ${children.length} 件`;
-
-        const manualBtn = document.createElement('button');
-        manualBtn.className   = 'triage-btn recurring-manual-btn';
-        manualBtn.textContent = '子を手動生成';
-        manualBtn.addEventListener('click', () => {
-            const child = generateChildManually(parent, currentMainData);
-            if (!child) { alert('本日分は既に生成済みです'); return; }
-            currentMainData.push(child);
-            saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
-            renderRecurringSection();
-            renderEditTable();
+        const tr = document.createElement('tr');
+        tr.className = 'recurring-parent-row';
+        if (parentId === selectedRecurringParentId) tr.classList.add('selected-row');
+        const cells = [
+            parent['ハブ'] || '',
+            parent['タイトル'] || '（無題）',
+            String(childCount),
+            parent['ステータス'] || '未設定',
+            formatRecurringFrequencyLabel(parent),
+        ];
+        cells.forEach(text => {
+            const td = document.createElement('td');
+            td.textContent = text;
+            tr.appendChild(td);
         });
-
-        header.append(titleEl, manualBtn);
-        block.appendChild(header);
-
-        // グラフ
-        const chartData = buildChildChartData(children);
-        if (chartData.labels.length > 0 && window.Chart) {
-            const wrap   = document.createElement('div');
-            wrap.className = 'recurring-chart-wrap';
-            const canvas = document.createElement('canvas');
-            wrap.appendChild(canvas);
-            block.appendChild(wrap);
-
-            const chart = new window.Chart(canvas, {
-                type: 'line',
-                data: {
-                    labels: chartData.labels,
-                    datasets: [{
-                        label: '実績時間 (h)',
-                        data:  chartData.data,
-                        borderColor: '#4a90d9',
-                        backgroundColor: 'rgba(74,144,217,0.1)',
-                        tension: 0.3,
-                        pointRadius: 4,
-                        fill: true,
-                    }],
-                },
-                options: {
-                    responsive: true,
-                    plugins: { legend: { display: false } },
-                    scales: {
-                        x: { title: { display: true, text: '日付' } },
-                        y: { title: { display: true, text: '実績時間 (h)' }, beginAtZero: true },
-                    },
-                },
-            });
-            recurringChartInstances.set(parentId, chart);
-        } else {
-            const noData = document.createElement('p');
-            noData.className    = 'placeholder-text';
-            noData.style.margin = '6px 0 0';
-            noData.textContent  = chartData.labels.length === 0
-                ? '子タスクに実績データがありません'
-                : 'Chart.js が読み込まれていません';
-            block.appendChild(noData);
-        }
-
-        container.appendChild(block);
+        tr.addEventListener('click', () => {
+            selectedRecurringParentId = parentId;
+            selectedRecurringEditId   = parentId;
+            renderRecurringSection();
+        });
+        tbody.appendChild(tr);
     });
+    table.append(thead, tbody);
+    container.appendChild(table);
 }
+
+/** 選択中の親タスクに属する子タスク一覧を描画する（未選択なら非表示）。行クリックで編集パネルにその子タスクを読み込む。 */
+function renderRecurringChildTable() {
+    const section = document.getElementById('recurring-child-section');
+    const table   = document.getElementById('recurring-child-table');
+    if (!section || !table) return;
+
+    if (!selectedRecurringParentId) {
+        section.style.display = 'none';
+        table.innerHTML = '';
+        return;
+    }
+    section.style.display = '';
+
+    const children = getFilteredMainData().filter(r => r['繰返し親ID'] === selectedRecurringParentId);
+
+    table.className = 'data-table';
+    const thead = document.createElement('thead');
+    const hRow  = document.createElement('tr');
+    ['ID', 'タイトル', 'ステータス', '開始予定', '終了予定', '完了日'].forEach(col => {
+        const th = document.createElement('th');
+        th.textContent = col;
+        hRow.appendChild(th);
+    });
+    thead.appendChild(hRow);
+
+    const tbody = document.createElement('tbody');
+    if (children.length === 0) {
+        const tr = document.createElement('tr');
+        const td = document.createElement('td');
+        td.className = 'empty-cell';
+        td.colSpan = 6;
+        td.textContent = '子タスクがありません';
+        tr.appendChild(td);
+        tbody.appendChild(tr);
+    } else {
+        children.forEach(row => {
+            const tr = document.createElement('tr');
+            tr.className = 'recurring-parent-row';
+            if (String(row['ID']) === selectedRecurringEditId) tr.classList.add('selected-row');
+            ['ID', 'タイトル', 'ステータス', '開始予定', '終了予定', '完了日'].forEach(col => {
+                const td = document.createElement('td');
+                td.textContent = row[col] ?? '';
+                tr.appendChild(td);
+            });
+            tr.addEventListener('click', () => {
+                selectedRecurringEditId = String(row['ID']);
+                renderRecurringSection();
+            });
+            tbody.appendChild(tr);
+        });
+    }
+    table.replaceChildren(thead, tbody);
+}
+
+/** 選択中の親タスクの実績グラフを描画する（未選択・子タスク無しなら案内文を表示）。 */
+function renderRecurringEditChart() {
+    const wrap = document.getElementById('recurring-edit-chart-wrap');
+    if (!wrap) return;
+
+    if (recurringEditChart) { recurringEditChart.destroy(); recurringEditChart = null; }
+    wrap.innerHTML = '';
+
+    if (!selectedRecurringParentId) {
+        const p = document.createElement('p');
+        p.className    = 'placeholder-text';
+        p.textContent  = '親タスクを選択するとグラフが表示されます';
+        wrap.appendChild(p);
+        return;
+    }
+
+    const children  = currentMainData.filter(r => r['繰返し親ID'] === selectedRecurringParentId);
+    const chartData = buildChildChartData(children);
+
+    if (chartData.labels.length > 0 && window.Chart) {
+        const canvas = document.createElement('canvas');
+        wrap.appendChild(canvas);
+        recurringEditChart = new window.Chart(canvas, {
+            type: 'line',
+            data: {
+                labels: chartData.labels,
+                datasets: [{
+                    label: '実績時間 (h)',
+                    data:  chartData.data,
+                    borderColor: '#4a90d9',
+                    backgroundColor: 'rgba(74,144,217,0.1)',
+                    tension: 0.3,
+                    pointRadius: 4,
+                    fill: true,
+                }],
+            },
+            options: {
+                responsive: true,
+                plugins: { legend: { display: false } },
+                scales: {
+                    x: { title: { display: true, text: '日付' } },
+                    y: { title: { display: true, text: '実績時間 (h)' }, beginAtZero: true },
+                },
+            },
+        });
+    } else {
+        const p = document.createElement('p');
+        p.className   = 'placeholder-text';
+        p.textContent = chartData.labels.length === 0
+            ? '子タスクに実績データがありません'
+            : 'Chart.js が読み込まれていません';
+        wrap.appendChild(p);
+    }
+}
+
+/** 親タスク編集パネルの頻度（月/日/曜日）チップを描画する。 */
+function renderRecurEditFreqChips() {
+    const monthOptions   = [...new Set(currentMasterData.map(r => r['(M)繰返し頻度_月']).filter(Boolean))];
+    const dayOptions     = [...new Set(currentMasterData.map(r => r['(M)繰返し頻度_日']).filter(Boolean))];
+    const weekdayOptions = [...new Set(currentMasterData.map(r => r['(M)繰返し頻度_曜日']).filter(Boolean))];
+
+    const monthEl   = document.getElementById('recuredit-freq-month');
+    const dayEl     = document.getElementById('recuredit-freq-day');
+    const weekdayEl = document.getElementById('recuredit-freq-weekday');
+    if (monthEl)   monthEl.replaceChildren(createCalendarMultiFilter(monthOptions, recurEditFreq.month, v => v, renderRecurEditFreqChips));
+    if (dayEl)     dayEl.replaceChildren(createCalendarMultiFilter(dayOptions, recurEditFreq.day, v => v, renderRecurEditFreqChips));
+    if (weekdayEl) weekdayEl.replaceChildren(createCalendarMultiFilter(weekdayOptions, recurEditFreq.weekday, v => v, renderRecurEditFreqChips));
+}
+
+/** 親タスク編集パネルをクリアし、新規登録モードの初期値を設定する。 */
+function clearRecurEditForm() {
+    ['recuredit-id', 'recuredit-title', 'recuredit-content', 'recuredit-biko', 'recuredit-status', 'recuredit-priority',
+     'recuredit-start-date', 'recuredit-start-hour', 'recuredit-start-minute',
+     'recuredit-end-date', 'recuredit-end-hour', 'recuredit-end-minute',
+     'recuredit-complete-date', 'recuredit-category', 'recuredit-tag', 'recuredit-hub'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.value = '';
+    });
+    recurEditFreq.month.clear();
+    recurEditFreq.day.clear();
+    recurEditFreq.weekday.clear();
+
+    const statusEl = document.getElementById('recuredit-status');
+    if (statusEl) statusEl.value = '進行中';
+    const priorityEl = document.getElementById('recuredit-priority');
+    if (priorityEl) priorityEl.value = '中';
+    const categoryEl = document.getElementById('recuredit-category');
+    if (categoryEl && currentCategory !== 'すべて') categoryEl.value = currentCategory;
+}
+
+/** 親タスク編集パネルを描画する。選択中の親タスクがあれば編集モード、無ければ新規登録モード。 */
+function renderRecurringEditPanel() {
+    const panel = document.getElementById('recurring-task-edit');
+    if (!panel) return;
+
+    const statuses = [...new Set(
+        currentMasterData.filter(r => r['(M)ステータス_親'] === 'タスク')
+            .map(r => r['(M)ステータス_子']).filter(Boolean)
+    )];
+    rebuildSelectById('recuredit-status',   statuses);
+    rebuildSelectById('recuredit-priority', [...new Set(currentMasterData.map(r => r['(M)優先度']).filter(Boolean))]);
+    rebuildSelectById('recuredit-category', [...new Set(currentMasterData.map(r => r['(M)カテゴリ']).filter(Boolean))]);
+    rebuildSelectById('recuredit-tag',      getFilteredTags());
+    rebuildSelectById('recuredit-hub',      getFilteredHubs());
+
+    const row = selectedRecurringEditId
+        ? currentMainData.find(r => String(r['ID']) === selectedRecurringEditId)
+        : null;
+
+    if (!row) {
+        selectedRecurringEditId = null;
+        clearRecurEditForm();
+        renderRecurEditFreqChips();
+        renderRecurringEditChart();
+        return;
+    }
+
+    document.getElementById('recuredit-id').value       = row['ID']         ?? '';
+    document.getElementById('recuredit-title').value    = row['タイトル']   ?? '';
+    document.getElementById('recuredit-content').value  = row['内容']       ?? '';
+    document.getElementById('recuredit-biko').value     = row['備考']       ?? '';
+    document.getElementById('recuredit-status').value   = row['ステータス'] ?? '';
+    document.getElementById('recuredit-priority').value = row['優先度']     ?? '';
+    document.getElementById('recuredit-category').value = row['カテゴリ']   ?? '';
+    document.getElementById('recuredit-tag').value      = row['タグ']       ?? '';
+    document.getElementById('recuredit-hub').value      = row['ハブ']       ?? '';
+
+    const [startDate, startTime] = (row['開始予定'] || '').split(' ');
+    const [endDate,   endTime]   = (row['終了予定'] || '').split(' ');
+    const [startHour, startMinute] = (startTime || '').split(':');
+    const [endHour,   endMinute]   = (endTime   || '').split(':');
+    document.getElementById('recuredit-start-date').value   = startDate ? startDate.replace(/\//g, '-') : '';
+    document.getElementById('recuredit-start-hour').value   = startHour   || '';
+    document.getElementById('recuredit-start-minute').value = startMinute || '';
+    document.getElementById('recuredit-end-date').value     = endDate ? endDate.replace(/\//g, '-') : '';
+    document.getElementById('recuredit-end-hour').value     = endHour     || '';
+    document.getElementById('recuredit-end-minute').value   = endMinute   || '';
+    document.getElementById('recuredit-complete-date').value = (row['完了日'] || '').replace(/\//g, '-');
+
+    recurEditFreq.month.clear();   (row['繰返し頻度_月']   || '').split(',').map(s => s.trim()).filter(Boolean).forEach(v => recurEditFreq.month.add(v));
+    recurEditFreq.day.clear();     (row['繰返し頻度_日']   || '').split(',').map(s => s.trim()).filter(Boolean).forEach(v => recurEditFreq.day.add(v));
+    recurEditFreq.weekday.clear(); (row['繰返し頻度_曜日'] || '').split(',').map(s => s.trim()).filter(Boolean).forEach(v => recurEditFreq.weekday.add(v));
+    renderRecurEditFreqChips();
+    renderRecurringEditChart();
+}
+
+/** タスクページの繰り返しタスクセクションを描画する（親タスク一覧＋子タスク一覧＋選択中タスクの編集パネル・グラフ）。 */
+function renderRecurringSection() {
+    renderRecurringParentTable();
+    renderRecurringChildTable();
+    renderRecurringEditPanel();
+}
+
+document.getElementById('recurring-add-new-btn')?.addEventListener('click', () => {
+    selectedRecurringParentId = null;
+    selectedRecurringEditId   = null;
+    renderRecurringSection();
+});
+
+/** 「子を手動生成」ボタン: 選択中の親タスクから今すぐ子タスクを1件生成する。 */
+document.getElementById('recurring-edit-manual-btn')?.addEventListener('click', () => {
+    if (!selectedRecurringParentId) { alert('親タスクを選択してください'); return; }
+    const parent = currentMainData.find(r => String(r['ID']) === selectedRecurringParentId);
+    if (!parent) return;
+
+    const child = generateChildManually(parent, currentMainData);
+    if (!child) { alert('本日分は既に生成済みです'); return; }
+    currentMainData.push(child);
+    saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
+    renderRecurringSection();
+    renderEditTable();
+});
+
+/** 「適用」ボタン: 編集パネルの内容を選択中のタスク（親または子）へ書き戻す。 */
+document.getElementById('recuredit-apply-btn')?.addEventListener('click', () => {
+    if (!selectedRecurringEditId) return;
+    const row = currentMainData.find(r => String(r['ID']) === selectedRecurringEditId);
+    if (!row) return;
+
+    const isParentRow = !row['繰返し親ID'];
+
+    row['タイトル']   = document.getElementById('recuredit-title').value.trim();
+    row['内容']       = document.getElementById('recuredit-content').value.trim();
+    row['備考']       = document.getElementById('recuredit-biko').value.trim();
+    row['ステータス'] = document.getElementById('recuredit-status').value;
+    row['優先度']     = document.getElementById('recuredit-priority').value;
+    row['カテゴリ']   = document.getElementById('recuredit-category').value;
+    row['タグ']       = document.getElementById('recuredit-tag').value;
+    row['ハブ']       = document.getElementById('recuredit-hub').value;
+    if (isParentRow) {
+        row['繰返し識別子']   = '1';
+        row['繰返し頻度_月']  = [...recurEditFreq.month].join(',');
+        row['繰返し頻度_日']  = [...recurEditFreq.day].join(',');
+        row['繰返し頻度_曜日'] = [...recurEditFreq.weekday].join(',');
+    }
+
+    const startDate = document.getElementById('recuredit-start-date').value;
+    const startTime = readCalendarTime('recuredit-start-hour', 'recuredit-start-minute');
+    const endDate    = document.getElementById('recuredit-end-date').value;
+    const endTime    = readCalendarTime('recuredit-end-hour', 'recuredit-end-minute');
+
+    row['開始予定'] = startDate ? `${startDate.replace(/-/g, '/')}${startTime ? ' ' + startTime : ''}` : '';
+    row['終了予定'] = endDate   ? `${endDate.replace(/-/g, '/')}${endTime ? ' ' + endTime : ''}`       : '';
+    row['完了日']   = document.getElementById('recuredit-complete-date').value.replace(/-/g, '/');
+    row['更新日時'] = formatJpDatetime(new Date());
+
+    saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
+    renderRecurringSection();
+    renderCalendar();
+    renderTaskRunner();
+    renderEditTable();
+});
+
+/** 「削除」ボタン: 選択中のタスク（親または子）をメインデータから削除する。 */
+document.getElementById('recuredit-delete-btn')?.addEventListener('click', () => {
+    if (!selectedRecurringEditId) return;
+    const isParent = selectedRecurringEditId === selectedRecurringParentId;
+    const message = isParent
+        ? 'この親タスクを削除します。よろしいですか？（この操作は取り消せません。子タスクは残ります）'
+        : 'この子タスクを削除します。よろしいですか？（この操作は取り消せません）';
+    if (!confirm(message)) return;
+
+    currentMainData = currentMainData.filter(r => String(r['ID']) !== selectedRecurringEditId);
+    if (isParent) selectedRecurringParentId = null;
+    selectedRecurringEditId = null;
+
+    saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
+    renderRecurringSection();
+    renderCalendar();
+    renderTaskRunner();
+    renderEditTable();
+});
+
+/** 「新規登録」ボタン: 編集パネルの現在値で新規の親タスクを追加する。 */
+document.getElementById('recuredit-new-btn')?.addEventListener('click', () => {
+    const title = document.getElementById('recuredit-title').value.trim();
+    if (!title) { alert('タイトルを入力してください'); return; }
+
+    const startDate = document.getElementById('recuredit-start-date').value;
+    const startTime = readCalendarTime('recuredit-start-hour', 'recuredit-start-minute');
+    const endDate    = document.getElementById('recuredit-end-date').value;
+    const endTime    = readCalendarTime('recuredit-end-hour', 'recuredit-end-minute');
+
+    const maxId = currentMainData.reduce((max, row) => {
+        const id = parseInt(row['ID'], 10);
+        return isNaN(id) ? max : Math.max(max, id);
+    }, 0);
+    const ts = formatJpDatetime(new Date());
+
+    const entry = Object.fromEntries(MAIN_DATA_COLUMNS.map(col => [col, '']));
+    entry['ID']        = String(maxId + 1);
+    entry['データ区分'] = 'タスク';
+    entry['タイトル']   = title;
+    entry['内容']       = document.getElementById('recuredit-content').value.trim();
+    entry['備考']       = document.getElementById('recuredit-biko').value.trim();
+    entry['ステータス'] = document.getElementById('recuredit-status').value;
+    entry['優先度']     = document.getElementById('recuredit-priority').value;
+    entry['カテゴリ']   = document.getElementById('recuredit-category').value || (currentCategory === 'すべて' ? '' : currentCategory);
+    entry['タグ']       = document.getElementById('recuredit-tag').value;
+    entry['ハブ']       = document.getElementById('recuredit-hub').value;
+    entry['繰返し識別子']   = '1';
+    entry['繰返し親ID']     = '';
+    entry['繰返し頻度_月']  = [...recurEditFreq.month].join(',');
+    entry['繰返し頻度_日']  = [...recurEditFreq.day].join(',');
+    entry['繰返し頻度_曜日'] = [...recurEditFreq.weekday].join(',');
+    entry['開始予定']   = startDate ? `${startDate.replace(/-/g, '/')}${startTime ? ' ' + startTime : ''}` : '';
+    entry['終了予定']   = endDate   ? `${endDate.replace(/-/g, '/')}${endTime ? ' ' + endTime : ''}`       : '';
+    entry['完了日']     = document.getElementById('recuredit-complete-date').value.replace(/-/g, '/');
+    entry['作成日時']   = ts;
+    entry['更新日時']   = ts;
+
+    currentMainData.push(entry);
+    saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
+
+    selectedRecurringParentId = String(entry['ID']);
+    selectedRecurringEditId   = String(entry['ID']);
+    renderRecurringSection();
+    renderCalendar();
+    renderTaskRunner();
+    renderEditTable();
+});
 

@@ -201,6 +201,27 @@
                                 <select id="dayedit-status"></select>
                             </div>
                             <div class="calendar-edit-row">
+                                <label>繰り返し</label>
+                                <label class="calendar-checkbox-label">
+                                    <input type="checkbox" id="dayedit-recurring-parent">
+                                </label>
+                            </div>
+                            <div id="dayedit-freq-section" style="display:none">
+                                <div class="calendar-edit-row calendar-edit-row--top">
+                                    <label>頻度（月）</label>
+                                    <div id="dayedit-freq-month" class="calendar-multi-filter"></div>
+                                </div>
+                                <div class="calendar-edit-row calendar-edit-row--top">
+                                    <label>頻度（日）</label>
+                                    <div id="dayedit-freq-day" class="calendar-multi-filter"></div>
+                                </div>
+                                <div class="calendar-edit-row calendar-edit-row--top">
+                                    <label>頻度（曜日）</label>
+                                    <div id="dayedit-freq-weekday" class="calendar-multi-filter"></div>
+                                </div>
+                                <p class="calendar-dayplan-hint">頻度は何も選択しなければ「全て対象」になります（月・日・曜日はAND条件）。ステータスが「進行中」の間だけ自動生成されます。</p>
+                            </div>
+                            <div class="calendar-edit-row">
                                 <label>優先度</label>
                                 <select id="dayedit-priority"></select>
                             </div>
@@ -251,6 +272,109 @@
             <details class="expander" open>
                 <summary class="expander-title" id="summary-recurring">繰り返しタスク</summary>
                 <div id="recurring-section"></div>
+
+                <!-- 選択中の親タスクに属する子タスク一覧（最大10行程度、スクロール表示） -->
+                <div id="recurring-child-section" style="display:none">
+                    <p class="calendar-section-label">子タスク一覧</p>
+                    <div class="table-wrapper table-wrapper--limited">
+                        <table id="recurring-child-table" class="data-table"></table>
+                    </div>
+                </div>
+
+                <div class="calendar-edit-toolbar">
+                    <button id="recurring-add-new-btn" class="calendar-add-btn">新規追加</button>
+                </div>
+
+                <!-- 選択中の親タスクの実績グラフ（左）＋ 属性編集（右） -->
+                <div class="calendar-day-section">
+                    <div class="calendar-timeline-col">
+                        <p class="calendar-section-label">実績グラフ</p>
+                        <div id="recurring-edit-chart-wrap" class="recurring-chart-wrap"></div>
+                        <div class="calendar-edit-toolbar">
+                            <button id="recurring-edit-manual-btn" class="triage-btn recurring-manual-btn">子を手動生成</button>
+                        </div>
+                    </div>
+
+                    <div class="calendar-edit-col">
+                        <div id="recurring-task-edit" class="calendar-task-edit">
+                            <p class="calendar-section-label">親タスクの新規追加・編集</p>
+                            <div class="calendar-edit-row">
+                                <label>ID</label>
+                                <input type="text" id="recuredit-id" readonly placeholder="（新規登録時は未採番）">
+                            </div>
+                            <div class="calendar-edit-row">
+                                <label>タイトル</label>
+                                <input type="text" id="recuredit-title">
+                            </div>
+                            <div class="calendar-edit-row calendar-edit-row--top">
+                                <label>内容</label>
+                                <textarea id="recuredit-content" class="calendar-edit-textarea" rows="4"></textarea>
+                            </div>
+                            <div class="calendar-edit-row">
+                                <label>備考</label>
+                                <input type="text" id="recuredit-biko">
+                            </div>
+                            <div class="calendar-edit-row">
+                                <label>ステータス</label>
+                                <select id="recuredit-status"></select>
+                            </div>
+                            <div class="calendar-edit-row calendar-edit-row--top">
+                                <label>頻度（月）</label>
+                                <div id="recuredit-freq-month" class="calendar-multi-filter"></div>
+                            </div>
+                            <div class="calendar-edit-row calendar-edit-row--top">
+                                <label>頻度（日）</label>
+                                <div id="recuredit-freq-day" class="calendar-multi-filter"></div>
+                            </div>
+                            <div class="calendar-edit-row calendar-edit-row--top">
+                                <label>頻度（曜日）</label>
+                                <div id="recuredit-freq-weekday" class="calendar-multi-filter"></div>
+                            </div>
+                            <p class="calendar-dayplan-hint">頻度は何も選択しなければ「全て対象」になります（月・日・曜日はAND条件）。ステータスが「進行中」の間だけ自動生成されます。</p>
+                            <div class="calendar-edit-row">
+                                <label>優先度</label>
+                                <select id="recuredit-priority"></select>
+                            </div>
+                            <div class="calendar-edit-row">
+                                <label>開始予定</label>
+                                <input type="date" id="recuredit-start-date">
+                                <input type="number" id="recuredit-start-hour" class="calendar-time-num" min="0" max="23" placeholder="時">
+                                <span>:</span>
+                                <input type="number" id="recuredit-start-minute" class="calendar-time-num" min="0" max="59" step="15" placeholder="分">
+                            </div>
+                            <div class="calendar-edit-row">
+                                <label>終了予定</label>
+                                <input type="date" id="recuredit-end-date">
+                                <input type="number" id="recuredit-end-hour" class="calendar-time-num" min="0" max="23" placeholder="時">
+                                <span>:</span>
+                                <input type="number" id="recuredit-end-minute" class="calendar-time-num" min="0" max="59" step="15" placeholder="分">
+                            </div>
+                            <div class="calendar-edit-row">
+                                <label>完了日</label>
+                                <input type="date" id="recuredit-complete-date">
+                            </div>
+                            <div class="calendar-edit-row">
+                                <label>カテゴリ</label>
+                                <select id="recuredit-category"></select>
+                            </div>
+                            <div class="calendar-edit-row">
+                                <label>タグ</label>
+                                <select id="recuredit-tag"></select>
+                            </div>
+                            <div class="calendar-edit-row">
+                                <label>ハブ</label>
+                                <select id="recuredit-hub"></select>
+                            </div>
+                            <div class="calendar-edit-toolbar">
+                                <button id="recuredit-apply-btn">適用</button>
+                                <button id="recuredit-delete-btn" class="calendar-danger-btn">削除</button>
+                            </div>
+                            <div class="calendar-edit-toolbar">
+                                <button id="recuredit-new-btn" class="calendar-add-btn">新規登録</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </details>
 
             <!-- load-btn / save-btn ハンドラが参照する要素（非表示） -->
