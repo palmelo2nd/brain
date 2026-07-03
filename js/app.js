@@ -1760,7 +1760,7 @@ function isTaskDoneForCalendar(row) {
  * 残務あり: today を 開始予定〜終了予定 の範囲にクランプした日（未来なら開始予定、期間内なら today、過ぎていたら終了予定）。
  */
 function getCalendarMarkDate(row, todayJP) {
-    const start = jpDateOnly(row['開始予定']);
+    const start = jpDateOnly(row['開始予定']) || jpDateOnly(row['終了予定']);
     const end   = jpDateOnly(row['終了予定']) || start;
 
     if (isTaskDoneForCalendar(row)) {
@@ -1868,23 +1868,45 @@ function renderTagHubStatusFilters(area, filters, onChange) {
     if (!area) return;
     area.innerHTML = '';
 
-    function makeRow(labelText, ctrl) {
+    function makeRow(labelText, options, selectedSet, ctrl) {
         const row = document.createElement('div');
         row.className = 'triage-filter-row';
         const lbl = document.createElement('span');
         lbl.className = 'triage-filter-label';
         lbl.textContent = labelText;
-        row.append(lbl, ctrl);
+
+        const selectAllBtn = document.createElement('button');
+        selectAllBtn.type = 'button';
+        selectAllBtn.className = 'calendar-filter-bulk-btn';
+        selectAllBtn.textContent = '全て選択';
+        selectAllBtn.addEventListener('click', () => {
+            options.forEach(v => selectedSet.add(v));
+            onChange();
+        });
+
+        const deselectAllBtn = document.createElement('button');
+        deselectAllBtn.type = 'button';
+        deselectAllBtn.className = 'calendar-filter-bulk-btn';
+        deselectAllBtn.textContent = '全て解除';
+        deselectAllBtn.addEventListener('click', () => {
+            selectedSet.clear();
+            onChange();
+        });
+
+        row.append(lbl, selectAllBtn, deselectAllBtn, ctrl);
         area.appendChild(row);
     }
 
-    makeRow('タグ', createCalendarMultiFilter(
-        sortByTotalCountDesc(getFilteredTags(), 'タグ'), filters.tag,
+    const tagOptions = sortByTotalCountDesc(getFilteredTags(), 'タグ');
+    makeRow('タグ', tagOptions, filters.tag, createCalendarMultiFilter(
+        tagOptions, filters.tag,
         v => `${v} (${countActiveTasksByField('タグ', v)}/${countTasksByField('タグ', v)})`,
         onChange
     ));
-    makeRow('ハブ', createCalendarMultiFilter(
-        sortByTotalCountDesc(getFilteredHubs(), 'ハブ'), filters.hub,
+
+    const hubOptions = sortByTotalCountDesc(getFilteredHubs(), 'ハブ');
+    makeRow('ハブ', hubOptions, filters.hub, createCalendarMultiFilter(
+        hubOptions, filters.hub,
         v => `${v} (${countActiveTasksByField('ハブ', v)}/${countTasksByField('ハブ', v)})`,
         onChange
     ));
@@ -1893,8 +1915,9 @@ function renderTagHubStatusFilters(area, filters, onChange) {
         currentMasterData.filter(r => r['(M)ステータス_親'] === 'タスク')
             .map(r => r['(M)ステータス_子']).filter(Boolean)
     )];
-    makeRow('ステータス', createCalendarMultiFilter(
-        sortByTotalCountDesc(taskStatuses, 'ステータス'), filters.status,
+    const statusOptions = sortByTotalCountDesc(taskStatuses, 'ステータス');
+    makeRow('ステータス', statusOptions, filters.status, createCalendarMultiFilter(
+        statusOptions, filters.status,
         v => `${v} (${countActiveTasksByField('ステータス', v)}/${countTasksByField('ステータス', v)})`,
         onChange
     ));
@@ -1905,7 +1928,26 @@ function renderCalendarFilters() {
     renderTagHubStatusFilters(document.getElementById('calendar-filter-area'), calendarFilters, () => renderCalendar());
 }
 
-/** タグ／ハブ／ステータスでフィルタ中のタスク一覧（日付を問わず全件）を、開始予定・終了予定の早い順に返す。 */
+/** タスク一覧のステータス表示順（この順に並べ、リストに無いステータスは末尾、空欄は最後尾）。 */
+const CALENDAR_TASK_LIST_STATUS_ORDER = ['完了', '報告待ち', '連絡待ち', '中断', '進行中', '未着手'];
+function calendarTaskListStatusRank(status) {
+    if (!status) return CALENDAR_TASK_LIST_STATUS_ORDER.length + 1;
+    const idx = CALENDAR_TASK_LIST_STATUS_ORDER.indexOf(status);
+    return idx !== -1 ? idx : CALENDAR_TASK_LIST_STATUS_ORDER.length;
+}
+
+/** 日付文字列（YYYY/MM/DD...）を古い順に比較する。空欄は常に最後尾。 */
+function compareDateAscEmptyLast(a, b) {
+    if (!a && !b) return 0;
+    if (!a) return 1;
+    if (!b) return -1;
+    return a.localeCompare(b);
+}
+
+/**
+ * タグ／ハブ／ステータスでフィルタ中のタスク一覧（日付を問わず全件）を返す。
+ * ソート順: ステータス（完了・報告待ち・連絡待ち・中断・進行中・未着手・空欄の順）→ 完了日 昇順 → 開始予定 昇順 → 終了予定 昇順。
+ */
 function getCalendarFilteredTaskList() {
     if (calendarFilters.tag.size === 0 && calendarFilters.hub.size === 0 && calendarFilters.status.size === 0) return [];
 
@@ -1919,20 +1961,24 @@ function getCalendarFilteredTaskList() {
     });
 
     tasks.sort((a, b) => {
-        const aKey = a['開始予定'] || a['終了予定'] || '';
-        const bKey = b['開始予定'] || b['終了予定'] || '';
-        if (!aKey && !bKey) return 0;
-        if (!aKey) return 1;
-        if (!bKey) return -1;
-        return aKey.localeCompare(bKey);
+        const rankDiff = calendarTaskListStatusRank(a['ステータス']) - calendarTaskListStatusRank(b['ステータス']);
+        if (rankDiff !== 0) return rankDiff;
+
+        let cmp = compareDateAscEmptyLast(a['完了日'], b['完了日']);
+        if (cmp !== 0) return cmp;
+
+        cmp = compareDateAscEmptyLast(a['開始予定'], b['開始予定']);
+        if (cmp !== 0) return cmp;
+
+        return compareDateAscEmptyLast(a['終了予定'], b['終了予定']);
     });
 
     return tasks;
 }
 
-/** タグ／ハブでフィルタ中のタスク一覧テーブルを描画する（未フィルタ時は非表示）。 */
-function renderCalendarTaskList() {
-    const table = document.getElementById('calendar-task-list-table');
+/** タグ／ハブでフィルタ中のタスク一覧テーブルを、指定した table 要素（カレンダー／ガントチャート共通）に描画する。 */
+function renderCalendarTaskList(tableId = 'calendar-task-list-table') {
+    const table = document.getElementById(tableId);
     if (!table) return;
 
     const tasks = getCalendarFilteredTaskList();
@@ -2030,9 +2076,10 @@ function renderCalendar() {
     renderTaskOrgViewToggle();
     renderCalendarFilters();
     if (taskOrgView === 'calendar') {
-        renderCalendarTaskList();
+        renderCalendarTaskList('calendar-task-list-table');
         renderCalendarGrid();
     } else {
+        renderCalendarTaskList('gantt-task-list-table');
         renderGanttUnitToggle();
         renderGanttChart();
     }
@@ -2305,11 +2352,50 @@ document.getElementById('dayplan-create-btn')?.addEventListener('click', createD
 document.getElementById('dayplan-save-btn')?.addEventListener('click', saveDayPlanContent);
 document.getElementById('dayplan-delete-btn')?.addEventListener('click', deleteDayPlanTask);
 
+/** チップ群（{row, label}の配列）を container に描画する。空なら emptyText を表示する。 */
+function renderCalendarChipList(container, chipEntries, emptyText) {
+    if (!container) return;
+    container.innerHTML = '';
+    if (chipEntries.length === 0) {
+        const p = document.createElement('p');
+        p.className = 'calendar-empty-text';
+        p.textContent = emptyText;
+        container.appendChild(p);
+        return;
+    }
+    chipEntries.forEach(({ row, label }) => {
+        const chip = document.createElement('button');
+        chip.type = 'button';
+        chip.className = `calendar-unscheduled-chip ${getCalendarStatusClass(row['ステータス'])}`;
+        if (String(row['ID']) === selectedCalendarTaskId) chip.classList.add('calendar-unscheduled-chip--selected');
+        chip.textContent = label;
+        chip.addEventListener('click', () => openCalendarTaskEdit(String(row['ID'])));
+        container.appendChild(chip);
+    });
+}
+
+/** 開始予定・終了予定の少なくとも一方が空欄のタスク（フィルタ適用済み）を返す。 */
+function getIncompleteDateTasks() {
+    return getFilteredMainData().filter(r => {
+        if (r['データ区分'] !== 'タスク') return false;
+        if (r['ハブ'] === DAYPLAN_HUB) return false;
+        if (r['開始予定'] && r['終了予定']) return false; // 両方入力済みは対象外
+        if (!matchesMultiFilter(calendarFilters.tag, r['タグ'])) return false;
+        if (!matchesMultiFilter(calendarFilters.hub, r['ハブ'])) return false;
+        if (!matchesMultiFilter(calendarFilters.status, r['ステータス'])) return false;
+        return true;
+    });
+}
+
 /** 選択中の日付の詳細ビュー（時間帯未定タスク・1日の予定表・属性編集パネル）を描画する。 */
 function renderCalendarDetail() {
     const titleEl       = document.getElementById('calendar-detail-title');
     const unscheduledEl = document.getElementById('calendar-unscheduled-list');
+    const incompleteEl  = document.getElementById('calendar-incomplete-date-list');
     if (!titleEl) return;
+
+    const incompleteChips = getIncompleteDateTasks().map(row => ({ row, label: row['タイトル'] || '（無題）' }));
+    renderCalendarChipList(incompleteEl, incompleteChips, '該当するタスクはありません');
 
     if (!selectedCalendarDate) {
         titleEl.textContent = 'カレンダーで日付を選択してください';
@@ -2326,26 +2412,14 @@ function renderCalendarDetail() {
     titleEl.textContent = selectedCalendarDate;
     renderDayPlanSection();
 
-    const { unscheduled } = getCalendarSegmentsForDate(selectedCalendarDate);
-    if (unscheduledEl) {
-        unscheduledEl.innerHTML = '';
-        if (unscheduled.length === 0) {
-            const p = document.createElement('p');
-            p.className = 'calendar-empty-text';
-            p.textContent = '時間帯未定のタスクはありません';
-            unscheduledEl.appendChild(p);
-        } else {
-            unscheduled.forEach(row => {
-                const chip = document.createElement('button');
-                chip.type = 'button';
-                chip.className = `calendar-unscheduled-chip ${getCalendarStatusClass(row['ステータス'])}`;
-                if (String(row['ID']) === selectedCalendarTaskId) chip.classList.add('calendar-unscheduled-chip--selected');
-                chip.textContent = row['タイトル'] || '（無題）';
-                chip.addEventListener('click', () => openCalendarTaskEdit(String(row['ID'])));
-                unscheduledEl.appendChild(chip);
-            });
-        }
-    }
+    const { timed, unscheduled } = getCalendarSegmentsForDate(selectedCalendarDate);
+    const fmt = m => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+    const chipEntries = [
+        ...unscheduled.map(row => ({ row, label: row['タイトル'] || '（無題）' })),
+        ...timed.filter(seg => seg.row['ID'] != null)
+                .map(seg => ({ row: seg.row, label: `${fmt(seg.startMin)}–${fmt(seg.endMin)} ${seg.row['タイトル'] || '（無題）'}` })),
+    ];
+    renderCalendarChipList(unscheduledEl, chipEntries, 'この日のタスクはありません');
 
     renderCalendarTimeline(selectedCalendarDate);
     renderCalendarTaskEdit();
@@ -2455,6 +2529,17 @@ function readCalendarTime(hourId, minuteId) {
     return `${pad(hour)}:${pad(minute)}`;
 }
 
+/** 「完了日を開始/終了予定に代入」ボタン: 完了日が入力済みで、開始予定・終了予定の空欄になっている方だけに完了日（時間帯なし）を代入する。 */
+document.getElementById('dayedit-fill-date-from-complete-btn')?.addEventListener('click', () => {
+    const completeDate = document.getElementById('dayedit-complete-date').value;
+    if (!completeDate) return;
+
+    const startDateEl = document.getElementById('dayedit-start-date');
+    const endDateEl   = document.getElementById('dayedit-end-date');
+    if (!startDateEl.value) startDateEl.value = completeDate;
+    if (!endDateEl.value)   endDateEl.value   = completeDate;
+});
+
 /** 「適用」ボタン: 属性編集パネルの内容を選択中タスクへ書き戻す。 */
 document.getElementById('dayedit-apply-btn')?.addEventListener('click', () => {
     if (!selectedCalendarTaskId) return;
@@ -2560,17 +2645,22 @@ document.getElementById('dayedit-new-btn')?.addEventListener('click', () => {
     renderTaskRunner();
 });
 
-document.getElementById('calendar-prev-btn')?.addEventListener('click', () => {
+function goToPrevMonth() {
     calendarMonth--;
     if (calendarMonth < 0) { calendarMonth = 11; calendarYear--; }
     if (taskOrgView === 'calendar') renderCalendarGrid(); else renderGanttChart();
-});
+}
 
-document.getElementById('calendar-next-btn')?.addEventListener('click', () => {
+function goToNextMonth() {
     calendarMonth++;
     if (calendarMonth > 11) { calendarMonth = 0; calendarYear++; }
     if (taskOrgView === 'calendar') renderCalendarGrid(); else renderGanttChart();
-});
+}
+
+document.getElementById('calendar-prev-btn')?.addEventListener('click', goToPrevMonth);
+document.getElementById('calendar-next-btn')?.addEventListener('click', goToNextMonth);
+document.getElementById('gantt-prev-btn')?.addEventListener('click', goToPrevMonth);
+document.getElementById('gantt-next-btn')?.addEventListener('click', goToNextMonth);
 
 // ===== ガントチャート（タスクページ） =====
 
@@ -2653,7 +2743,7 @@ function getGanttWeekMarker(row, days) {
 
 /** ガントチャート（「タスク整理」のガントチャートビュー）を描画する。表示範囲は calendarYear/calendarMonth を基準とする。 */
 function renderGanttChart() {
-    const label = document.getElementById('calendar-month-label');
+    const label = document.getElementById('gantt-month-label');
     if (label) label.textContent = `${calendarYear}年${calendarMonth + 1}月`;
 
     const table = document.getElementById('gantt-table');
