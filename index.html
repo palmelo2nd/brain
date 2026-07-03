@@ -108,6 +108,10 @@
 
                 <!-- ガントチャートビュー（横幅いっぱい） -->
                 <div id="taskorg-view-gantt" class="calendar-panel calendar-panel--full" style="display:none">
+                    <div class="gantt-unit-toggle">
+                        <button type="button" id="gantt-unit-day" class="gantt-unit-btn gantt-unit-btn--active" data-unit="day">日</button>
+                        <button type="button" id="gantt-unit-week" class="gantt-unit-btn" data-unit="week">週</button>
+                    </div>
                     <div class="gantt-legend">
                         <span class="gantt-legend-item"><span class="gantt-swatch calendar-time-block--todo"></span>未着手</span>
                         <span class="gantt-legend-item"><span class="gantt-swatch calendar-time-block--doing"></span>進行中</span>
