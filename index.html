@@ -318,19 +318,21 @@
                                 <label>ステータス</label>
                                 <select id="recuredit-status"></select>
                             </div>
-                            <div class="calendar-edit-row calendar-edit-row--top">
-                                <label>頻度（月）</label>
-                                <div id="recuredit-freq-month" class="calendar-multi-filter"></div>
+                            <div id="recuredit-freq-section">
+                                <div class="calendar-edit-row calendar-edit-row--top">
+                                    <label>頻度（月）</label>
+                                    <div id="recuredit-freq-month" class="calendar-multi-filter"></div>
+                                </div>
+                                <div class="calendar-edit-row calendar-edit-row--top">
+                                    <label>頻度（日）</label>
+                                    <div id="recuredit-freq-day" class="calendar-multi-filter"></div>
+                                </div>
+                                <div class="calendar-edit-row calendar-edit-row--top">
+                                    <label>頻度（曜日）</label>
+                                    <div id="recuredit-freq-weekday" class="calendar-multi-filter"></div>
+                                </div>
+                                <p class="calendar-dayplan-hint">頻度は何も選択しなければ「全て対象」になります（月・日・曜日はAND条件）。ステータスが「進行中」の間だけ自動生成されます。</p>
                             </div>
-                            <div class="calendar-edit-row calendar-edit-row--top">
-                                <label>頻度（日）</label>
-                                <div id="recuredit-freq-day" class="calendar-multi-filter"></div>
-                            </div>
-                            <div class="calendar-edit-row calendar-edit-row--top">
-                                <label>頻度（曜日）</label>
-                                <div id="recuredit-freq-weekday" class="calendar-multi-filter"></div>
-                            </div>
-                            <p class="calendar-dayplan-hint">頻度は何も選択しなければ「全て対象」になります（月・日・曜日はAND条件）。ステータスが「進行中」の間だけ自動生成されます。</p>
                             <div class="calendar-edit-row">
                                 <label>優先度</label>
                                 <select id="recuredit-priority"></select>
@@ -368,6 +370,7 @@
                             <div class="calendar-edit-toolbar">
                                 <button id="recuredit-apply-btn">適用</button>
                                 <button id="recuredit-delete-btn" class="calendar-danger-btn">削除</button>
+                                <button id="recuredit-complete-btn" class="calendar-add-btn">完了にする</button>
                             </div>
                             <div class="calendar-edit-toolbar">
                                 <button id="recuredit-new-btn" class="calendar-add-btn">新規登録</button>

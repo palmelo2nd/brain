@@ -3226,8 +3226,13 @@ function renderRecurringEditPanel() {
         clearRecurEditForm();
         renderRecurEditFreqChips();
         renderRecurringEditChart();
+        const freqSectionEl = document.getElementById('recuredit-freq-section');
+        if (freqSectionEl) freqSectionEl.style.display = '';
         return;
     }
+
+    const freqSectionEl = document.getElementById('recuredit-freq-section');
+    if (freqSectionEl) freqSectionEl.style.display = row['繰返し親ID'] ? 'none' : '';
 
     document.getElementById('recuredit-id').value       = row['ID']         ?? '';
     document.getElementById('recuredit-title').value    = row['タイトル']   ?? '';
@@ -3285,8 +3290,8 @@ document.getElementById('recurring-edit-manual-btn')?.addEventListener('click', 
     renderEditTable();
 });
 
-/** 「適用」ボタン: 編集パネルの内容を選択中のタスク（親または子）へ書き戻す。 */
-document.getElementById('recuredit-apply-btn')?.addEventListener('click', () => {
+/** 編集パネルの内容を選択中のタスク（親または子）へ書き戻す。 */
+function applyRecurEditForm() {
     if (!selectedRecurringEditId) return;
     const row = currentMainData.find(r => String(r['ID']) === selectedRecurringEditId);
     if (!row) return;
@@ -3323,6 +3328,24 @@ document.getElementById('recuredit-apply-btn')?.addEventListener('click', () => 
     renderCalendar();
     renderTaskRunner();
     renderEditTable();
+}
+
+/** 「適用」ボタン: 編集パネルの内容を選択中のタスク（親または子）へ書き戻す。 */
+document.getElementById('recuredit-apply-btn')?.addEventListener('click', applyRecurEditForm);
+
+/** 「完了にする」ボタン: 開始予定・終了予定・完了日を本日にし、ステータスを完了にして保存する。 */
+document.getElementById('recuredit-complete-btn')?.addEventListener('click', () => {
+    if (!selectedRecurringEditId) return;
+    const today = new Date();
+    const pad = n => String(n).padStart(2, '0');
+    const todayStr = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
+
+    document.getElementById('recuredit-start-date').value    = todayStr;
+    document.getElementById('recuredit-end-date').value      = todayStr;
+    document.getElementById('recuredit-complete-date').value = todayStr;
+    document.getElementById('recuredit-status').value        = '完了';
+
+    applyRecurEditForm();
 });
 
 /** 「削除」ボタン: 選択中のタスク（親または子）をメインデータから削除する。 */

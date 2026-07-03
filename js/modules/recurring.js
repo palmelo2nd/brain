@@ -54,12 +54,14 @@ function buildChild(parent, dateStr, slashDate, id, ts) {
     child['ID']           = String(id);
     child['データ区分']   = 'タスク';
     child['タイトル']     = `${parent['タイトル']}_${dateStr}`;
+    child['内容']         = parent['内容']      || '';
     child['カテゴリ']     = parent['カテゴリ']  || '';
     child['タグ']         = parent['タグ']      || '';
     child['ハブ']         = parent['ハブ']      || '';
     child['優先度']       = parent['優先度']    || '';
     child['見積時間']     = parent['見積時間']  || '';
     child['開始予定']     = slashDate;
+    child['終了予定']     = slashDate;
     child['繰返し識別子'] = '1';
     child['繰返し親ID']   = String(parent['ID']);
     child['作成日時']     = ts;
