@@ -12,39 +12,18 @@ body {
     min-height: 100vh;
 }
 
-/* ===== 2カラム・アプリシェル ===== */
+/* ===== アプリシェル（単一ページ） ===== */
 .app-shell {
-    display: grid;
-    grid-template-columns: 230px 1fr;
     min-height: 100vh;
 }
 
-/* ===== サイドバー ===== */
-.sidebar {
-    background: #1e2a38;
-    color: #c9d1d9;
-    display: flex;
-    flex-direction: column;
-    position: sticky;
-    top: 0;
-    height: 100vh;
-    overflow-y: auto;
-}
-
-/* ---- サイドバーヘッダー（共通コントロール） ---- */
+/* ---- 共通コントロール（TOP タブ内） ---- */
 .sidebar-header {
     padding: 18px 14px 14px;
     border-bottom: 1px solid #2d3f52;
     display: flex;
     flex-direction: column;
     gap: 8px;
-}
-
-.app-title {
-    font-size: 20px;
-    font-weight: 700;
-    color: #ffffff;
-    letter-spacing: 0.5px;
 }
 
 .sidebar-label {
@@ -72,7 +51,7 @@ body {
 }
 
 /* ---- ネットワークステータス ---- */
-#network-status {
+.js-network-status {
     display: block;
     min-height: 20px;
 }
@@ -104,9 +83,9 @@ body {
 
 .sidebar-header button:hover { opacity: 0.85; }
 
-#load-btn         { background: #007bff; color: #fff; }
-#save-btn         { background: #28a745; color: #fff; }
-#excel-export-btn { background: #e67e00; color: #fff; }
+.js-load-btn         { background: #007bff; color: #fff; }
+.js-save-btn         { background: #28a745; color: #fff; }
+.js-excel-export-btn { background: #e67e00; color: #fff; }
 
 /* ---- ファイル選択ラベル ---- */
 .file-label {
@@ -139,11 +118,22 @@ body {
     padding: 10px 4px 6px;
 }
 
-#category-list {
+.js-category-list {
     display: flex;
     flex-direction: column;
     gap: 2px;
 }
+
+/* ---- TOP ページ用パネル（サイドバーのダーク配色をそのまま流用） ---- */
+.top-panel {
+    background: #1e2a38;
+    border-radius: 10px;
+    padding: 4px;
+    margin-bottom: 20px;
+    max-width: 420px;
+}
+.top-panel .sidebar-header,
+.top-panel .category-filter { border: none; }
 
 .category-radio-label {
     display: flex;
@@ -169,41 +159,13 @@ body {
     cursor: pointer;
 }
 
-/* ===== サイドナビ ===== */
-.sidebar-nav {
-    padding: 12px 10px;
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-}
-
-.nav-btn {
-    width: 100%;
-    padding: 10px 14px;
-    font-size: 14px;
-    text-align: left;
-    background: transparent;
-    color: #c9d1d9;
-    border: none;
-    border-radius: 6px;
-    cursor: pointer;
-    transition: background 0.15s, color 0.15s;
-}
-
-.nav-btn:hover  { background: #2d3f52; color: #fff; }
-.nav-btn.active { background: #007bff; color: #fff; font-weight: 600; }
-
 /* ===== メインコンテンツエリア ===== */
 .main-content {
     padding: 32px 36px;
     overflow-y: auto;
 }
 
-/* ===== ページコンテナ（SPA 表示/非表示） ===== */
-.page         { display: none; }
-.page.active  { display: block; }
-
-.page h2 {
+#page-summary h2 {
     font-size: 22px;
     font-weight: 700;
     color: #1e2a38;
@@ -761,30 +723,6 @@ details[open] > .expander-title::after { transform: rotate(90deg); }
 
 /* ===== スマホ対応（640px以下） ===== */
 @media (max-width: 640px) {
-    .app-shell {
-        grid-template-columns: 1fr;
-        grid-template-rows: auto 1fr;
-    }
-
-    .sidebar {
-        position: static;
-        height: auto;
-    }
-
-    .sidebar-nav {
-        flex-direction: row;
-        flex-wrap: wrap;
-        padding: 8px 10px;
-        gap: 4px;
-    }
-
-    .nav-btn {
-        flex: 1 1 auto;
-        text-align: center;
-        padding: 8px 6px;
-        font-size: 12px;
-    }
-
     .main-content {
         padding: 16px;
     }

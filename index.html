@@ -13,76 +13,12 @@
 
 <div class="app-shell">
 
-    <!-- ========== サイドメニュー ========== -->
-    <aside class="sidebar">
-
-        <!-- 共通コントロール（全ページで使用） -->
-        <div class="sidebar-header">
-            <p class="app-title">Second Brain</p>
-
-            <label class="sidebar-label" for="token-input">PW</label>
-            <input type="password" id="token-input" placeholder="github_pat_...">
-
-            <span id="network-status"></span>
-
-            <div class="btn-group">
-                <button id="load-btn">Load</button>
-                <button id="save-btn">Save</button>
-            </div>
-
-            <div class="btn-group btn-group--excel">
-                <button id="excel-export-btn">Export</button>
-                <label class="file-label" for="excel-import">
-                    Import
-                    <input type="file" id="excel-import" accept=".xlsx">
-                </label>
-            </div>
-        </div>
-
-        <!-- ページナビゲーション -->
-        <nav class="sidebar-nav">
-            <button class="nav-btn" data-page="dashboard">Studio</button>
-            <button class="nav-btn" data-page="inbox">Setting</button>
-        </nav>
-
-        <!-- カテゴリフィルタ -->
-        <div class="category-filter">
-            <p class="sidebar-label">カテゴリ</p>
-            <div id="category-list">
-                <!-- データ読み込み後に JS で描画 -->
-            </div>
-        </div>
-
-    </aside>
-
     <!-- ========== メインコンテンツ ========== -->
     <main class="main-content">
 
-        <div id="page-dashboard" class="page">
-            <h2>Studio</h2>
-            <div id="dashboard-warning"></div>
-
-            <!-- INBOX（デフォルト展開） -->
-            <details class="expander" open>
-                <summary class="expander-title">INBOX</summary>
-                <div class="inbox-form">
-                    <textarea id="inbox-content" class="inbox-textarea"
-                              placeholder="内容を入力してください..." rows="4"></textarea>
-                    <div class="inbox-toolbar">
-                        <span id="inbox-category-badge" class="inbox-category-badge"></span>
-                        <button id="inbox-submit-btn" class="inbox-btn">登録</button>
-                    </div>
-                </div>
-            </details>
-
-            <!-- タスク実行（デフォルト展開） -->
-            <details class="expander" open>
-                <summary class="expander-title" id="summary-task-runner-dash">タスク実行</summary>
-                <div id="task-runner-dash"></div>
-            </details>
-
-            <!-- タスク整理（カレンダー／ガントチャート切り替え、デフォルト展開） -->
-            <details class="expander" open>
+        <!-- タスク整理（カレンダー／ガントチャート切り替え、Summaryページ「タスク整理」タブに表示） -->
+        <div id="taskorg-anchor-home" style="display:none">
+            <details id="taskorg-details" class="expander" open>
                 <summary class="expander-title">タスク整理</summary>
 
                 <div class="taskorg-view-toggle">
@@ -267,9 +203,11 @@
                     </div>
                 </div>
             </details>
+        </div>
 
-            <!-- 繰り返しタスク -->
-            <details class="expander" open>
+        <!-- 繰り返しタスク（Summaryページ「繰返しタスク」タブに表示） -->
+        <div id="recurring-anchor-home" style="display:none">
+            <details id="recurring-details" class="expander" open>
                 <summary class="expander-title" id="summary-recurring">繰り返しタスク</summary>
                 <div id="recurring-section"></div>
 
@@ -379,19 +317,104 @@
                     </div>
                 </div>
             </details>
-
-            <!-- load-btn / save-btn ハンドラが参照する要素（非表示） -->
-            <div id="content-box" style="display:none"></div>
         </div>
 
-        <div id="page-inbox" class="page">
-            <h2>Setting</h2>
+        <!-- load-btn / save-btn ハンドラが参照する要素（非表示） -->
+        <div id="content-box" style="display:none"></div>
 
-            <!-- 警告バナー（1行） -->
-            <div id="master-warning"></div>
+        <div id="page-summary">
+            <h2>Second Brain</h2>
+            <div id="summary-dashboard-warning"></div>
 
-            <!-- 編集（INBOX／タスク／ナレッジ／アイデア／アーカイブ 統合編集・新規登録、デフォルト展開） -->
-            <details class="expander" open>
+            <!-- 表示切り替え（TOP／INBOX／タスク実行／タスク整理／繰返しタスク） -->
+            <div class="taskorg-view-toggle">
+                <button type="button" id="summary-tab-top" class="taskorg-view-btn taskorg-view-btn--active" data-view="top">TOP</button>
+                <button type="button" id="summary-tab-taskorg" class="taskorg-view-btn" data-view="taskorg">ﾀｽｸ整理</button>
+                <button type="button" id="summary-tab-runner" class="taskorg-view-btn" data-view="runner">ﾀｽｸ実行</button>
+                <button type="button" id="summary-tab-recurring" class="taskorg-view-btn" data-view="recurring">習慣</button>
+                <button type="button" id="summary-tab-edit" class="taskorg-view-btn" data-view="edit">編集</button>
+                <button type="button" id="summary-tab-hub" class="taskorg-view-btn" data-view="hub">ﾊﾌﾞ</button>
+                <button type="button" id="summary-tab-data" class="taskorg-view-btn" data-view="data">ﾃﾞｰﾀ</button>
+            </div>
+
+            <!-- TOP（Load〜Import・カテゴリ） -->
+            <div id="summary-view-top" class="summary-view-panel">
+                <div class="top-panel">
+                    <div class="sidebar-header">
+                        <label class="sidebar-label" for="token-input-top">PW</label>
+                        <input type="password" id="token-input-top" class="js-token-input" placeholder="github_pat_...">
+
+                        <span id="network-status-top" class="js-network-status"></span>
+
+                        <div class="btn-group">
+                            <button id="load-btn-top" class="js-load-btn">Load</button>
+                            <button id="save-btn-top" class="js-save-btn">Save</button>
+                        </div>
+
+                        <div class="btn-group btn-group--excel">
+                            <button id="excel-export-btn-top" class="js-excel-export-btn">Export</button>
+                            <label class="file-label" for="excel-import-top">
+                                Import
+                                <input type="file" id="excel-import-top" class="js-excel-import" accept=".xlsx">
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="top-panel">
+                    <div class="category-filter">
+                        <p class="sidebar-label">カテゴリ</p>
+                        <div id="category-list-top" class="js-category-list">
+                            <!-- データ読み込み後に JS で描画 -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- INBOX -->
+                <div class="inbox-form">
+                    <textarea id="inbox-content-summary" class="inbox-textarea js-inbox-content"
+                              placeholder="内容を入力してください..." rows="4"></textarea>
+                    <div class="inbox-toolbar">
+                        <span id="inbox-category-badge-summary" class="inbox-category-badge js-inbox-badge"></span>
+                        <button id="inbox-submit-btn-summary" class="inbox-btn js-inbox-submit">登録</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- タスク整理（表示切り替え時に本体を移動して表示） -->
+            <div id="summary-view-taskorg" class="summary-view-panel" style="display:none">
+                <div id="taskorg-anchor-summary"></div>
+            </div>
+
+            <!-- タスク実行 -->
+            <div id="summary-view-runner" class="summary-view-panel" style="display:none">
+                <div id="task-runner-summary" class="task-runner-container"></div>
+            </div>
+
+            <!-- 習慣（表示切り替え時に本体を移動して表示） -->
+            <div id="summary-view-recurring" class="summary-view-panel" style="display:none">
+                <div id="recurring-anchor-summary"></div>
+            </div>
+
+            <!-- 編集（表示切り替え時に本体を移動して表示） -->
+            <div id="summary-view-edit" class="summary-view-panel" style="display:none">
+                <div id="edit-anchor-summary"></div>
+            </div>
+
+            <!-- ハブ（表示切り替え時に本体を移動して表示） -->
+            <div id="summary-view-hub" class="summary-view-panel" style="display:none">
+                <div id="hub-anchor-summary"></div>
+            </div>
+
+            <!-- データ（表示切り替え時に本体を移動して表示） -->
+            <div id="summary-view-data" class="summary-view-panel" style="display:none">
+                <div id="data-anchor-summary"></div>
+            </div>
+        </div>
+
+        <!-- 編集（INBOX／タスク／ナレッジ／アイデア／アーカイブ 統合編集・新規登録、Summaryページ「編集」タブに表示） -->
+        <div id="edit-anchor-home" style="display:none">
+            <details id="edit-details" class="expander" open>
                 <summary class="expander-title" id="summary-edit">編集</summary>
 
                 <!-- 対象データ区分タブ（一覧の絞り込み） -->
@@ -481,52 +504,50 @@
                     </div>
                 </div>
             </details>
+        </div>
 
-            <!-- データ閲覧・直接編集（デフォルト折り畳み） -->
-            <details class="expander">
-                <summary class="expander-title" id="summary-main">
-                    メインデータ 一覧
-                </summary>
-                <div class="edit-table-toolbar">
-                    <button id="add-main-row-btn">行を追加</button>
-                </div>
-                <div class="table-wrapper table-wrapper--limited">
-                    <table id="table-main"></table>
-                </div>
-            </details>
+        <!-- データ（メインデータ一覧／マスタデータ一覧、Summaryページ「データ」タブに表示） -->
+        <div id="data-anchor-home" style="display:none">
+            <div id="data-group">
+                <details class="expander">
+                    <summary class="expander-title" id="summary-main">
+                        メインデータ 一覧
+                    </summary>
+                    <div class="edit-table-toolbar">
+                        <button id="add-main-row-btn">行を追加</button>
+                    </div>
+                    <div class="table-wrapper table-wrapper--limited">
+                        <table id="table-main"></table>
+                    </div>
+                </details>
 
-            <details class="expander">
-                <summary class="expander-title" id="summary-master">
-                    マスタデータ 一覧
-                </summary>
-                <div class="edit-table-toolbar">
-                    <button id="add-master-data-row-btn">行を追加</button>
-                </div>
-                <div class="table-wrapper table-wrapper--limited">
-                    <table id="table-master"></table>
-                </div>
-            </details>
+                <details class="expander">
+                    <summary class="expander-title" id="summary-master">
+                        マスタデータ 一覧
+                    </summary>
+                    <div class="edit-table-toolbar">
+                        <button id="add-master-data-row-btn">行を追加</button>
+                    </div>
+                    <div class="table-wrapper table-wrapper--limited">
+                        <table id="table-master"></table>
+                    </div>
+                </details>
+            </div>
+        </div>
 
-            <!-- ハブ管理（名前変更・削除・統合） -->
-            <details class="expander">
-                <summary class="expander-title" id="summary-hub-admin">
-                    ハブ管理
-                </summary>
-                <p class="calendar-dayplan-hint">名前変更・統合は既存タスク／ナレッジの「ハブ」を一括で書き換えます。削除は使用中の場合、別のハブへの再割り当て、または未割り当てにしてから削除できます。</p>
-                <div class="table-wrapper table-wrapper--limited">
-                    <table id="hub-admin-table"></table>
-                </div>
-            </details>
-
-            <!-- 直近の更新データ（デフォルト折り畳み） -->
-            <details class="expander">
-                <summary class="expander-title" id="summary-recent">
-                    直近の更新データ
-                </summary>
-                <div class="table-wrapper">
-                    <table id="table-recent"></table>
-                </div>
-            </details>
+        <!-- ハブ管理（名前変更・削除・統合、Summaryページ「ハブ」タブに表示） -->
+        <div id="hub-anchor-home" style="display:none">
+            <div id="hub-group">
+                <details class="expander" open>
+                    <summary class="expander-title" id="summary-hub-admin">
+                        ハブ管理
+                    </summary>
+                    <p class="calendar-dayplan-hint">名前変更・統合は既存タスク／ナレッジの「ハブ」を一括で書き換えます。削除は使用中の場合、別のハブへの再割り当て、または未割り当てにしてから削除できます。</p>
+                    <div class="table-wrapper table-wrapper--limited">
+                        <table id="hub-admin-table"></table>
+                    </div>
+                </details>
+            </div>
         </div>
 
     </main>

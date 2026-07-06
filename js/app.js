@@ -12,7 +12,6 @@ const PATH  = 'todo.md';
 let currentSha        = null;
 let currentMainData   = [];
 let currentMasterData = [];
-let currentPage       = 'dashboard';
 let currentCategory   = 'すべて';        // カテゴリフィルタの選択値
 let categoryInitialized = false;         // 初回ロード時にデフォルトカテゴリを設定済みか
 let selectedEditIds = new Set();       // 編集セクションで選択中の行ID
@@ -30,69 +29,90 @@ let calendarFilters = { tag: new Set(), hub: new Set(), status: new Set() }; // 
 let calendarQuickNewMode = false;      // true時: タスク一覧の「（新規作成）」行から起動した新規登録モード（日付は空欄のまま）
 let taskOrgView = 'calendar';          // 「タスク整理」の表示ビュー（'calendar' | 'gantt'）。年月・タグ/ハブ/ステータスフィルタ・選択中タスクは両ビューで共有する
 let ganttViewUnit = 'day';             // ガントチャートの列の単位（'day' | 'week'）
+let summaryView   = 'top';             // Summary ページの表示ビュー（'top' | 'runner' | 'taskorg' | 'recurring' | 'edit' | 'data' | 'hub'）
 
 // ===== 初期化 =====
 window.addEventListener('DOMContentLoaded', () => {
     const saved = loadToken();
     if (saved) {
-        document.getElementById('token-input').value = saved;
+        setTokenInputs(saved);
         loadFromGithub(saved, true);
     }
-    switchPage('dashboard');
+    renderSummary();
 });
 
-// ===== ページ切り替え =====
+// ===== サイドバー／TOPページ共通コントロール（PW・Load・Save・Export・Import） =====
 
-/**
- * 指定ページを表示し、ナビボタンのアクティブ状態を更新してレンダラーを呼ぶ。
- */
-function switchPage(pageId) {
-    document.querySelectorAll('.page').forEach(el    => el.classList.remove('active'));
-    document.querySelectorAll('.nav-btn').forEach(el => el.classList.remove('active'));
-
-    document.getElementById(`page-${pageId}`).classList.add('active');
-    document.querySelector(`.nav-btn[data-page="${pageId}"]`).classList.add('active');
-
-    currentPage = pageId;
-    renderPage(pageId);
+/** すべてのトークン入力欄（サイドバー・TOPページ）を同じ値に揃える */
+function setTokenInputs(value) {
+    document.querySelectorAll('.js-token-input').forEach(el => { el.value = value; });
 }
 
-// ナビボタン全件にクリックリスナーを登録
-document.querySelectorAll('.nav-btn').forEach(btn => {
-    btn.addEventListener('click', () => switchPage(btn.dataset.page));
+/** いずれかのトークン入力欄から値を取得する（全欄が同期されているため先頭の値を使う） */
+function getTokenValue() {
+    return document.querySelector('.js-token-input')?.value.trim() || '';
+}
+
+/** すべてのトークン入力欄を相互に同期する */
+document.querySelectorAll('.js-token-input').forEach(input => {
+    input.addEventListener('input', () => setTokenInputs(input.value));
 });
 
-// ===== ページレンダラー =====
+/** すべてのネットワークステータス表示（サイドバー・TOPページ）を更新する */
+function setNetworkStatus(html) {
+    document.querySelectorAll('.js-network-status').forEach(el => { el.innerHTML = html; });
+}
 
-/** 現在ページに対応するレンダラーをディスパッチする。 */
-function renderPage(pageId) {
-    const renderers = {
-        dashboard: renderDashboard,
-        inbox:     renderInbox,
-    };
-    renderers[pageId]?.();
+/** id要素が指定アンカーの子でなければ移動する（Summary内の各タブでセクション本体を使い回すため） */
+function mountSection(elId, anchorId) {
+    const el     = document.getElementById(elId);
+    const anchor = document.getElementById(anchorId);
+    if (el && anchor && el.parentElement !== anchor) anchor.appendChild(el);
 }
 
 // --- ページレンダラー ---
-function renderDashboard() {
+
+const SUMMARY_VIEWS = ['top', 'taskorg', 'runner', 'recurring', 'edit', 'hub', 'data'];
+
+/** Summary ページ（TOP／INBOX／タスク実行／タスク整理／繰返しタスク／編集／データ／ハブの表示切り替え）を描画する */
+function renderSummary() {
+    // 選択中のビューに応じて、セクション本体をこのページへ移動する
+    if (summaryView === 'taskorg')   mountSection('taskorg-details',   'taskorg-anchor-summary');
+    if (summaryView === 'recurring') mountSection('recurring-details', 'recurring-anchor-summary');
+    if (summaryView === 'edit')      mountSection('edit-details',      'edit-anchor-summary');
+    if (summaryView === 'data')      mountSection('data-group',        'data-anchor-summary');
+    if (summaryView === 'hub')       mountSection('hub-group',         'hub-anchor-summary');
+
+    if (summaryView === 'top') renderCategoryFilter();
     renderWarnings(computeMasterWarnings());
-    const badge = document.getElementById('inbox-category-badge');
-    if (badge) {
-        badge.textContent = currentCategory === 'すべて'
-            ? 'カテゴリ: 未設定（「すべて」選択中）'
-            : `カテゴリ: ${currentCategory}`;
-    }
+    renderInboxBadge();
     renderTaskRunner();
-    renderRecurringSection();
-    renderCalendar();
+    if (summaryView === 'taskorg')   renderCalendar();
+    if (summaryView === 'recurring') renderRecurringSection();
+    if (summaryView === 'edit')      renderEdit();
+    if (summaryView === 'data') {
+        renderDataTable('table-main',   'summary-main',   getFilteredMainData(),   MAIN_DATA_COLUMNS,   'メインデータ',   { editable: true, idColumn: 'ID' });
+        renderDataTable('table-master', 'summary-master', currentMasterData, MASTER_DATA_COLUMNS, 'マスタデータ', { editable: true, onEdit: () => { renderWarnings(computeMasterWarnings()); renderHubAdmin(); } });
+    }
+    if (summaryView === 'hub') renderHubAdmin();
+
+    SUMMARY_VIEWS.forEach(view => {
+        document.getElementById(`summary-tab-${view}`)?.classList.toggle('taskorg-view-btn--active', summaryView === view);
+        const panel = document.getElementById(`summary-view-${view}`);
+        if (panel) panel.style.display = summaryView === view ? '' : 'none';
+    });
 }
-function renderInbox() {
-    renderEdit();
-    renderRecentItems();
-    renderDataTable('table-main',   'summary-main',   getFilteredMainData(),   MAIN_DATA_COLUMNS,   'メインデータ',   { editable: true, idColumn: 'ID' });
-    renderDataTable('table-master', 'summary-master', currentMasterData, MASTER_DATA_COLUMNS, 'マスタデータ', { editable: true, onEdit: () => { renderWarnings(computeMasterWarnings()); renderHubAdmin(); } });
-    renderWarnings(computeMasterWarnings());
-    renderHubAdmin();
+
+SUMMARY_VIEWS.forEach(view => {
+    document.getElementById(`summary-tab-${view}`)?.addEventListener('click', () => { summaryView = view; renderSummary(); });
+});
+
+/** INBOX のカテゴリバッジ（サイドバー／Summary 両方）を更新する */
+function renderInboxBadge() {
+    const text = currentCategory === 'すべて'
+        ? 'カテゴリ: 未設定（「すべて」選択中）'
+        : `カテゴリ: ${currentCategory}`;
+    document.querySelectorAll('.js-inbox-badge').forEach(badge => { badge.textContent = text; });
 }
 
 /**
@@ -179,59 +199,6 @@ function renderDataTable(tableId, summaryId, data, columns, label, options = {})
 function jpDateOnly(dt) { return (dt || '').slice(0, 10); }
 /** "YYYY-MM-DD" を "YYYY/MM/DD" に変換 */
 function isoToJP(d) { return d.replace(/-/g, '/'); }
-
-/** 更新日時が新しい順に最大10件を表示する。 */
-function renderRecentItems() {
-    const COLS    = ['ID', 'データ区分', 'カテゴリ', 'タイトル', '内容', 'タグ', 'ハブ', '更新日時'];
-    const recent  = [...getFilteredMainData()]
-        .filter(r => r['更新日時'])
-        .sort((a, b) => (b['更新日時'] ?? '').localeCompare(a['更新日時'] ?? ''))
-        .slice(0, 10);
-
-    const summaryEl = document.getElementById('summary-recent');
-    if (summaryEl) {
-        summaryEl.innerHTML =
-            `直近の更新データ<span class="expander-count">最新 ${recent.length} 件</span>`;
-    }
-
-    const table = document.getElementById('table-recent');
-    if (!table) return;
-    table.className = 'data-table';
-
-    const thead = document.createElement('thead');
-    const hRow  = document.createElement('tr');
-    COLS.forEach(col => {
-        const th = document.createElement('th');
-        th.textContent = col;
-        hRow.appendChild(th);
-    });
-    thead.appendChild(hRow);
-
-    const tbody = document.createElement('tbody');
-    if (recent.length === 0) {
-        const tr = document.createElement('tr');
-        const td = document.createElement('td');
-        td.colSpan     = COLS.length;
-        td.className   = 'empty-cell';
-        td.textContent = 'データがありません';
-        tr.appendChild(td);
-        tbody.appendChild(tr);
-    } else {
-        recent.forEach(row => {
-            const tr = document.createElement('tr');
-            COLS.forEach(col => {
-                const td  = document.createElement('td');
-                let   val = row[col] ?? '';
-                if (col === '内容' && val.length > 40) val = val.slice(0, 40) + '…';
-                td.textContent = val;
-                tr.appendChild(td);
-            });
-            tbody.appendChild(tr);
-        });
-    }
-
-    table.replaceChildren(thead, tbody);
-}
 
 // ===== <select> 共通ヘルパー =====
 
@@ -700,7 +667,6 @@ document.getElementById('edit-new-btn')?.addEventListener('click', () => {
     clearEditForm();
     renderEditKubunTabs();
     renderEditTable();
-    renderRecentItems();
 
     const info = document.getElementById('edit-selection-info');
     if (info) {
@@ -768,7 +734,6 @@ document.getElementById('edit-apply-btn')?.addEventListener('click', () => {
     selectedEditIds.clear();
     saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
     renderEdit();
-    renderRecentItems();
 });
 
 /** 「削除」ボタン: 選択行をメインデータから完全に削除する。 */
@@ -781,7 +746,6 @@ document.getElementById('edit-delete-btn')?.addEventListener('click', () => {
     selectedEditIds.clear();
     saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
     renderEdit();
-    renderRecentItems();
 });
 
 // ===== マスタ管理 =====
@@ -854,21 +818,13 @@ function computeMasterWarnings() {
     return warnings;
 }
 
-/** 情報整理ページとダッシュボードの両方に警告バナーを描画する。 */
+/** Summary ページに警告バナーを描画する。 */
 function renderWarnings(warnings) {
-    const masterEl = document.getElementById('master-warning');
-    if (masterEl) {
-        masterEl.innerHTML = warnings.length > 0
-            ? `<p class="warning-text">⚠ ${warnings.join('　/　')}</p>`
-            : '<p class="warning-ok">✓ マスタデータに問題はありません</p>';
-    }
-
-    const dashEl = document.getElementById('dashboard-warning');
-    if (dashEl) {
+    document.querySelectorAll('#summary-dashboard-warning').forEach(dashEl => {
         dashEl.innerHTML = warnings.length > 0
             ? `<p class="warning-text">⚠ ${warnings.join('　/　')}</p>`
             : '';
-    }
+    });
 }
 
 /** マスタデータの空行を生成する。 */
@@ -1145,7 +1101,6 @@ document.getElementById('add-main-row-btn')?.addEventListener('click', () => {
     saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
 
     renderDataTable('table-main', 'summary-main', getFilteredMainData(), MAIN_DATA_COLUMNS, 'メインデータ', { editable: true, idColumn: 'ID' });
-    renderRecentItems();
 });
 
 // ===== データ読み込みヘルパー =====
@@ -1174,7 +1129,7 @@ function applyContent(content, sha) {
     }
 
     renderCategoryFilter();   // データ更新時にカテゴリ一覧を再構築
-    renderPage(currentPage);
+    renderSummary();
 }
 
 // ===== GitHubから読み込み =====
@@ -1185,7 +1140,6 @@ function applyContent(content, sha) {
  */
 async function loadFromGithub(token, silent = false) {
     const contentBox = document.getElementById('content-box');
-    const statusEl    = document.getElementById('network-status');
 
     if (!token) { if (!silent) alert('トークンを入力してください'); return; }
     saveToken(token);
@@ -1195,14 +1149,14 @@ async function loadFromGithub(token, silent = false) {
         const { content, sha } = await fetchFile(token, OWNER, REPO, PATH);
         applyContent(content, sha);
         saveCache(content, sha);
-        statusEl.innerHTML   = '<span class="status-badge online-badge">オンライン（最新）</span>';
+        setNetworkStatus('<span class="status-badge online-badge">オンライン（最新）</span>');
         contentBox.innerHTML = window.marked.parse(content);
     } catch (error) {
         console.error(error);
         const cached = loadCache();
         if (cached) {
             applyContent(cached.content, cached.sha);
-            statusEl.innerHTML   = '<span class="status-badge offline-badge">オフライン（端末内データ）</span>';
+            setNetworkStatus('<span class="status-badge offline-badge">オフライン（端末内データ）</span>');
             contentBox.innerHTML = window.marked.parse(cached.content);
             if (!silent) alert('通信できませんでした。スマホ内に一時保存されている前回のデータを表示します。');
         } else {
@@ -1211,122 +1165,128 @@ async function loadFromGithub(token, silent = false) {
     }
 }
 
-document.getElementById('load-btn')?.addEventListener('click', () => {
-    loadFromGithub(document.getElementById('token-input').value.trim());
+document.querySelectorAll('.js-load-btn').forEach(btn => {
+    btn.addEventListener('click', () => loadFromGithub(getTokenValue()));
 });
 
 // ===== GitHubへ保存 =====
-document.getElementById('save-btn')?.addEventListener('click', async () => {
-    const token      = document.getElementById('token-input').value.trim();
-    const contentBox = document.getElementById('content-box');
-    const statusEl   = document.getElementById('network-status');
+document.querySelectorAll('.js-save-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+        const token      = getTokenValue();
+        const contentBox = document.getElementById('content-box');
 
-    if (!token)      return alert('トークンを入力してください');
-    if (!currentSha) return alert('先にデータを読み込んでください（またはオフラインキャッシュを読み込んでください）');
+        if (!token)      return alert('トークンを入力してください');
+        if (!currentSha) return alert('先にデータを読み込んでください（またはオフラインキャッシュを読み込んでください）');
 
-    const newMarkdown = stringifyMarkdown(currentMainData, currentMasterData);
+        const newMarkdown = stringifyMarkdown(currentMainData, currentMasterData);
 
-    saveCache(newMarkdown, currentSha);
-    contentBox.textContent = 'GitHubへ保存中...';
-
-    try {
-        const { newSha } = await saveFile(token, OWNER, REPO, PATH, newMarkdown, currentSha);
-        currentSha = newSha;
-        saveCache(newMarkdown, newSha);
-        statusEl.innerHTML   = '<span class="status-badge online-badge">オンライン（同期完了）</span>';
-        contentBox.innerHTML = window.marked.parse(newMarkdown);
-        alert('GitHubへの保存が成功しました！');
-    } catch (error) {
-        console.error(error);
-        statusEl.innerHTML   = '<span class="status-badge offline-badge">未同期の変更あり</span>';
-        contentBox.innerHTML = window.marked.parse(newMarkdown);
-        alert('現在通信ができません。変更はスマホ内に一時保存されました。電波の良い場所に移動してから、再度「GitHubへ保存する」を押して同期してください。');
-    }
-});
-
-// ===== Excelエクスポート =====
-document.getElementById('excel-export-btn')?.addEventListener('click', () => {
-    if (currentMainData.length === 0 && currentMasterData.length === 0) {
-        return alert('エクスポートするデータがありません。先にGitHubからデータを読み込んでください。');
-    }
-    exportToExcel(currentMainData, currentMasterData);
-});
-
-// ===== Excelインポート =====
-document.getElementById('excel-import')?.addEventListener('change', async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-
-    const token      = document.getElementById('token-input').value.trim();
-    const contentBox = document.getElementById('content-box');
-    const statusEl   = document.getElementById('network-status');
-
-    const { mainData, masterData } = await importFromExcel(file);
-    currentMainData   = mainData;
-    currentMasterData = masterData;
-
-    const newMarkdown = stringifyMarkdown(mainData, masterData);
-    saveCache(newMarkdown, currentSha);
-    e.target.value = ''; // 同一ファイルの再インポートを可能にするためリセット
-
-    if (token && currentSha) {
+        saveCache(newMarkdown, currentSha);
         contentBox.textContent = 'GitHubへ保存中...';
+
         try {
             const { newSha } = await saveFile(token, OWNER, REPO, PATH, newMarkdown, currentSha);
             currentSha = newSha;
             saveCache(newMarkdown, newSha);
-            statusEl.innerHTML   = '<span class="status-badge online-badge">オンライン（同期完了）</span>';
+            setNetworkStatus('<span class="status-badge online-badge">オンライン（同期完了）</span>');
             contentBox.innerHTML = window.marked.parse(newMarkdown);
-            alert('Excelのインポートとデータ保存が完了しました！');
+            alert('GitHubへの保存が成功しました！');
         } catch (error) {
             console.error(error);
-            statusEl.innerHTML   = '<span class="status-badge offline-badge">未同期の変更あり</span>';
+            setNetworkStatus('<span class="status-badge offline-badge">未同期の変更あり</span>');
             contentBox.innerHTML = window.marked.parse(newMarkdown);
-            alert('インポートデータを端末内に保存しました。「GitHubへ保存する」で同期してください。');
+            alert('現在通信ができません。変更はスマホ内に一時保存されました。電波の良い場所に移動してから、再度「GitHubへ保存する」を押して同期してください。');
         }
-    } else {
-        statusEl.innerHTML   = '<span class="status-badge offline-badge">端末内に保存済み（未同期）</span>';
-        contentBox.innerHTML = window.marked.parse(newMarkdown);
-        alert('インポートデータを端末内に保存しました。GitHubへ同期するには、トークンを入力して読み込んでから再度インポートしてください。');
-    }
+    });
+});
+
+// ===== Excelエクスポート =====
+document.querySelectorAll('.js-excel-export-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        if (currentMainData.length === 0 && currentMasterData.length === 0) {
+            return alert('エクスポートするデータがありません。先にGitHubからデータを読み込んでください。');
+        }
+        exportToExcel(currentMainData, currentMasterData);
+    });
+});
+
+// ===== Excelインポート =====
+document.querySelectorAll('.js-excel-import').forEach(input => {
+    input.addEventListener('change', async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        const token      = getTokenValue();
+        const contentBox = document.getElementById('content-box');
+
+        const { mainData, masterData } = await importFromExcel(file);
+        currentMainData   = mainData;
+        currentMasterData = masterData;
+
+        const newMarkdown = stringifyMarkdown(mainData, masterData);
+        saveCache(newMarkdown, currentSha);
+        e.target.value = ''; // 同一ファイルの再インポートを可能にするためリセット
+
+        if (token && currentSha) {
+            contentBox.textContent = 'GitHubへ保存中...';
+            try {
+                const { newSha } = await saveFile(token, OWNER, REPO, PATH, newMarkdown, currentSha);
+                currentSha = newSha;
+                saveCache(newMarkdown, newSha);
+                setNetworkStatus('<span class="status-badge online-badge">オンライン（同期完了）</span>');
+                contentBox.innerHTML = window.marked.parse(newMarkdown);
+                alert('Excelのインポートとデータ保存が完了しました！');
+            } catch (error) {
+                console.error(error);
+                setNetworkStatus('<span class="status-badge offline-badge">未同期の変更あり</span>');
+                contentBox.innerHTML = window.marked.parse(newMarkdown);
+                alert('インポートデータを端末内に保存しました。「GitHubへ保存する」で同期してください。');
+            }
+        } else {
+            setNetworkStatus('<span class="status-badge offline-badge">端末内に保存済み（未同期）</span>');
+            contentBox.innerHTML = window.marked.parse(newMarkdown);
+            alert('インポートデータを端末内に保存しました。GitHubへ同期するには、トークンを入力して読み込んでから再度インポートしてください。');
+        }
+    });
 });
 
 // ===== INBOX 登録 =====
 
-document.getElementById('inbox-submit-btn')?.addEventListener('click', () => {
-    const textarea = document.getElementById('inbox-content');
-    const content  = textarea.value.trim();
-    if (!content) { textarea.focus(); return; }
+document.querySelectorAll('.js-inbox-submit').forEach(btn => {
+    btn.addEventListener('click', () => {
+        const textarea = btn.closest('.inbox-form').querySelector('.js-inbox-content');
+        const content  = textarea.value.trim();
+        if (!content) { textarea.focus(); return; }
 
-    // IDの自動採番: 既存の最大ID + 1（IDが未設定の場合は1から開始）
-    const maxId = currentMainData.reduce((max, row) => {
-        const id = parseInt(row['ID'], 10);
-        return isNaN(id) ? max : Math.max(max, id);
-    }, 0);
+        // IDの自動採番: 既存の最大ID + 1（IDが未設定の場合は1から開始）
+        const maxId = currentMainData.reduce((max, row) => {
+            const id = parseInt(row['ID'], 10);
+            return isNaN(id) ? max : Math.max(max, id);
+        }, 0);
 
-    // タイムスタンプ: YYYY/MM/DD HH:mm:ss
-    const now = new Date();
-    const pad = n => String(n).padStart(2, '0');
-    const ts  = `${now.getFullYear()}/${pad(now.getMonth() + 1)}/${pad(now.getDate())} `
-              + `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+        // タイムスタンプ: YYYY/MM/DD HH:mm:ss
+        const now = new Date();
+        const pad = n => String(n).padStart(2, '0');
+        const ts  = `${now.getFullYear()}/${pad(now.getMonth() + 1)}/${pad(now.getDate())} `
+                  + `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
 
-    // 全カラムを空文字で初期化してから必要な値だけ設定
-    const entry = Object.fromEntries(MAIN_DATA_COLUMNS.map(col => [col, '']));
-    entry['ID']        = String(maxId + 1);
-    entry['データ区分'] = 'INBOX';
-    entry['内容']       = content;
-    entry['作成日時']   = ts;
-    entry['更新日時']   = ts;
-    entry['カテゴリ']   = currentCategory === 'すべて' ? '' : currentCategory;
+        // 全カラムを空文字で初期化してから必要な値だけ設定
+        const entry = Object.fromEntries(MAIN_DATA_COLUMNS.map(col => [col, '']));
+        entry['ID']        = String(maxId + 1);
+        entry['データ区分'] = 'INBOX';
+        entry['内容']       = content;
+        entry['作成日時']   = ts;
+        entry['更新日時']   = ts;
+        entry['カテゴリ']   = currentCategory === 'すべて' ? '' : currentCategory;
 
-    currentMainData.push(entry);
+        currentMainData.push(entry);
 
-    // LocalStorage に自動保存（GitHub push 前の安全網）
-    saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
+        // LocalStorage に自動保存（GitHub push 前の安全網）
+        saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
 
-    textarea.value = '';
-    textarea.focus();
-    renderDashboard(); // カテゴリバッジ等を再描画
+        document.querySelectorAll('.js-inbox-content').forEach(ta => { ta.value = ''; });
+        textarea.focus();
+        renderSummary(); // カテゴリバッジ等を再描画
+    });
 });
 
 // ===== カテゴリフィルタ =====
@@ -1337,36 +1297,36 @@ document.getElementById('inbox-submit-btn')?.addEventListener('click', () => {
  * データ未読み込み時は「すべて」のみ表示する。
  */
 function renderCategoryFilter() {
-    const container = document.getElementById('category-list');
-    if (!container) return;
+    const containers = document.querySelectorAll('.js-category-list');
+    if (containers.length === 0) return;
 
     // (M)カテゴリ列から重複なしで一覧を生成
     const categories = [...new Set(
         currentMasterData.map(r => r['(M)カテゴリ']).filter(Boolean)
     )];
 
-    container.innerHTML = '';
+    containers.forEach(container => {
+        container.innerHTML = '';
 
-    ['すべて', ...categories].forEach(cat => {
-        const label = document.createElement('label');
-        label.className = 'category-radio-label' + (cat === currentCategory ? ' active' : '');
+        ['すべて', ...categories].forEach(cat => {
+            const label = document.createElement('label');
+            label.className = 'category-radio-label' + (cat === currentCategory ? ' active' : '');
 
-        const input  = document.createElement('input');
-        input.type   = 'radio';
-        input.name   = 'category-filter';
-        input.value  = cat;
-        input.checked = (cat === currentCategory);
+            const input  = document.createElement('input');
+            input.type   = 'radio';
+            input.name   = `category-filter-${container.id}`;
+            input.value  = cat;
+            input.checked = (cat === currentCategory);
 
-        input.addEventListener('change', () => {
-            currentCategory = cat;
-            container.querySelectorAll('.category-radio-label')
-                     .forEach(l => l.classList.remove('active'));
-            label.classList.add('active');
-            renderPage(currentPage);
+            input.addEventListener('change', () => {
+                currentCategory = cat;
+                renderCategoryFilter(); // 全コンテナの選択状態を再同期
+                renderSummary();
+            });
+
+            label.append(input, document.createTextNode(cat));
+            container.appendChild(label);
         });
-
-        label.append(input, document.createTextNode(cat));
-        container.appendChild(label);
     });
 }
 
@@ -1480,8 +1440,7 @@ function updateRunnerTimerDisplay() {
 
 /** タスク実行UIを描画 */
 function renderTaskRunner() {
-    const container = document.getElementById('task-runner-dash');
-    if (container) buildTaskRunnerUI(container);
+    document.querySelectorAll('.task-runner-container').forEach(container => buildTaskRunnerUI(container));
 }
 
 /** 単一コンテナにタスク実行UIを構築 */
