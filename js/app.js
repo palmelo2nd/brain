@@ -74,7 +74,7 @@ function mountSection(elId, anchorId) {
 
 const SUMMARY_VIEWS = ['top', 'taskorg', 'runner', 'recurring', 'edit', 'hub', 'data'];
 
-/** Summary ページ（TOP／INBOX／タスク実行／タスク整理／繰返しタスク／編集／データ／ハブの表示切り替え）を描画する */
+/** Summary ページ（INBOX／タスク整理／タスク実行／習慣／編集／ハブ／データの表示切り替え。PW・Load〜Import・カテゴリは常時表示バーで共通）を描画する */
 function renderSummary() {
     // 選択中のビューに応じて、セクション本体をこのページへ移動する
     if (summaryView === 'taskorg')   mountSection('taskorg-details',   'taskorg-anchor-summary');
@@ -83,7 +83,7 @@ function renderSummary() {
     if (summaryView === 'data')      mountSection('data-group',        'data-anchor-summary');
     if (summaryView === 'hub')       mountSection('hub-group',         'hub-anchor-summary');
 
-    if (summaryView === 'top') renderCategoryFilter();
+    renderCategoryFilter(); // 常時表示バーのカテゴリ選択を最新化
     renderWarnings(computeMasterWarnings());
     renderInboxBadge();
     renderTaskRunner();

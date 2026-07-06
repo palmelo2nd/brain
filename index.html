@@ -326,9 +326,39 @@
             <h2>Second Brain</h2>
             <div id="summary-dashboard-warning"></div>
 
-            <!-- 表示切り替え（TOP／INBOX／タスク実行／タスク整理／繰返しタスク） -->
+            <!-- 常時表示バー（PW・Load〜Import・カテゴリ選択） -->
+            <div class="top-bar">
+                <div class="top-bar-group">
+                    <label class="sidebar-label" for="token-input-top">PW</label>
+                    <input type="password" id="token-input-top" class="js-token-input" placeholder="github_pat_...">
+                </div>
+
+                <div class="top-bar-group">
+                    <button id="load-btn-top" class="js-load-btn">Load</button>
+                    <button id="save-btn-top" class="js-save-btn">Save</button>
+                </div>
+
+                <div class="top-bar-group">
+                    <button id="excel-export-btn-top" class="js-excel-export-btn">Export</button>
+                    <label class="file-label" for="excel-import-top">
+                        Import
+                        <input type="file" id="excel-import-top" class="js-excel-import" accept=".xlsx">
+                    </label>
+                </div>
+
+                <span id="network-status-top" class="js-network-status"></span>
+
+                <div class="top-bar-group top-bar-categories">
+                    <span class="sidebar-label">カテゴリ</span>
+                    <div id="category-list-top" class="js-category-list">
+                        <!-- データ読み込み後に JS で描画 -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- 表示切り替え（INBOX／タスク整理／タスク実行／習慣／編集／ハブ／データ） -->
             <div class="taskorg-view-toggle">
-                <button type="button" id="summary-tab-top" class="taskorg-view-btn taskorg-view-btn--active" data-view="top">TOP</button>
+                <button type="button" id="summary-tab-top" class="taskorg-view-btn taskorg-view-btn--active" data-view="top">INBOX</button>
                 <button type="button" id="summary-tab-taskorg" class="taskorg-view-btn" data-view="taskorg">ﾀｽｸ整理</button>
                 <button type="button" id="summary-tab-runner" class="taskorg-view-btn" data-view="runner">ﾀｽｸ実行</button>
                 <button type="button" id="summary-tab-recurring" class="taskorg-view-btn" data-view="recurring">習慣</button>
@@ -337,40 +367,8 @@
                 <button type="button" id="summary-tab-data" class="taskorg-view-btn" data-view="data">ﾃﾞｰﾀ</button>
             </div>
 
-            <!-- TOP（Load〜Import・カテゴリ） -->
+            <!-- INBOX -->
             <div id="summary-view-top" class="summary-view-panel">
-                <div class="top-panel">
-                    <div class="sidebar-header">
-                        <label class="sidebar-label" for="token-input-top">PW</label>
-                        <input type="password" id="token-input-top" class="js-token-input" placeholder="github_pat_...">
-
-                        <span id="network-status-top" class="js-network-status"></span>
-
-                        <div class="btn-group">
-                            <button id="load-btn-top" class="js-load-btn">Load</button>
-                            <button id="save-btn-top" class="js-save-btn">Save</button>
-                        </div>
-
-                        <div class="btn-group btn-group--excel">
-                            <button id="excel-export-btn-top" class="js-excel-export-btn">Export</button>
-                            <label class="file-label" for="excel-import-top">
-                                Import
-                                <input type="file" id="excel-import-top" class="js-excel-import" accept=".xlsx">
-                            </label>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="top-panel">
-                    <div class="category-filter">
-                        <p class="sidebar-label">カテゴリ</p>
-                        <div id="category-list-top" class="js-category-list">
-                            <!-- データ読み込み後に JS で描画 -->
-                        </div>
-                    </div>
-                </div>
-
-                <!-- INBOX -->
                 <div class="inbox-form">
                     <textarea id="inbox-content-summary" class="inbox-textarea js-inbox-content"
                               placeholder="内容を入力してください..." rows="4"></textarea>
