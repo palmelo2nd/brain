@@ -326,11 +326,13 @@
             <h2>Second Brain</h2>
             <div id="summary-dashboard-warning"></div>
 
-            <!-- 常時表示バー（PW・Load〜Import・カテゴリ選択） -->
+            <!-- 常時表示バー（カテゴリ選択・Load〜Import・PW・同期ステータス） -->
             <div class="top-bar">
-                <div class="top-bar-group">
-                    <label class="sidebar-label" for="token-input-top">PW</label>
-                    <input type="password" id="token-input-top" class="js-token-input" placeholder="github_pat_...">
+                <div class="top-bar-group top-bar-categories">
+                    <span class="sidebar-label">カテゴリ</span>
+                    <div id="category-list-top" class="js-category-list">
+                        <!-- データ読み込み後に JS で描画 -->
+                    </div>
                 </div>
 
                 <div class="top-bar-group">
@@ -346,14 +348,12 @@
                     </label>
                 </div>
 
-                <span id="network-status-top" class="js-network-status"></span>
-
-                <div class="top-bar-group top-bar-categories">
-                    <span class="sidebar-label">カテゴリ</span>
-                    <div id="category-list-top" class="js-category-list">
-                        <!-- データ読み込み後に JS で描画 -->
-                    </div>
+                <div class="top-bar-group">
+                    <label class="sidebar-label" for="token-input-top">PW</label>
+                    <input type="password" id="token-input-top" class="js-token-input" placeholder="github_pat_...">
                 </div>
+
+                <span id="network-status-top" class="js-network-status"></span>
             </div>
 
             <!-- 表示切り替え（INBOX／タスク整理／タスク実行／習慣／編集／ハブ／データ） -->
