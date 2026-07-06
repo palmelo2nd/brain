@@ -1245,6 +1245,28 @@ document.querySelectorAll('.js-excel-import').forEach(input => {
     });
 });
 
+// ===== キャッシュ更新（スマホ等で古いコードが残る場合の強制リフレッシュ） =====
+
+document.querySelectorAll('.js-cache-reset-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+        if (!confirm('キャッシュを更新して最新版を読み込み直します。よろしいですか？（入力中の内容は失われます）')) return;
+        try {
+            if ('caches' in window) {
+                const keys = await caches.keys();
+                await Promise.all(keys.map(k => caches.delete(k)));
+            }
+            if ('serviceWorker' in navigator) {
+                const regs = await navigator.serviceWorker.getRegistrations();
+                await Promise.all(regs.map(r => r.unregister()));
+            }
+        } catch (error) {
+            console.error(error);
+        }
+        // ページURLにキャッシュバスター用のクエリを付けて再読み込みし、HTML自体のキャッシュを回避する
+        location.href = location.pathname + '?nocache=' + Date.now();
+    });
+});
+
 // ===== INBOX 登録 =====
 
 document.querySelectorAll('.js-inbox-submit').forEach(btn => {

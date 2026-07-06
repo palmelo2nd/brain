@@ -85,6 +85,7 @@ body {
 .js-load-btn         { background: #007bff; color: #fff; }
 .js-save-btn         { background: #28a745; color: #fff; }
 .js-excel-export-btn { background: #e67e00; color: #fff; }
+.js-cache-reset-btn  { background: #6c757d; color: #fff; }
 
 /* ---- ファイル選択ラベル ---- */
 .file-label {
