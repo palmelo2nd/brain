@@ -2,7 +2,7 @@
 import { fetchFile, saveFile } from './modules/github.js';
 import { parseMarkdown, stringifyMarkdown, MAIN_DATA_COLUMNS, MASTER_DATA_COLUMNS } from './modules/dataModel.js';
 import { exportToExcel, importFromExcel } from './modules/excel.js';
-import { generateChildManually, matchesSchedule } from './modules/recurring.js';
+import { generateChildManually, matchesSchedule, checkAndGenerateChildren } from './modules/recurring.js';
 
 const OWNER = 'palmelo2nd';
 const REPO  = 'brain_data';
@@ -1116,6 +1116,13 @@ function applyContent(content, sha) {
 
     // 廃止済みの旧項目（ステータスコメント）が残っていれば除去する
     currentMainData.forEach(r => { delete r['ステータスコメント']; });
+
+    // 繰り返しタスクの自動生成（データ読み込み時）
+    const newChildren = checkAndGenerateChildren(currentMainData, new Date());
+    if (newChildren.length > 0) {
+        currentMainData.push(...newChildren);
+        saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
+    }
 
     // 初回ロード時のみ、先頭カテゴリをデフォルト選択にする
     if (!categoryInitialized) {
@@ -3091,6 +3098,7 @@ let selectedRecurringParentId = null; // 親タスク一覧・子タスク一覧
 let selectedRecurringEditId   = null; // 編集パネルに読み込み中のタスクID（親または子。nullなら新規登録モード）
 const recurEditFreq = { month: new Set(), day: new Set(), weekday: new Set() }; // 親タスク編集パネルの頻度チップの選択状態
 let recurringListView = 'all'; // 親タスク一覧の表示切り替え（'all' | 'today'）
+let selectedWeeklyDate = null; // 週間ビューで選択中の日付（"YYYY/MM/DD"）
 
 document.querySelectorAll('#recurring-tab-all, #recurring-tab-today').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -3198,7 +3206,190 @@ function renderRecurringParentTable() {
         tbody.appendChild(tr);
     });
     table.append(thead, tbody);
-    container.appendChild(table);
+    const wrap = document.createElement('div');
+    wrap.className = 'table-wrapper table-wrapper--limited';
+    wrap.appendChild(table);
+    container.appendChild(wrap);
+}
+
+const RECURRING_WEEKDAY_LABELS = ['月', '火', '水', '木', '金', '土', '日']; // 週間ビューの列順（月始まり）
+
+let recurringWeeklyKnownIds = new Set();    // これまでに存在を確認した習慣ID（新規追加時にチェック済みで初期表示するため）
+let recurringWeeklySelected = new Set();    // 週間ビューに表示する習慣ID（チェックボックスで選択中のもの）
+
+/** 週間ビュー用: date を含む週の月曜日（今日を含む週）を返す。 */
+function getMondayOf(date) {
+    const mondayOffset = (date.getDay() + 6) % 7; // 日曜=0を6扱いにして月曜起点に変換
+    const monday = new Date(date.getFullYear(), date.getMonth(), date.getDate() - mondayOffset);
+    return monday;
+}
+
+/** 週間ビューに表示する習慣を選ぶチェックボックス一覧を描画する。新しく増えた習慣は初期状態でチェック済みにする。 */
+function renderRecurringWeeklyChecklist(parents) {
+    const container = document.getElementById('recurring-weekly-checklist');
+    if (!container) return;
+    container.innerHTML = '';
+
+    parents.forEach(parent => {
+        const parentId = String(parent['ID']);
+        if (!recurringWeeklyKnownIds.has(parentId)) {
+            recurringWeeklyKnownIds.add(parentId);
+            recurringWeeklySelected.add(parentId); // 新規習慣はデフォルトで表示対象にする
+        }
+
+        const label = document.createElement('label');
+        label.className = 'recurring-weekly-check-label';
+        const checkbox = document.createElement('input');
+        checkbox.type    = 'checkbox';
+        checkbox.checked = recurringWeeklySelected.has(parentId);
+        checkbox.addEventListener('change', () => {
+            if (checkbox.checked) recurringWeeklySelected.add(parentId);
+            else recurringWeeklySelected.delete(parentId);
+            renderRecurringWeeklyTables(parents);
+        });
+        label.append(checkbox, document.createTextNode(' ' + (parent['タイトル'] || '（無題）')));
+        container.appendChild(label);
+    });
+}
+
+/** 1つの週（月〜日）のテーブルを構築して tableEl に描画する。 */
+function buildRecurringWeeklyTable(tableEl, weekStart, parents) {
+    if (!tableEl) return;
+    tableEl.innerHTML = '';
+
+    const todayStr = formatSlashDateForRecurring(new Date());
+
+    const thead = document.createElement('thead');
+    const hRow  = document.createElement('tr');
+    ['習慣', ...RECURRING_WEEKDAY_LABELS].forEach((text, idx) => {
+        const th = document.createElement('th');
+        th.textContent = text;
+        if (idx > 0) {
+            const date = new Date(weekStart.getFullYear(), weekStart.getMonth(), weekStart.getDate() + (idx - 1));
+            if (formatSlashDateForRecurring(date) === todayStr) th.classList.add('recurring-weekly-col--today');
+        }
+        hRow.appendChild(th);
+    });
+    thead.appendChild(hRow);
+
+    const tbody = document.createElement('tbody');
+    parents.forEach(parent => {
+        const parentId = String(parent['ID']);
+        if (!recurringWeeklySelected.has(parentId)) return;
+
+        const tr = document.createElement('tr');
+        const titleTd = document.createElement('td');
+        titleTd.textContent = parent['タイトル'] || '（無題）';
+        titleTd.className = 'recurring-weekly-title';
+        tr.appendChild(titleTd);
+
+        RECURRING_WEEKDAY_LABELS.forEach((_, dayIdx) => {
+            const date      = new Date(weekStart.getFullYear(), weekStart.getMonth(), weekStart.getDate() + dayIdx);
+            const slashDate = formatSlashDateForRecurring(date);
+            const td = document.createElement('td');
+            td.className = 'recurring-weekly-cell';
+            if (slashDate === todayStr) td.classList.add('recurring-weekly-col--today');
+
+            if (!matchesSchedule(parent, date)) {
+                td.textContent = '-';
+                td.classList.add('recurring-weekly-cell--none');
+            } else {
+                const child = currentMainData.find(r => r['繰返し親ID'] === parentId && r['開始予定'] === slashDate);
+                const dot = document.createElement('span');
+                dot.className = 'recurring-weekly-dot';
+                if (!child) {
+                    dot.classList.add('recurring-weekly-dot--pending');
+                } else if (isTaskDoneForCalendar(child)) {
+                    dot.classList.add('recurring-weekly-dot--done');
+                } else {
+                    dot.classList.add('recurring-weekly-dot--notdone');
+                }
+                dot.textContent = '●';
+                td.appendChild(dot);
+                td.style.cursor = 'pointer';
+                if (slashDate === selectedWeeklyDate) td.classList.add('selected-row');
+                td.addEventListener('click', () => {
+                    selectedWeeklyDate = slashDate;
+                    renderRecurringWeeklyView();
+                });
+            }
+            tr.appendChild(td);
+        });
+
+        tbody.appendChild(tr);
+    });
+
+    tableEl.append(thead, tbody);
+}
+
+/** 今週・来週それぞれの週間ビューテーブルを描画する。 */
+function renderRecurringWeeklyTables(parents) {
+    const thisMonday = getMondayOf(new Date());
+    const nextMonday = new Date(thisMonday.getFullYear(), thisMonday.getMonth(), thisMonday.getDate() + 7);
+
+    buildRecurringWeeklyTable(document.getElementById('recurring-weekly-table-current'), thisMonday, parents);
+    buildRecurringWeeklyTable(document.getElementById('recurring-weekly-table-next'),    nextMonday, parents);
+    renderRecurringWeeklyDetail();
+}
+
+/**
+ * 週間ビュー（今週・来週の習慣を可視化）を描画する。
+ * チェックボックスで選択中の習慣だけを対象に、今週・来週それぞれのテーブルへ月〜日で表示する。
+ * セルの●は子タスクベースで判定し、完了系ステータス（完了・中断・報告待ち・連絡待ち）なら緑、
+ * 未完了なら赤、未生成なら灰で表示する。●をクリックすると、その日に該当する全習慣の子タスク一覧を下部に表示する。
+ */
+function renderRecurringWeeklyView() {
+    const parents = getFilteredMainData().filter(r => r['繰返し識別子'] === '1' && !r['繰返し親ID']);
+    renderRecurringWeeklyChecklist(parents);
+    renderRecurringWeeklyTables(parents);
+}
+
+/** date を "YYYY/MM/DD" 形式にする（週間ビュー専用、既存の開始予定キーと形式を揃える）。 */
+function formatSlashDateForRecurring(date) {
+    const pad = n => String(n).padStart(2, '0');
+    return `${date.getFullYear()}/${pad(date.getMonth() + 1)}/${pad(date.getDate())}`;
+}
+
+/** 週間ビューで選択中の日付に該当する習慣の子タスク一覧を表示する。全件が完了系ステータスなら緑、それ以外は赤の見出しにする。 */
+function renderRecurringWeeklyDetail() {
+    const container = document.getElementById('recurring-weekly-detail');
+    if (!container) return;
+    container.innerHTML = '';
+
+    if (!selectedWeeklyDate) {
+        const hint = document.createElement('p');
+        hint.className = 'placeholder-text';
+        hint.textContent = '●をクリックすると、その日の習慣タスク一覧を表示します';
+        container.appendChild(hint);
+        return;
+    }
+
+    const children = currentMainData.filter(r =>
+        r['繰返し親ID'] && r['開始予定'] === selectedWeeklyDate
+    );
+
+    const heading = document.createElement('p');
+    heading.className = 'calendar-section-label';
+    if (children.length === 0) {
+        heading.textContent = `${selectedWeeklyDate} の習慣タスクはありません`;
+        container.appendChild(heading);
+        return;
+    }
+
+    const allDone = children.every(isTaskDoneForCalendar);
+    heading.textContent = `${selectedWeeklyDate}（${allDone ? 'すべて完了' : '未完了あり'}）`;
+    heading.style.color = allDone ? '#28a745' : '#dc3545';
+    container.appendChild(heading);
+
+    const list = document.createElement('div');
+    list.className = 'calendar-unscheduled-list';
+    children.forEach(child => {
+        const chip = document.createElement('span');
+        chip.className = `calendar-unscheduled-chip ${getCalendarStatusClass(child['ステータス'])}`;
+        chip.textContent = `${child['タイトル'] || '（無題）'}（${child['ステータス'] || '未設定'}）`;
+        list.appendChild(chip);
+    });
+    container.appendChild(list);
 }
 
 /** 選択中の親タスクに属する子タスク一覧を描画する（未選択なら非表示）。行クリックで編集パネルにその子タスクを読み込む。 */
@@ -3409,6 +3600,7 @@ function renderRecurringEditPanel() {
 /** タスクページの繰り返しタスクセクションを描画する（親タスク一覧＋子タスク一覧＋選択中タスクの編集パネル・グラフ）。 */
 function renderRecurringSection() {
     renderRecurringParentTable();
+    renderRecurringWeeklyView();
     renderRecurringChildTable();
     renderRecurringEditPanel();
 }

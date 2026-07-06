@@ -1,8 +1,8 @@
 // (1) インポート
 import { MAIN_DATA_COLUMNS } from './dataModel.js';
 
-// 曜日名（JS の getDay() と対応: 0=日曜）
-const WEEKDAY_NAMES = ['日曜', '月曜', '火曜', '水曜', '木曜', '金曜', '土曜'];
+// 曜日名（JS の getDay() と対応: 0=日）
+const WEEKDAY_NAMES = ['日', '月', '火', '水', '木', '金', '土'];
 
 // (2) インプット関数定義
 
@@ -70,6 +70,41 @@ function buildChild(parent, dateStr, slashDate, id, ts) {
 }
 
 // (3) メイン機能
+
+/**
+ * アプリ起動・データ読み込み時に繰り返し子タスクを自動生成する。
+ * 「繰返し識別子=1」かつステータス「進行中」の親のみ対象（進行中以外は非アクティブ扱いで生成しない）。
+ * today から daysAhead 日後まで（既定7日＝1週間先）を毎回スキャンし、頻度条件を満たす日の分をまとめて生成する。
+ * 呼び出すたびに先の日付までの分が補充されるため、日々開くだけで生成対象の範囲が先へ延びていく。
+ * 親ID＋対象日（開始予定）が既存であれば重複生成しない（親タイトル変更の影響を受けない）。
+ *
+ * (4) アウトプット: 生成された子タスクの配列（0件の場合は空配列）
+ */
+export function checkAndGenerateChildren(mainData, today, daysAhead = 7) {
+    const parents = mainData.filter(r =>
+        r['繰返し識別子'] === '1' && !r['繰返し親ID'] && r['ステータス'] === '進行中'
+    );
+
+    let currentMaxId = maxIdIn(mainData);
+    const generated  = [];
+
+    for (let offset = 0; offset <= daysAhead; offset++) {
+        const targetDate = new Date(today.getFullYear(), today.getMonth(), today.getDate() + offset);
+        const ts        = makeTsStr(targetDate);
+        const dateStr   = formatYYYYMMDD(targetDate);
+        const slashDate = formatSlashDate(targetDate);
+
+        parents.forEach(parent => {
+            if (!matchesSchedule(parent, targetDate)) return;
+            if (childAlreadyGenerated(mainData, parent['ID'], slashDate)) return;
+
+            currentMaxId++;
+            generated.push(buildChild(parent, dateStr, slashDate, currentMaxId, ts));
+        });
+    }
+
+    return generated;
+}
 
 /**
  * 親タスクから子タスクを任意タイミングで生成する（手動生成）。

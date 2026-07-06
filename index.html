@@ -210,6 +210,23 @@
             <details id="recurring-details" class="expander" open>
                 <summary class="expander-title" id="summary-recurring">繰り返しタスク</summary>
 
+                <!-- 週間ビューに表示する習慣の選択 -->
+                <p class="calendar-section-label">表示する習慣</p>
+                <div id="recurring-weekly-checklist" class="recurring-weekly-checklist"></div>
+
+                <!-- 週間ビュー（今週・来週の習慣を可視化。●をクリックするとその日の一覧を表示） -->
+                <p class="calendar-section-label">週間ビュー（今週）</p>
+                <div class="table-wrapper table-wrapper--limited">
+                    <table id="recurring-weekly-table-current" class="data-table recurring-weekly-table"></table>
+                </div>
+
+                <p class="calendar-section-label">週間ビュー（来週）</p>
+                <div class="table-wrapper table-wrapper--limited">
+                    <table id="recurring-weekly-table-next" class="data-table recurring-weekly-table"></table>
+                </div>
+
+                <div id="recurring-weekly-detail"></div>
+
                 <div class="taskorg-view-toggle">
                     <button type="button" id="recurring-tab-all"   class="taskorg-view-btn taskorg-view-btn--active" data-view="all">全件表示</button>
                     <button type="button" id="recurring-tab-today" class="taskorg-view-btn" data-view="today">当日</button>
