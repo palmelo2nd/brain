@@ -2,7 +2,7 @@
 import { fetchFile, saveFile } from './modules/github.js';
 import { parseMarkdown, stringifyMarkdown, MAIN_DATA_COLUMNS, MASTER_DATA_COLUMNS } from './modules/dataModel.js';
 import { exportToExcel, importFromExcel } from './modules/excel.js';
-import { checkAndGenerateChildren, generateChildManually } from './modules/recurring.js';
+import { generateChildManually, matchesSchedule } from './modules/recurring.js';
 
 const OWNER = 'palmelo2nd';
 const REPO  = 'brain_data';
@@ -1114,12 +1114,8 @@ function applyContent(content, sha) {
     currentMainData   = mainData;
     currentMasterData = masterData;
 
-    // 繰り返しタスクの自動生成（データ読み込み時）
-    const newChildren = checkAndGenerateChildren(currentMainData, new Date());
-    if (newChildren.length > 0) {
-        currentMainData.push(...newChildren);
-        saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
-    }
+    // 廃止済みの旧項目（ステータスコメント）が残っていれば除去する
+    currentMainData.forEach(r => { delete r['ステータスコメント']; });
 
     // 初回ロード時のみ、先頭カテゴリをデフォルト選択にする
     if (!categoryInitialized) {
@@ -1431,6 +1427,11 @@ function computeTotalDuration(taskId) {
     return base + adj;
 }
 
+/** タイムスタンプログの末尾から計測中かどうかを判定する（末尾が「-」なら計測中、「,」または空欄なら停止中）。 */
+function isLogRunning(log) {
+    return (log || '').trim().endsWith('-');
+}
+
 /** 両コンテナの経過時間表示を更新 */
 function updateRunnerTimerDisplay() {
     if (!selectedRunTaskId) return;
@@ -1449,6 +1450,7 @@ function buildTaskRunnerUI(container) {
 
     const inProgress = getFilteredMainData().filter(r =>
         r['データ区分'] === 'タスク' && r['ステータス'] === '進行中'
+        && !(r['繰返し識別子'] === '1' && !r['繰返し親ID']) // 繰返しタスクの親は対象外
     );
 
     // --- 進行中タスク一覧 ---
@@ -1511,6 +1513,15 @@ function buildTaskRunnerUI(container) {
     const selectedRow = selectedRunTaskId
         ? currentMainData.find(r => String(r['ID']) === String(selectedRunTaskId) && r['ステータス'] === '進行中')
         : null;
+
+    // タイムスタンプログの内容から計測中かどうかを判定し直す（ページ再表示・タスク切替時も正しい状態に復元するため）
+    timerIsRunning = selectedRow ? isLogRunning(selectedRow['タイムスタンプログ']) : false;
+    if (timerIsRunning) {
+        if (!timerInterval) timerInterval = setInterval(updateRunnerTimerDisplay, 1000);
+    } else if (timerInterval) {
+        clearInterval(timerInterval);
+        timerInterval = null;
+    }
 
     if (!selectedRow) {
         const hint = document.createElement('p');
@@ -1621,6 +1632,8 @@ function buildTaskRunnerUI(container) {
     logRow.append(logLabel, logArea);
     panel.appendChild(logRow);
 
+    panel.appendChild(buildRunnerAttributeEditor(selectedRow));
+
     // ステータス遷移
     const taskStatuses = [...new Set(
         currentMasterData
@@ -1652,17 +1665,6 @@ function buildTaskRunnerUI(container) {
         });
         statusSec.appendChild(radioGroup);
 
-        const cmtRow   = document.createElement('div');
-        cmtRow.className = 'triage-form-row';
-        const cmtLabel = document.createElement('label');
-        cmtLabel.textContent = 'ステータスコメント';
-        const cmtInput = document.createElement('input');
-        cmtInput.type        = 'text';
-        cmtInput.placeholder = '（省略可）';
-        cmtInput.value       = selectedRow['ステータスコメント'] || '';
-        cmtRow.append(cmtLabel, cmtInput);
-        statusSec.appendChild(cmtRow);
-
         const changeTb  = document.createElement('div');
         changeTb.className = 'triage-toolbar';
         const changeBtn = document.createElement('button');
@@ -1678,9 +1680,8 @@ function buildTaskRunnerUI(container) {
                 timerIsRunning = false;
                 if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
             }
-            selectedRow['ステータス']        = newStatus;
-            selectedRow['ステータスコメント'] = cmtInput.value.trim();
-            selectedRow['更新日時']           = formatJpDatetime(new Date());
+            selectedRow['ステータス'] = newStatus;
+            selectedRow['更新日時']   = formatJpDatetime(new Date());
             if (String(selectedRunTaskId) === String(selectedRow['ID'])) {
                 selectedRunTaskId = null;
             }
@@ -1694,6 +1695,138 @@ function buildTaskRunnerUI(container) {
     }
 
     container.appendChild(panel);
+}
+
+/**
+ * タスク実行パネル用の属性編集フォームを構築する（タスク整理「新規追加・編集」と同様の項目）。
+ * ステータス・繰り返しはタスク実行の他の機能と重複するため対象外。
+ */
+function buildRunnerAttributeEditor(row) {
+    const section = document.createElement('div');
+    section.className = 'runner-attr-section';
+
+    const label = document.createElement('p');
+    label.className = 'calendar-section-label';
+    label.textContent = '属性編集';
+    section.appendChild(label);
+
+    const addRow = (labelText, ...fields) => {
+        const rowEl = document.createElement('div');
+        rowEl.className = 'calendar-edit-row';
+        const lbl = document.createElement('label');
+        lbl.textContent = labelText;
+        rowEl.append(lbl, ...fields);
+        section.appendChild(rowEl);
+        return rowEl;
+    };
+
+    const titleInput = document.createElement('input');
+    titleInput.type  = 'text';
+    titleInput.value = row['タイトル'] || '';
+    addRow('タイトル', titleInput);
+
+    const contentInput = document.createElement('textarea');
+    contentInput.className = 'calendar-edit-textarea';
+    contentInput.rows      = 4;
+    contentInput.value     = row['内容'] || '';
+    addRow('内容', contentInput).classList.add('calendar-edit-row--top');
+
+    const bikoInput = document.createElement('input');
+    bikoInput.type  = 'text';
+    bikoInput.value = row['備考'] || '';
+    addRow('備考', bikoInput);
+
+    const prioritySelect = document.createElement('select');
+    populateSelectOptions(prioritySelect, [...new Set(currentMasterData.map(r => r['(M)優先度']).filter(Boolean))], '（未設定）');
+    prioritySelect.value = row['優先度'] || '';
+    addRow('優先度', prioritySelect);
+
+    const makeTimeInputs = (dateValue, timeValue) => {
+        const [hourValue, minuteValue] = (timeValue || '').split(':');
+        const dateInput = document.createElement('input');
+        dateInput.type  = 'date';
+        dateInput.value = dateValue ? dateValue.replace(/\//g, '-') : '';
+        const hourInput = document.createElement('input');
+        hourInput.type = 'number'; hourInput.min = 0; hourInput.max = 23;
+        hourInput.placeholder = '時'; hourInput.className = 'calendar-time-num';
+        hourInput.value = hourValue || '';
+        const minuteInput = document.createElement('input');
+        minuteInput.type = 'number'; minuteInput.min = 0; minuteInput.max = 59; minuteInput.step = 15;
+        minuteInput.placeholder = '分'; minuteInput.className = 'calendar-time-num';
+        minuteInput.value = minuteValue || '';
+        const colon = document.createElement('span');
+        colon.textContent = ':';
+        return { dateInput, hourInput, minuteInput, colon };
+    };
+
+    const [startDateVal, startTimeVal] = (row['開始予定'] || '').split(' ');
+    const start = makeTimeInputs(startDateVal, startTimeVal);
+    addRow('開始予定', start.dateInput, start.hourInput, start.colon, start.minuteInput);
+
+    const [endDateVal, endTimeVal] = (row['終了予定'] || '').split(' ');
+    const end = makeTimeInputs(endDateVal, endTimeVal);
+    addRow('終了予定', end.dateInput, end.hourInput, end.colon, end.minuteInput);
+
+    const completeDateInput = document.createElement('input');
+    completeDateInput.type  = 'date';
+    completeDateInput.value = (row['完了日'] || '').replace(/\//g, '-');
+    const fillDateBtn = document.createElement('button');
+    fillDateBtn.type = 'button';
+    fillDateBtn.className = 'calendar-add-btn';
+    fillDateBtn.textContent = '完了日を開始/終了予定に代入';
+    fillDateBtn.addEventListener('click', () => {
+        if (!completeDateInput.value) return;
+        if (!start.dateInput.value) start.dateInput.value = completeDateInput.value;
+        if (!end.dateInput.value)   end.dateInput.value   = completeDateInput.value;
+    });
+    addRow('完了日', completeDateInput, fillDateBtn);
+
+    const categorySelect = document.createElement('select');
+    populateSelectOptions(categorySelect, [...new Set(currentMasterData.map(r => r['(M)カテゴリ']).filter(Boolean))], '（未設定）');
+    categorySelect.value = row['カテゴリ'] || '';
+    addRow('カテゴリ', categorySelect);
+
+    const tagSelect = document.createElement('select');
+    populateSelectOptions(tagSelect, getFilteredTags(), '（未設定）');
+    tagSelect.value = row['タグ'] || '';
+    addRow('タグ', tagSelect);
+
+    const hubSelect = document.createElement('select');
+    populateSelectOptions(hubSelect, getFilteredHubs(), '（未設定）');
+    hubSelect.value = row['ハブ'] || '';
+    addRow('ハブ', hubSelect);
+
+    const toolbar = document.createElement('div');
+    toolbar.className = 'calendar-edit-toolbar';
+    const applyBtn = document.createElement('button');
+    applyBtn.textContent = '適用';
+    applyBtn.addEventListener('click', () => {
+        row['タイトル'] = titleInput.value.trim();
+        row['内容']     = contentInput.value.trim();
+        row['備考']     = bikoInput.value.trim();
+        row['優先度']   = prioritySelect.value;
+        row['カテゴリ'] = categorySelect.value;
+        row['タグ']     = tagSelect.value;
+        row['ハブ']     = hubSelect.value;
+
+        const startTime = start.hourInput.value !== '' && start.minuteInput.value !== ''
+            ? `${String(start.hourInput.value).padStart(2, '0')}:${String(start.minuteInput.value).padStart(2, '0')}` : '';
+        const endTime = end.hourInput.value !== '' && end.minuteInput.value !== ''
+            ? `${String(end.hourInput.value).padStart(2, '0')}:${String(end.minuteInput.value).padStart(2, '0')}` : '';
+        row['開始予定'] = start.dateInput.value ? `${start.dateInput.value.replace(/-/g, '/')}${startTime ? ' ' + startTime : ''}` : '';
+        row['終了予定'] = end.dateInput.value   ? `${end.dateInput.value.replace(/-/g, '/')}${endTime ? ' ' + endTime : ''}`       : '';
+        row['完了日']   = completeDateInput.value.replace(/-/g, '/');
+        row['更新日時'] = formatJpDatetime(new Date());
+
+        saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
+        renderCalendar();
+        renderRecurringSection();
+        renderTaskRunner();
+    });
+    toolbar.appendChild(applyBtn);
+    section.appendChild(toolbar);
+
+    return section;
 }
 
 // ===== カレンダー =====
@@ -1908,8 +2041,6 @@ function compareDateAscEmptyLast(a, b) {
  * ソート順: ステータス（完了・報告待ち・連絡待ち・中断・進行中・未着手・空欄の順）→ 完了日 昇順 → 開始予定 昇順 → 終了予定 昇順。
  */
 function getCalendarFilteredTaskList() {
-    if (calendarFilters.tag.size === 0 && calendarFilters.hub.size === 0 && calendarFilters.status.size === 0) return [];
-
     const tasks = getFilteredMainData().filter(r => {
         if (r['データ区分'] !== 'タスク') return false;
         if (r['ハブ'] === DAYPLAN_HUB) return false;
@@ -2324,7 +2455,24 @@ function computeDayPlanTimeSlot() {
     return { startStr: fmt(startMin), endStr: fmt(endMin) };
 }
 
-/** タスクを選択中日付の1日タスクに「HH:MM-HH:MM #ID タイトル」の1行として追加する。1日タスクが無ければ新規作成する。 */
+/**
+ * タスクの開始予定・終了予定が共に「今日」の日付かつ時刻まで指定されている場合、その時間帯を "HH:MM" 形式で返す。
+ * 条件を満たさない場合は null。
+ */
+function getTaskScheduledTimeToday(row) {
+    const todayJP  = jpDateOnly(formatJpDatetime(new Date()));
+    const startInfo = extractTimeOnDate(row['開始予定'], todayJP);
+    const endInfo   = extractTimeOnDate(row['終了予定'], todayJP);
+    if (!startInfo?.hasTime || !endInfo?.hasTime) return null;
+
+    const fmt = m => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+    return { startStr: fmt(startInfo.minutes), endStr: fmt(endInfo.minutes) };
+}
+
+/**
+ * タスクを選択中日付の1日タスクに「HH:MM-HH:MM #ID タイトル」の1行として追加する。1日タスクが無ければ新規作成する。
+ * 開始予定・終了予定が今日の日付かつ時刻まで指定されていれば、その時間帯をそのまま使う（未指定時は現在時刻ベースの仮の枠）。
+ */
 function addTaskToDayPlan(row) {
     if (!selectedCalendarDate) return;
     let dayPlan = getDayPlanTask(selectedCalendarDate);
@@ -2333,7 +2481,7 @@ function addTaskToDayPlan(row) {
         dayPlan = getDayPlanTask(selectedCalendarDate);
         if (!dayPlan) return;
     }
-    const { startStr, endStr } = computeDayPlanTimeSlot();
+    const { startStr, endStr } = getTaskScheduledTimeToday(row) || computeDayPlanTimeSlot();
     const line = `${startStr}-${endStr} #${row['ID']} ${row['タイトル'] || '（無題）'}`;
     dayPlan['内容']     = dayPlan['内容'] ? `${dayPlan['内容']}\n${line}` : line;
     dayPlan['更新日時'] = formatJpDatetime(new Date());
@@ -2383,6 +2531,7 @@ function getIncompleteDateTasks() {
     return getFilteredMainData().filter(r => {
         if (r['データ区分'] !== 'タスク') return false;
         if (r['ハブ'] === DAYPLAN_HUB) return false;
+        if (r['繰返し識別子'] === '1' && !r['繰返し親ID']) return false; // 繰返しタスクの親は対象外
         if (r['開始予定'] && r['終了予定']) return false; // 両方入力済みは対象外
         if (!matchesMultiFilter(calendarFilters.tag, r['タグ'])) return false;
         if (!matchesMultiFilter(calendarFilters.hub, r['ハブ'])) return false;
@@ -2919,6 +3068,17 @@ let recurringEditChart = null;
 let selectedRecurringParentId = null; // 親タスク一覧・子タスク一覧の表示対象として選択中の親タスクID
 let selectedRecurringEditId   = null; // 編集パネルに読み込み中のタスクID（親または子。nullなら新規登録モード）
 const recurEditFreq = { month: new Set(), day: new Set(), weekday: new Set() }; // 親タスク編集パネルの頻度チップの選択状態
+let recurringListView = 'all'; // 親タスク一覧の表示切り替え（'all' | 'today'）
+
+document.querySelectorAll('#recurring-tab-all, #recurring-tab-today').forEach(btn => {
+    btn.addEventListener('click', () => {
+        recurringListView = btn.dataset.view;
+        document.querySelectorAll('#recurring-tab-all, #recurring-tab-today').forEach(b =>
+            b.classList.toggle('taskorg-view-btn--active', b === btn)
+        );
+        renderRecurringParentTable();
+    });
+});
 
 /** 親タスクの頻度設定（月/日/曜日）を一覧表示用の文字列にまとめる。すべて空欄なら「毎日」。 */
 function formatRecurringFrequencyLabel(parent) {
@@ -2956,8 +3116,10 @@ function renderRecurringParentTable() {
     if (!container) return;
     container.innerHTML = '';
 
+    const today = new Date();
     const parents = getFilteredMainData().filter(r =>
         r['繰返し識別子'] === '1' && !r['繰返し親ID']
+        && (recurringListView !== 'today' || matchesSchedule(r, today))
     );
 
     const summaryEl = document.getElementById('summary-recurring');
