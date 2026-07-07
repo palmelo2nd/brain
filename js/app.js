@@ -72,7 +72,7 @@ function mountSection(elId, anchorId) {
 
 // --- ページレンダラー ---
 
-const SUMMARY_VIEWS = ['top', 'taskorg', 'runner', 'recurring', 'edit', 'hub', 'data'];
+const SUMMARY_VIEWS = ['taskorg', 'runner', 'top', 'recurring', 'edit', 'hub', 'data'];
 
 /** Summary ページ（INBOX／タスク整理／タスク実行／習慣／編集／ハブ／データの表示切り替え。PW・Load〜Import・カテゴリは常時表示バーで共通）を描画する */
 function renderSummary() {
