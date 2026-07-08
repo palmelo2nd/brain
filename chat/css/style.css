@@ -149,18 +149,30 @@ body {
 /* ── メッセージ行（2列グリッド） ── */
 .msg-row {
     display: grid;
-    grid-template-columns: 110px 1fr;
     gap: 0 16px;
     padding: 5px 8px;
     border-radius: 3px;
-    width: 100%;
+    width: 90%;
     transition: background 0.08s;
 }
-.msg-row:hover { background: rgba(255, 255, 255, 0.45); }
-.msg-row--mine { background: rgba(255, 255, 255, 0.3); }
-.msg-row--mine:hover { background: rgba(255, 255, 255, 0.6); }
+/* 他者：左寄せ、[名前:時刻 | 本文] */
+.msg-row--theirs {
+    grid-template-columns: 110px 1fr;
+    margin-right: auto;
+}
+.msg-row--theirs:hover { background: rgba(255, 255, 255, 0.45); }
 
-/* 左列：名前＋時刻 */
+/* 自分：右寄せ、[本文 | 名前:時刻] */
+.msg-row--mine {
+    grid-template-columns: 1fr 110px;
+    margin-left: auto;
+    background: rgba(255, 255, 255, 0.3);
+}
+.msg-row--mine:hover { background: rgba(255, 255, 255, 0.6); }
+.msg-row--mine .msg-label { order: 2; align-items: flex-start; }
+.msg-row--mine .msg-body  { order: 1; }
+
+/* 名前＋時刻 */
 .msg-label {
     display: flex; flex-direction: column;
     align-items: flex-end; padding-top: 2px;
@@ -175,7 +187,7 @@ body {
 .msg-row--mine .msg-sender { color: #3a5a8a; }
 .msg-row--mine .msg-time   { color: #8898b8; }
 
-/* 右列：本文 */
+/* 本文 */
 .msg-body {
     font-size: 14px; line-height: 1.65;
     color: #1c1c1c;

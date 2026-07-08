@@ -171,7 +171,7 @@ function renderMessages() {
     list.innerHTML = messages.map(m => {
         const isMine = m.sender === currentUser;
         return `
-            <div class="msg-row ${isMine ? 'msg-row--mine' : ''}">
+            <div class="msg-row ${isMine ? 'msg-row--mine' : 'msg-row--theirs'}">
                 <div class="msg-label">
                     <span class="msg-sender">${escHtml(m.sender)}</span>
                     <span class="msg-time">${formatTimestamp(m.timestamp)}</span>
