@@ -44,6 +44,7 @@ function bindEvents() {
     document.getElementById('send-btn').addEventListener('click', handleSend);
     document.getElementById('refresh-btn').addEventListener('click', loadMessages);
     document.getElementById('logout-btn').addEventListener('click', handleLogout);
+    document.getElementById('clear-cache-btn').addEventListener('click', handleClearCache);
     document.getElementById('message-input').addEventListener('keydown', e => {
         if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); }
     });
@@ -83,6 +84,14 @@ function handleLogout() {
     localStorage.removeItem(KEY_USER);
     clearInterval(refreshTimer);
     location.reload();
+}
+
+function handleClearCache() {
+    localStorage.removeItem(KEY_CACHE);
+    localStorage.removeItem(KEY_SHA);
+    currentData = { mainData: [], masterData: [] };
+    currentSha  = null;
+    loadMessages();
 }
 
 // ── アプリ起動 ──────────────────────────────────────────────────
