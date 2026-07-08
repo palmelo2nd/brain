@@ -158,7 +158,7 @@ async function loadMessages() {
     renderMessages();
 }
 
-// ── メッセージ描画（送信者グループ化） ──────────────────────────
+// ── メッセージ描画（2列：名前＋時刻 | 本文） ─────────────────────
 function renderMessages() {
     const list     = document.getElementById('message-list');
     const messages = filterByRoom(currentData.mainData, currentRoom);
@@ -168,29 +168,15 @@ function renderMessages() {
         return;
     }
 
-    // 連続した同一送信者をグループ化
-    const groups = [];
-    for (const msg of messages) {
-        const last = groups[groups.length - 1];
-        if (last && last.sender === msg.sender) {
-            last.items.push(msg);
-        } else {
-            groups.push({ sender: msg.sender, firstTime: msg.timestamp, items: [msg] });
-        }
-    }
-
-    list.innerHTML = groups.map(g => {
-        const isMine = g.sender === currentUser;
-        const lines  = g.items.map(m =>
-            `<div class="msg-line"><div class="msg-text">${escHtml(m.content)}</div></div>`
-        ).join('');
+    list.innerHTML = messages.map(m => {
+        const isMine = m.sender === currentUser;
         return `
-            <div class="msg-group ${isMine ? 'msg-group--mine' : 'msg-group--theirs'}">
-                <div class="msg-meta">
-                    <span class="msg-sender">${escHtml(g.sender)}</span>
-                    <span>${formatTimestamp(g.firstTime)}</span>
+            <div class="msg-row ${isMine ? 'msg-row--mine' : ''}">
+                <div class="msg-label">
+                    <span class="msg-sender">${escHtml(m.sender)}</span>
+                    <span class="msg-time">${formatTimestamp(m.timestamp)}</span>
                 </div>
-                ${lines}
+                <div class="msg-body">${escHtml(m.content)}</div>
             </div>
         `;
     }).join('');
