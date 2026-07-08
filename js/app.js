@@ -3,6 +3,7 @@ import { fetchFile, saveFile } from './modules/github.js';
 import { parseMarkdown, stringifyMarkdown, MAIN_DATA_COLUMNS, MASTER_DATA_COLUMNS } from './modules/dataModel.js';
 import { exportToExcel, importFromExcel } from './modules/excel.js';
 import { generateChildManually, matchesSchedule, checkAndGenerateChildren } from './modules/recurring.js';
+import { parseExceptions, stringifyExceptions, computeMonthCalendar, computeMonthStats, getDefaultType } from './modules/workCalendar.js';
 
 const OWNER = 'palmelo2nd';
 const REPO  = 'brain_data';
@@ -29,7 +30,9 @@ let calendarFilters = { tag: new Set(), hub: new Set(), status: new Set() }; // 
 let calendarQuickNewMode = false;      // true時: タスク一覧の「（新規作成）」行から起動した新規登録モード（日付は空欄のまま）
 let taskOrgView = 'calendar';          // 「タスク整理」の表示ビュー（'calendar' | 'gantt'）。年月・タグ/ハブ/ステータスフィルタ・選択中タスクは両ビューで共有する
 let ganttViewUnit = 'day';             // ガントチャートの列の単位（'day' | 'week'）
-let summaryView   = 'top';             // Summary ページの表示ビュー（'top' | 'runner' | 'taskorg' | 'recurring' | 'edit' | 'data' | 'hub'）
+let summaryView          = 'taskorg';   // Summary ページの表示ビュー（'top' | 'runner' | 'taskorg' | 'recurring' | 'edit' | 'data' | 'hub' | 'work'）
+let workCalendarYear  = new Date().getFullYear();
+let workCalendarMonth = new Date().getMonth();
 
 // ===== 初期化 =====
 window.addEventListener('DOMContentLoaded', () => {
@@ -72,7 +75,7 @@ function mountSection(elId, anchorId) {
 
 // --- ページレンダラー ---
 
-const SUMMARY_VIEWS = ['taskorg', 'runner', 'top', 'recurring', 'edit', 'hub', 'data'];
+const SUMMARY_VIEWS = ['taskorg', 'runner', 'top', 'recurring', 'edit', 'hub', 'data', 'work'];
 
 /** Summary ページ（INBOX／タスク整理／タスク実行／習慣／編集／ハブ／データの表示切り替え。PW・Load〜Import・カテゴリは常時表示バーで共通）を描画する */
 function renderSummary() {
@@ -94,7 +97,8 @@ function renderSummary() {
         renderDataTable('table-main',   'summary-main',   getFilteredMainData(),   MAIN_DATA_COLUMNS,   'メインデータ',   { editable: true, idColumn: 'ID' });
         renderDataTable('table-master', 'summary-master', currentMasterData, MASTER_DATA_COLUMNS, 'マスタデータ', { editable: true, onEdit: () => { renderWarnings(computeMasterWarnings()); renderHubAdmin(); } });
     }
-    if (summaryView === 'hub') renderHubAdmin();
+    if (summaryView === 'hub')  renderHubAdmin();
+    if (summaryView === 'work') renderWorkCalendar();
 
     SUMMARY_VIEWS.forEach(view => {
         document.getElementById(`summary-tab-${view}`)?.classList.toggle('taskorg-view-btn--active', summaryView === view);
@@ -2232,12 +2236,18 @@ function renderCalendarGrid() {
         grid.appendChild(cell);
     }
 
+    const workExceptions = parseExceptions(getWorkCalendarContent(calendarYear));
+
     for (let d = 1; d <= daysInMonth; d++) {
         const dateJP = `${calendarYear}/${pad(calendarMonth + 1)}/${pad(d)}`;
         const cell = document.createElement('div');
         cell.className = 'calendar-day';
-        if (dateJP === todayJP)             cell.classList.add('calendar-day--today');
+        if (dateJP === todayJP)              cell.classList.add('calendar-day--today');
         if (dateJP === selectedCalendarDate) cell.classList.add('calendar-day--selected');
+
+        const workType = workExceptions.get(dateJP)?.type
+            ?? getDefaultType(new Date(calendarYear, calendarMonth, d));
+        if (workType !== '出勤日') cell.classList.add(`calendar-day--work-${workType}`);
 
         const num = document.createElement('div');
         num.className = 'calendar-day-num';
@@ -3750,5 +3760,207 @@ document.getElementById('recuredit-new-btn')?.addEventListener('click', () => {
     renderCalendar();
     renderTaskRunner();
     renderEditTable();
+});
+
+// ===== 勤務カレンダー =====
+
+const WORK_KUBUN = '勤務カレンダー';
+const DOW_LABELS = ['日', '月', '火', '水', '木', '金', '土'];
+
+/** 指定年の勤務カレンダーエントリをメインデータから返す。存在しなければ undefined。 */
+function findWorkCalendarEntry(year) {
+    return currentMainData.find(r =>
+        r['データ区分'] === WORK_KUBUN && r['タイトル'] === `${year}休日`
+    );
+}
+
+/** 指定年の内容テキストを返す（エントリ未作成時は空文字）。 */
+function getWorkCalendarContent(year) {
+    return findWorkCalendarEntry(year)?.['内容'] ?? '';
+}
+
+/** 指定年のエントリの内容テキストを更新し LocalStorage へキャッシュする。エントリが無ければ新規作成する。 */
+function saveWorkCalendarContent(year, contentText) {
+    const ts    = formatJpDatetime(new Date());
+    let   entry = findWorkCalendarEntry(year);
+    if (!entry) {
+        const maxId = currentMainData.reduce((max, row) => {
+            const id = parseInt(row['ID'], 10);
+            return isNaN(id) ? max : Math.max(max, id);
+        }, 0);
+        entry = Object.fromEntries(MAIN_DATA_COLUMNS.map(c => [c, '']));
+        entry['ID']        = String(maxId + 1);
+        entry['データ区分'] = WORK_KUBUN;
+        entry['タイトル']   = `${year}休日`;
+        entry['作成日時']   = ts;
+        currentMainData.push(entry);
+    }
+    entry['内容']     = contentText;
+    entry['更新日時'] = ts;
+    saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
+}
+
+/** 勤務カレンダービュー全体を描画する。 */
+function renderWorkCalendar() {
+    const content = getWorkCalendarContent(workCalendarYear);
+    const days    = computeMonthCalendar(content, workCalendarYear, workCalendarMonth);
+    const stats   = computeMonthStats(days);
+
+    const yearLabel  = document.getElementById('work-cal-year-label');
+    const monthLabel = document.getElementById('work-cal-month-label');
+    if (yearLabel)  yearLabel.textContent  = `${workCalendarYear}年`;
+    if (monthLabel) monthLabel.textContent = `${workCalendarMonth + 1}月`;
+
+    // カレンダーグリッド（視覚参照用）
+    const grid = document.getElementById('work-cal-grid');
+    if (grid) {
+        grid.innerHTML = '';
+        DOW_LABELS.forEach(d => {
+            const el = document.createElement('div');
+            el.className   = 'work-cal-dow-header';
+            el.textContent = d;
+            grid.appendChild(el);
+        });
+        const firstDow = new Date(workCalendarYear, workCalendarMonth, 1).getDay();
+        for (let i = 0; i < firstDow; i++) grid.appendChild(document.createElement('div'));
+        days.forEach(day => {
+            const cell = document.createElement('div');
+            cell.className = `work-cal-day work-cal-day--${day.type}`;
+            if (day.isException) cell.classList.add('work-cal-day--exception');
+            const numEl = document.createElement('span');
+            numEl.className   = 'work-cal-day-num';
+            numEl.textContent = String(parseInt(day.date.slice(-2), 10));
+            cell.appendChild(numEl);
+            if (day.note) {
+                const noteEl = document.createElement('span');
+                noteEl.className   = 'work-cal-day-note';
+                noteEl.textContent = day.note;
+                cell.appendChild(noteEl);
+            }
+            grid.appendChild(cell);
+        });
+    }
+
+    // 月次サマリー
+    const statsEl = document.getElementById('work-cal-stats');
+    if (statsEl) {
+        statsEl.innerHTML = Object.entries(stats)
+            .map(([k, v]) =>
+                `<span class="work-cal-stat">` +
+                `<span class="work-cal-stat-swatch work-cal--${k}"></span>` +
+                `${k}: <strong>${v}</strong>日</span>`
+            ).join('');
+    }
+
+    // 月一括編集フォーム
+    renderWorkMonthForm(days);
+}
+
+/** 月一括編集テーブルを描画する（1行=1日、種別select＋備考input）。 */
+function renderWorkMonthForm(days) {
+    const table = document.getElementById('work-cal-month-table');
+    if (!table) return;
+    table.className = 'data-table work-cal-month-table';
+
+    const thead = document.createElement('thead');
+    const hRow  = document.createElement('tr');
+    ['日付', '種別', '備考'].forEach(col => {
+        const th = document.createElement('th');
+        th.textContent = col;
+        hRow.appendChild(th);
+    });
+    thead.appendChild(hRow);
+
+    const tbody = document.createElement('tbody');
+    days.forEach(day => {
+        const tr = document.createElement('tr');
+        if (day.type !== '出勤日') tr.className = `work-row--${day.type}`;
+
+        // 日付（読み取り専用）
+        const dateTd = document.createElement('td');
+        dateTd.textContent = `${day.date}（${DOW_LABELS[day.dayOfWeek]}）`;
+        dateTd.className   = 'work-cal-date-cell';
+        tr.appendChild(dateTd);
+
+        // 種別（select）
+        const typeTd = document.createElement('td');
+        const sel    = document.createElement('select');
+        sel.className    = 'work-cal-type-select';
+        sel.dataset.date = day.date;
+        const defOpt = document.createElement('option');
+        defOpt.value       = '';
+        defOpt.textContent = `（デフォルト: ${day.defaultType}）`;
+        sel.appendChild(defOpt);
+        ['出勤日', '休日', '有給', '特別休暇'].forEach(t => {
+            const opt = document.createElement('option');
+            opt.value = opt.textContent = t;
+            sel.appendChild(opt);
+        });
+        sel.value = day.isException ? day.type : '';
+        typeTd.appendChild(sel);
+        tr.appendChild(typeTd);
+
+        // 備考（text input）
+        const noteTd = document.createElement('td');
+        const inp    = document.createElement('input');
+        inp.type        = 'text';
+        inp.className   = 'work-cal-note-input';
+        inp.dataset.date = day.date;
+        inp.value       = day.note;
+        inp.placeholder = '（省略可）';
+        noteTd.appendChild(inp);
+        tr.appendChild(noteTd);
+
+        tbody.appendChild(tr);
+    });
+
+    table.replaceChildren(thead, tbody);
+}
+
+// ---- 年月ナビゲーション ----
+
+document.getElementById('work-cal-prev-year')?.addEventListener('click', () => {
+    workCalendarYear--;
+    renderWorkCalendar();
+});
+document.getElementById('work-cal-next-year')?.addEventListener('click', () => {
+    workCalendarYear++;
+    renderWorkCalendar();
+});
+document.getElementById('work-cal-prev-month')?.addEventListener('click', () => {
+    workCalendarMonth--;
+    if (workCalendarMonth < 0) { workCalendarMonth = 11; workCalendarYear--; }
+    renderWorkCalendar();
+});
+document.getElementById('work-cal-next-month')?.addEventListener('click', () => {
+    workCalendarMonth++;
+    if (workCalendarMonth > 11) { workCalendarMonth = 0; workCalendarYear++; }
+    renderWorkCalendar();
+});
+
+// ---- 月一括適用 ----
+
+document.getElementById('work-cal-month-apply-btn')?.addEventListener('click', () => {
+    // 全年分の例外を読み込み、今月分だけ差し替える
+    const allExceptions = parseExceptions(getWorkCalendarContent(workCalendarYear));
+    const mm = String(workCalendarMonth + 1).padStart(2, '0');
+    const monthPrefix = `${workCalendarYear}/${mm}/`;
+    for (const key of [...allExceptions.keys()]) {
+        if (key.startsWith(monthPrefix)) allExceptions.delete(key);
+    }
+
+    document.querySelectorAll('#work-cal-month-table tbody tr').forEach(tr => {
+        const sel = tr.querySelector('.work-cal-type-select');
+        const inp = tr.querySelector('.work-cal-note-input');
+        if (!sel) return;
+        const date = sel.dataset.date;
+        const type = sel.value;
+        const note = inp?.value.trim() ?? '';
+        if (type) allExceptions.set(date, { type, note });
+    });
+
+    saveWorkCalendarContent(workCalendarYear, stringifyExceptions(allExceptions));
+    renderWorkCalendar();
+    if (taskOrgView === 'calendar') renderCalendarGrid();
 });
 

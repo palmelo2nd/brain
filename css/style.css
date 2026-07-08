@@ -1261,3 +1261,179 @@ details[open] > .expander-title::after { transform: rotate(90deg); }
 .calendar-add-btn { background: #28a745 !important; }
 .calendar-add-btn:hover { background: #1e7e34 !important; }
 
+/* ===== 勤務カレンダー ===== */
+
+.work-cal-section { max-width: 760px; }
+
+.work-cal-nav-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+}
+
+.work-cal-legend {
+    display: flex;
+    gap: 14px;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+    font-size: 12px;
+    color: #555;
+}
+
+.work-cal-legend-item {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.work-cal-swatch {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border-radius: 3px;
+    border: 1px solid rgba(0,0,0,0.15);
+    flex-shrink: 0;
+}
+
+.work-cal-swatch--exception {
+    background: transparent;
+    border: 2px solid #333;
+}
+
+/* カレンダーグリッド */
+.work-cal-grid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 3px;
+    margin-bottom: 14px;
+}
+
+.work-cal-dow-header {
+    text-align: center;
+    font-size: 11px;
+    font-weight: 600;
+    color: #6b7280;
+    padding: 3px 0;
+}
+
+/* 日 → 赤、土 → 青 */
+.work-cal-dow-header:first-child { color: #c0392b; }
+.work-cal-dow-header:last-child  { color: #2980b9; }
+
+.work-cal-day {
+    min-height: 52px;
+    padding: 4px 5px;
+    border-radius: 5px;
+    border: 1px solid transparent;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    transition: filter 0.1s;
+}
+
+.work-cal-day:hover { filter: brightness(0.93); }
+
+/* 種別ごとの背景色 */
+.work-cal-day--出勤日   { background: #eef2f7; border-color: #cfd8e3; }
+.work-cal-day--休日     { background: #fde8e8; border-color: #f5b7b7; }
+.work-cal-day--有給     { background: #e6f9ee; border-color: #a3d9b1; }
+.work-cal-day--特別休暇 { background: #f0e8fd; border-color: #c8a8e8; }
+
+/* 例外設定あり（デフォルトと異なる設定）は枠線を強調 */
+.work-cal-day--exception { border-width: 2px; border-color: #333; }
+
+/* 選択中の日 */
+.work-cal-day--selected { outline: 2px solid #0d6efd; outline-offset: 1px; }
+
+.work-cal-day-num {
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1;
+}
+
+.work-cal-day-note {
+    font-size: 10px;
+    color: #555;
+    line-height: 1.2;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* 凡例・統計用スウォッチ（サイズを小さく統一） */
+.work-cal--出勤日   { background: #eef2f7; }
+.work-cal--休日     { background: #fde8e8; }
+.work-cal--有給     { background: #e6f9ee; }
+.work-cal--特別休暇 { background: #f0e8fd; }
+
+/* 月次サマリー */
+.work-cal-stats {
+    display: flex;
+    gap: 14px;
+    flex-wrap: wrap;
+    font-size: 13px;
+    margin-bottom: 16px;
+    padding: 8px 12px;
+    background: #f8f9fa;
+    border-radius: 6px;
+}
+
+.work-cal-stat {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.work-cal-stat-swatch {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border-radius: 2px;
+    border: 1px solid rgba(0,0,0,0.12);
+    flex-shrink: 0;
+}
+
+/* 月一括編集テーブル */
+.work-cal-month-table { width: 100%; }
+
+.work-cal-month-table th:nth-child(1) { width: 180px; }
+.work-cal-month-table th:nth-child(2) { width: 200px; }
+.work-cal-month-table th:nth-child(3) { min-width: 180px; }
+
+.work-cal-date-cell { white-space: nowrap; font-size: 13px; }
+
+.work-cal-type-select {
+    width: 100%;
+    padding: 4px 6px;
+    font-size: 13px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+}
+
+.work-cal-note-input {
+    width: 100%;
+    padding: 4px 6px;
+    font-size: 13px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+}
+
+/* 行背景色（種別に対応） */
+.work-row--休日     { background: #fff5f5; }
+.work-row--有給     { background: #f5fff8; }
+.work-row--特別休暇 { background: #f8f5ff; }
+
+/* ===== タスクカレンダーへの勤務カレンダー連携 ===== */
+
+.calendar-day--work-休日     { background: #fff0f0; }
+.calendar-day--work-有給     { background: #f0fff4; }
+.calendar-day--work-特別休暇 { background: #f5f0ff; }
+
+/* 選択・今日は勤務カレンダー色より優先する */
+.calendar-day--selected.calendar-day--work-休日,
+.calendar-day--selected.calendar-day--work-有給,
+.calendar-day--selected.calendar-day--work-特別休暇 { background: #e8f4fd; }
+

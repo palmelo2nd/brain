@@ -381,13 +381,14 @@
 
             <!-- 表示切り替え（タスク整理／タスク実行／INBOX／習慣／編集／ハブ／データ） -->
             <div class="taskorg-view-toggle">
-                <button type="button" id="summary-tab-taskorg" class="taskorg-view-btn" data-view="taskorg">ﾀｽｸ整理</button>
+                <button type="button" id="summary-tab-taskorg" class="taskorg-view-btn taskorg-view-btn--active" data-view="taskorg">ﾀｽｸ整理</button>
                 <button type="button" id="summary-tab-runner" class="taskorg-view-btn" data-view="runner">ﾀｽｸ実行</button>
-                <button type="button" id="summary-tab-top" class="taskorg-view-btn taskorg-view-btn--active" data-view="top">INBOX</button>
+                <button type="button" id="summary-tab-top" class="taskorg-view-btn" data-view="top">INBOX</button>
                 <button type="button" id="summary-tab-recurring" class="taskorg-view-btn" data-view="recurring">習慣</button>
                 <button type="button" id="summary-tab-edit" class="taskorg-view-btn" data-view="edit">編集</button>
                 <button type="button" id="summary-tab-hub" class="taskorg-view-btn" data-view="hub">ﾊﾌﾞ</button>
                 <button type="button" id="summary-tab-data" class="taskorg-view-btn" data-view="data">ﾃﾞｰﾀ</button>
+                <button type="button" id="summary-tab-work" class="taskorg-view-btn" data-view="work">勤務</button>
             </div>
 
             <!-- INBOX -->
@@ -430,6 +431,42 @@
             <!-- データ（表示切り替え時に本体を移動して表示） -->
             <div id="summary-view-data" class="summary-view-panel" style="display:none">
                 <div id="data-anchor-summary"></div>
+            </div>
+
+            <!-- 勤務カレンダー -->
+            <div id="summary-view-work" class="summary-view-panel" style="display:none">
+                <div class="work-cal-section">
+
+                    <div class="work-cal-nav-row">
+                        <button id="work-cal-prev-year" class="calendar-nav-btn">‹ 年</button>
+                        <span id="work-cal-year-label" class="calendar-month-label"></span>
+                        <button id="work-cal-next-year" class="calendar-nav-btn">年 ›</button>
+                        <button id="work-cal-prev-month" class="calendar-nav-btn" style="margin-left:16px">‹</button>
+                        <span id="work-cal-month-label" class="calendar-month-label"></span>
+                        <button id="work-cal-next-month" class="calendar-nav-btn">›</button>
+                    </div>
+
+                    <div class="work-cal-legend">
+                        <span class="work-cal-legend-item"><span class="work-cal-swatch work-cal--出勤日"></span>出勤日</span>
+                        <span class="work-cal-legend-item"><span class="work-cal-swatch work-cal--休日"></span>休日</span>
+                        <span class="work-cal-legend-item"><span class="work-cal-swatch work-cal--有給"></span>有給</span>
+                        <span class="work-cal-legend-item"><span class="work-cal-swatch work-cal--特別休暇"></span>特別休暇</span>
+                        <span class="work-cal-legend-item"><span class="work-cal-swatch work-cal-swatch--exception"></span>例外設定あり</span>
+                    </div>
+
+                    <div id="work-cal-grid" class="work-cal-grid"></div>
+
+                    <div id="work-cal-stats" class="work-cal-stats"></div>
+
+                    <!-- 月一括編集フォーム（JSで描画） -->
+                    <div class="table-wrapper table-wrapper--limited">
+                        <table id="work-cal-month-table"></table>
+                    </div>
+                    <div class="calendar-edit-toolbar">
+                        <button id="work-cal-month-apply-btn" class="calendar-add-btn">月一括適用</button>
+                    </div>
+
+                </div>
             </div>
         </div>
 
