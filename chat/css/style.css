@@ -170,7 +170,7 @@ body {
 }
 .msg-row--mine:hover { background: rgba(255, 255, 255, 0.6); }
 .msg-row--mine .msg-label { order: 2; align-items: flex-start; }
-.msg-row--mine .msg-body  { order: 1; }
+.msg-row--mine .msg-body  { order: 1; text-align: right; }
 
 /* 名前＋時刻 */
 .msg-label {
