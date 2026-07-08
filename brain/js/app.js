@@ -7,7 +7,7 @@ import { parseExceptions, stringifyExceptions, computeMonthCalendar, computeMont
 
 const OWNER = 'palmelo2nd';
 const REPO  = 'brain_data';
-const PATH  = 'todo.md';
+const PATH  = 'brain/todo.md';
 
 // ===== グローバル状態 =====
 let currentSha        = null;
