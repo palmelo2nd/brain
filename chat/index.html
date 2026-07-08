@@ -9,37 +9,57 @@
 <body>
 
 <!-- ログインモーダル -->
-<div id="login-modal" class="login-modal">
-    <div class="login-box">
+<div id="login-modal" class="modal-overlay">
+    <div class="modal-box login-box">
         <h2>Brain Chat</h2>
-        <label>PAT（アクセストークン）</label>
-        <input type="password" id="login-pat" placeholder="ghp_...">
-        <label>表示名</label>
-        <input type="text" id="login-name" placeholder="名前を入力">
-        <button id="login-btn">ログイン</button>
+        <div class="field">
+            <label>アクセストークン（PAT）</label>
+            <input type="password" id="login-pat" placeholder="ghp_...">
+        </div>
+        <div class="field">
+            <label>表示名</label>
+            <input type="text" id="login-name" placeholder="名前を入力">
+        </div>
+        <button class="btn-primary" id="login-btn">ログイン</button>
         <p id="login-error" class="error hidden"></p>
     </div>
 </div>
 
-<!-- メインレイアウト -->
+<!-- 設定モーダル -->
+<div id="settings-modal" class="modal-overlay hidden">
+    <div class="modal-box settings-box">
+        <div class="modal-header">
+            <h3>設定 — チャットルーム</h3>
+            <button class="btn-icon" id="settings-close-btn">✕</button>
+        </div>
+        <div id="room-settings-list" class="room-settings-list"></div>
+        <div class="add-room-row">
+            <input type="text" id="new-room-name" placeholder="新しいルーム名を入力">
+            <button class="btn-secondary" id="add-room-btn">追加</button>
+        </div>
+        <div class="modal-footer">
+            <button class="btn-primary wide" id="settings-save-btn">保存</button>
+        </div>
+    </div>
+</div>
+
+<!-- メインアプリ -->
 <div id="app" class="app hidden">
-    <header class="chat-header">
-        <span class="header-title">Brain Chat</span>
-        <nav class="room-tabs" id="room-list"></nav>
-        <div class="header-right">
-            <span id="current-user"></span>
-            <span id="auto-refresh-indicator" title="30秒ごとに自動更新">●</span>
-            <button id="refresh-btn">更新</button>
-            <button id="clear-cache-btn">キャッシュクリア</button>
-            <button id="logout-btn">ログアウト</button>
+    <header class="header">
+        <span class="header-brand">Brain Chat</span>
+        <nav id="room-tabs" class="room-tabs"></nav>
+        <div class="header-actions">
+            <span id="current-user" class="user-label"></span>
+            <button class="btn-icon" id="refresh-btn" title="更新">↻</button>
+            <button class="btn-icon" id="settings-btn" title="設定">⚙</button>
+            <button class="btn-icon" id="clear-cache-btn" title="キャッシュクリア">⊘</button>
+            <button class="btn-text" id="logout-btn">ログアウト</button>
         </div>
     </header>
-    <div class="chat-body">
-        <div id="message-list" class="message-list"></div>
-        <div class="input-area">
-            <textarea id="message-input" placeholder="✏ メッセージを入力… (Enterで送信 / Shift+Enterで改行)" rows="2"></textarea>
-            <button id="send-btn">送信</button>
-        </div>
+    <div id="message-list" class="message-list"></div>
+    <div class="input-area">
+        <textarea id="message-input" placeholder="メッセージを入力… (Enter で送信 / Shift+Enter で改行)" rows="1"></textarea>
+        <button class="btn-send" id="send-btn">送信</button>
     </div>
 </div>
 

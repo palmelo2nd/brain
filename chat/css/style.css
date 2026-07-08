@@ -4,189 +4,227 @@
 
 /* ── Base ── */
 body {
-    font-family: 'Hiragino Mincho ProN', 'Yu Mincho', 'YuMincho', 'Georgia', serif;
-    background: #f7f4ed;
-    color: #3a3028;
+    font-family: 'Hiragino Sans', 'Meiryo', 'Yu Gothic', sans-serif;
+    background: #f4f3f0;
+    color: #1c1c1c;
     height: 100vh;
     overflow: hidden;
+    font-size: 14px;
 }
 
-/* ── ログイン ── */
-.login-modal {
+/* ── モーダル共通 ── */
+.modal-overlay {
     position: fixed; inset: 0;
-    background: rgba(60, 45, 30, 0.45);
+    background: rgba(0, 0, 0, 0.38);
     display: flex; align-items: center; justify-content: center;
-    z-index: 1000;
+    z-index: 100;
 }
-.login-box {
-    background: #fefcf7;
-    border: 1px solid #d4c4a8;
-    padding: 40px 36px;
-    width: 360px;
-    display: flex; flex-direction: column; gap: 12px;
-    box-shadow: 0 4px 24px rgba(60, 45, 30, 0.14);
+.modal-box {
+    background: #fff;
+    border: 1px solid #e0dbd4;
+    box-shadow: 0 12px 48px rgba(0, 0, 0, 0.14);
 }
+.modal-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 18px 24px 16px;
+    border-bottom: 1px solid #ede9e3;
+}
+.modal-header h3 { font-size: 14px; font-weight: 500; color: #3a3530; letter-spacing: 0.5px; }
+.modal-footer { padding: 14px 24px; border-top: 1px solid #ede9e3; }
+
+/* ── ログイン ── */
+.login-box { width: 360px; padding: 36px 32px 28px; }
 .login-box h2 {
-    font-size: 20px; font-weight: normal;
-    color: #5a4030; letter-spacing: 2px;
-    border-bottom: 1px solid #d4c4a8;
-    padding-bottom: 14px; margin-bottom: 4px;
-    text-align: center;
+    font-size: 17px; font-weight: 400; letter-spacing: 3px;
+    color: #3a3530; text-align: center;
+    padding-bottom: 20px; margin-bottom: 20px;
+    border-bottom: 1px solid #ede9e3;
 }
-.login-box label { font-size: 12px; color: #7a6050; letter-spacing: 0.5px; }
-.login-box input {
-    background: transparent;
-    border: none; border-bottom: 1px solid #c4b09a;
-    padding: 8px 4px; font-size: 14px;
-    font-family: inherit; color: #3a3028;
-    outline: none;
+.field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; }
+.field label { font-size: 11px; color: #9a9490; letter-spacing: 0.5px; }
+.field input {
+    border: none; border-bottom: 1px solid #d4cfc8;
+    padding: 8px 0; font-family: inherit; font-size: 14px;
+    color: #1c1c1c; background: transparent; outline: none;
 }
-.login-box input:focus { border-bottom-color: #8a6040; }
-.login-box button {
-    background: #6a4c30; color: #fefcf7;
-    border: none; padding: 12px;
-    font-family: inherit; font-size: 14px;
-    letter-spacing: 1px; cursor: pointer;
-    margin-top: 8px;
+.field input:focus { border-bottom-color: #5c6b8a; }
+.error { font-size: 12px; color: #c0392b; margin-top: 8px; }
+
+/* ── ボタン ── */
+.btn-primary {
+    display: block; width: 100%; padding: 11px;
+    background: #3a3530; color: #fff;
+    border: none; font-family: inherit; font-size: 13px;
+    letter-spacing: 1px; cursor: pointer; margin-top: 8px;
+    transition: background 0.15s;
 }
-.login-box button:hover { background: #5a3c20; }
-.error { color: #c0392b; font-size: 13px; }
+.btn-primary.wide { width: auto; padding: 9px 28px; margin-top: 0; }
+.btn-primary:hover { background: #5c6b8a; }
+.btn-primary:disabled { background: #b4b0aa; cursor: not-allowed; }
+
+.btn-secondary {
+    padding: 7px 16px; background: none;
+    border: 1px solid #c8c4be; font-family: inherit;
+    font-size: 13px; color: #5a5550; cursor: pointer;
+    white-space: nowrap; flex-shrink: 0;
+}
+.btn-secondary:hover { border-color: #5c6b8a; color: #5c6b8a; }
+
+.btn-icon {
+    background: none; border: none;
+    color: #9a9490; font-size: 16px;
+    cursor: pointer; padding: 4px 6px; line-height: 1;
+    transition: color 0.12s;
+}
+.btn-icon:hover { color: #3a3530; }
+
+.btn-text {
+    background: none; border: none;
+    font-family: inherit; font-size: 12px;
+    color: #9a9490; cursor: pointer;
+    padding: 4px 2px; letter-spacing: 0.3px;
+    transition: color 0.12s;
+}
+.btn-text:hover { color: #3a3530; }
+
+.btn-send {
+    background: #3a3530; color: #fff;
+    border: none; padding: 8px 22px;
+    font-family: inherit; font-size: 13px;
+    letter-spacing: 0.5px; cursor: pointer;
+    white-space: nowrap; flex-shrink: 0;
+    transition: background 0.15s;
+}
+.btn-send:hover    { background: #5c6b8a; }
+.btn-send:disabled { background: #c8c4be; cursor: not-allowed; }
 
 /* ── アプリ全体 ── */
 .app { display: flex; flex-direction: column; height: 100vh; }
 
-/* ── ヘッダー（タブ付き） ── */
-.chat-header {
-    background: #fefcf7;
-    border-bottom: 2px solid #d4c4a8;
-    padding: 0 28px;
-    display: flex; align-items: stretch;
-    flex-shrink: 0;
-}
-.header-title {
-    font-size: 14px; font-weight: normal;
-    color: #5a4030; letter-spacing: 3px;
-    padding: 0 24px 0 0;
-    margin-right: 4px;
-    border-right: 1px solid #e4d8c8;
+/* ── ヘッダー ── */
+.header {
     display: flex; align-items: center;
+    height: 48px; padding: 0 20px;
+    background: #fff; border-bottom: 1px solid #e8e4de;
+    flex-shrink: 0; gap: 0;
+}
+.header-brand {
+    font-size: 13px; font-weight: 500;
+    color: #3a3530; letter-spacing: 2px;
+    padding-right: 20px; margin-right: 4px;
+    border-right: 1px solid #e8e4de;
     white-space: nowrap;
 }
-.room-tabs { display: flex; align-items: stretch; flex: 1; }
+.room-tabs { display: flex; align-items: stretch; flex: 1; overflow-x: auto; }
 .room-tab {
-    padding: 0 22px;
+    padding: 0 18px; height: 100%;
     background: none; border: none;
-    border-bottom: 3px solid transparent;
-    margin-bottom: -2px;
-    font-family: inherit; font-size: 14px;
-    color: #a09080; cursor: pointer; letter-spacing: 0.5px;
-    transition: color 0.15s, border-color 0.15s;
+    border-bottom: 2px solid transparent; margin-bottom: -1px;
+    font-family: inherit; font-size: 13px;
+    color: #9a9490; cursor: pointer; white-space: nowrap;
+    transition: color 0.12s;
 }
-.room-tab:hover  { color: #5a4030; }
-.room-tab.active { color: #3a2818; border-bottom-color: #8a6040; }
+.room-tab:hover  { color: #3a3530; }
+.room-tab.active { color: #3a3530; border-bottom-color: #5c6b8a; }
 
-.header-right {
-    display: flex; align-items: center; gap: 14px;
-    padding-left: 16px; border-left: 1px solid #e4d8c8;
+.header-actions {
+    display: flex; align-items: center; gap: 4px;
+    padding-left: 16px; border-left: 1px solid #e8e4de; flex-shrink: 0;
 }
-#current-user  { font-size: 13px; color: #9a8070; }
-#auto-refresh-indicator { color: #8a6040; font-size: 9px; }
-.header-right button {
-    background: none; border: 1px solid #c4b09a;
-    padding: 5px 12px; font-family: inherit;
-    font-size: 12px; color: #7a6050; cursor: pointer;
-    letter-spacing: 0.5px;
-}
-.header-right button:hover { border-color: #8a6040; color: #4a3020; }
+.user-label { font-size: 12px; color: #9a9490; padding: 0 6px; }
 
-/* ── チャット本体 ── */
-.chat-body { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
-
-/* ── メッセージリスト（罫線ノート背景） ── */
+/* ── メッセージリスト ── */
 .message-list {
     flex: 1; overflow-y: auto;
-    padding: 28px 56px;
-    display: flex; flex-direction: column; gap: 22px;
-    background-color: #f7f4ed;
-    background-image: repeating-linear-gradient(
-        to bottom,
-        transparent,
-        transparent 27px,
-        #e4ddd2 28px
-    );
-    background-position: 0 12px;
+    padding: 20px 28px;
+    display: flex; flex-direction: column;
+    gap: 14px;
+    background: #f4f3f0;
 }
 .no-messages {
-    text-align: center; color: #b4a494;
-    margin-top: 80px; font-size: 14px;
-    font-style: italic; letter-spacing: 0.5px;
+    text-align: center; color: #b4b4b4;
+    font-size: 13px; letter-spacing: 0.5px;
+    margin: auto;
 }
 
-/* ── メッセージ ── */
-.message {
-    display: flex; flex-direction: column;
-    max-width: 72%;
-}
-.message--mine   { align-self: flex-end;   align-items: flex-end; }
-.message--theirs { align-self: flex-start; align-items: flex-start; }
+/* ── メッセージグループ ── */
+.msg-group { display: flex; flex-direction: column; }
+.msg-group--mine   { align-items: flex-end; }
+.msg-group--theirs { align-items: flex-start; }
 
-/* 送信者名 + 区切り線 */
-.message-header {
-    display: flex; align-items: center; gap: 8px;
-    margin-bottom: 4px; width: 100%;
-    min-width: 200px;
+.msg-meta {
+    display: flex; align-items: baseline; gap: 6px;
+    margin-bottom: 4px; padding: 0 2px;
+    font-size: 11px; color: #b4b0aa;
 }
-.message--theirs .message-header { flex-direction: row; }
-.message--mine   .message-header { flex-direction: row-reverse; }
+.msg-group--mine   .msg-meta { flex-direction: row-reverse; }
+.msg-sender { color: #6a6460; font-weight: 500; font-size: 12px; }
 
-.message-sender {
-    font-size: 12px; color: #8a6848;
-    white-space: nowrap; letter-spacing: 0.5px;
-}
-.message-divider {
-    flex: 1; height: 1px; background: #d4c4a8;
-}
+/* メッセージ行 */
+.msg-line { display: flex; margin-bottom: 2px; }
+.msg-group--mine   .msg-line { justify-content: flex-end; }
+.msg-group--theirs .msg-line { justify-content: flex-start; }
 
-/* テキスト本文 */
-.message-bubble {
-    font-size: 14px; line-height: 1.75;
-    color: #3a3028;
+.msg-text {
+    max-width: 64%; padding: 8px 14px;
+    font-size: 14px; line-height: 1.65;
     white-space: pre-wrap; word-break: break-word;
-    padding: 0 4px;
+    color: #1c1c1c;
+    background: #fff;
+    border: 1px solid #e8e4de;
 }
-.message--mine .message-bubble { text-align: right; }
-
-.message-time {
-    font-size: 11px; color: #b4a494;
-    margin-top: 4px; letter-spacing: 0.3px;
+.msg-group--mine .msg-text {
+    background: #eef1f8;
+    border-color: #dce1f0;
+    color: #28304a;
 }
 
 /* ── 入力エリア ── */
 .input-area {
-    background: #fefcf7;
-    border-top: 1px solid #d4c4a8;
-    padding: 14px 56px;
-    display: flex; gap: 16px; align-items: flex-end;
-    flex-shrink: 0;
+    display: flex; align-items: flex-end; gap: 10px;
+    padding: 12px 28px; background: #fff;
+    border-top: 1px solid #e8e4de; flex-shrink: 0;
 }
 #message-input {
-    flex: 1; resize: none;
-    background: transparent;
-    border: none; border-bottom: 1px solid #c4b09a;
-    padding: 8px 4px; font-size: 14px;
-    font-family: inherit; color: #3a3028;
-    outline: none; line-height: 1.6;
+    flex: 1; resize: none; overflow-y: hidden;
+    border: 1px solid #dedad4; background: #faf9f7;
+    padding: 8px 14px; font-family: inherit;
+    font-size: 14px; color: #1c1c1c;
+    outline: none; line-height: 1.55; max-height: 120px;
 }
-#message-input:focus { border-bottom-color: #8a6040; }
-#message-input::placeholder { color: #c4b4a0; }
+#message-input:focus { border-color: #5c6b8a; background: #fff; }
+#message-input::placeholder { color: #c0bbb4; }
 
-#send-btn {
-    background: none; color: #6a4c30;
-    border: 1px solid #c4b09a;
-    padding: 8px 24px; font-family: inherit;
-    font-size: 14px; cursor: pointer;
-    white-space: nowrap; letter-spacing: 1px;
-    transition: background 0.15s, color 0.15s;
+/* ── 設定モーダル ── */
+.settings-box { width: 420px; }
+.room-settings-list {
+    padding: 8px 24px; max-height: 260px; overflow-y: auto;
+    display: flex; flex-direction: column; gap: 0;
 }
-#send-btn:hover    { background: #6a4c30; color: #fefcf7; }
-#send-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+.room-setting-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 0; border-bottom: 1px solid #f0ece6;
+}
+.room-setting-row:last-child { border-bottom: none; }
+.room-setting-row input {
+    flex: 1; border: none; border-bottom: 1px solid #d4cfc8;
+    padding: 4px 0; font-family: inherit; font-size: 14px;
+    color: #1c1c1c; background: transparent; outline: none;
+}
+.room-setting-row input:focus { border-bottom-color: #5c6b8a; }
+.btn-delete {
+    background: none; border: none;
+    color: #c8c4be; font-size: 14px; cursor: pointer; padding: 2px 6px;
+    transition: color 0.12s; flex-shrink: 0;
+}
+.btn-delete:hover { color: #c0392b; }
+.add-room-row {
+    display: flex; gap: 10px; align-items: center;
+    padding: 14px 24px; border-top: 1px solid #ede9e3;
+}
+.add-room-row input {
+    flex: 1; border: none; border-bottom: 1px solid #d4cfc8;
+    padding: 6px 0; font-family: inherit; font-size: 14px;
+    color: #1c1c1c; background: transparent; outline: none;
+}
+.add-room-row input:focus { border-bottom-color: #5c6b8a; }
