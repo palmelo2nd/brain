@@ -449,7 +449,12 @@ details[open] > .expander-title::after { transform: rotate(90deg); }
 .gantt-table th.gantt-day-col { cursor: pointer; }
 .gantt-table th.gantt-day-col:hover { background: #e2e6ea; }
 .gantt-day-col--selected { background: #cfe2ff !important; }
-.gantt-day-col--today { background: #fff6e0 !important; }
+.gantt-day-col--today    { background: #fff6e0 !important; }
+
+/* 勤務カレンダー連携（--today / --selected の !important には負ける） */
+.gantt-day-col--work-休日     { background: #fff0f0; color: #c0392b; }
+.gantt-day-col--work-有給     { background: #f0fff4; }
+.gantt-day-col--work-特別休暇 { background: #f5f0ff; }
 
 .gantt-marker {
     font-weight: 700;

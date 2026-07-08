@@ -3039,11 +3039,21 @@ function renderGanttChart() {
         th.className = 'gantt-fixed-col';
         hRow.appendChild(th);
     });
+    const ganttWorkExceptions = parseExceptions(getWorkCalendarContent(calendarYear));
+
     columns.forEach(col => {
         const th = document.createElement('th');
         th.className = ganttViewUnit === 'week' ? 'gantt-day-col gantt-week-col' : 'gantt-day-col';
         if (col.isToday)    th.classList.add('gantt-day-col--today');
         if (col.isSelected) th.classList.add('gantt-day-col--selected');
+
+        if (ganttViewUnit === 'day') {
+            const [y, m, d] = col.dates[0].split('/').map(Number);
+            const wType = ganttWorkExceptions.get(col.dates[0])?.type
+                ?? getDefaultType(new Date(y, m - 1, d));
+            if (wType !== '出勤日') th.classList.add(`gantt-day-col--work-${wType}`);
+        }
+
         th.textContent = col.label;
         th.addEventListener('click', () => {
             selectedCalendarDate   = col.dates[0];
