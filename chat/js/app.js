@@ -36,7 +36,6 @@ window.addEventListener('DOMContentLoaded', () => {
         startApp();
     } else {
         if (token) document.getElementById('login-pat').value = token;
-        // ログインモーダルはデフォルト表示済み
     }
 });
 
@@ -100,18 +99,17 @@ function startApp() {
 function renderRoomList() {
     const nav = document.getElementById('room-list');
     nav.innerHTML = ROOMS.map(r => `
-        <button class="room-btn${r.id === currentRoom ? ' active' : ''}" data-room="${r.id}">
+        <button class="room-tab${r.id === currentRoom ? ' active' : ''}" data-room="${r.id}">
             ${r.name}
         </button>
     `).join('');
-    nav.querySelectorAll('.room-btn').forEach(btn => {
+    nav.querySelectorAll('.room-tab').forEach(btn => {
         btn.addEventListener('click', () => switchRoom(btn.dataset.room));
     });
 }
 
 function switchRoom(roomId) {
     currentRoom = roomId;
-    document.getElementById('room-name').textContent = ROOMS.find(r => r.id === roomId)?.name ?? '';
     renderRoomList();
     renderMessages();
 }
@@ -129,7 +127,6 @@ async function loadMessages() {
         if (cached) currentData = parseChat(cached);
         currentSha = localStorage.getItem(KEY_SHA);
     }
-    document.getElementById('room-name').textContent = ROOMS.find(r => r.id === currentRoom)?.name ?? '';
     renderMessages();
 }
 
@@ -139,7 +136,7 @@ function renderMessages() {
     const messages = filterByRoom(currentData.mainData, currentRoom);
 
     if (messages.length === 0) {
-        list.innerHTML = '<p class="no-messages">メッセージはまだありません</p>';
+        list.innerHTML = '<p class="no-messages">— まだメッセージはありません —</p>';
         return;
     }
 
@@ -147,7 +144,10 @@ function renderMessages() {
         const isMine = m.sender === currentUser;
         return `
             <div class="message ${isMine ? 'message--mine' : 'message--theirs'}">
-                ${!isMine ? `<div class="message-sender">${escHtml(m.sender)}</div>` : ''}
+                <div class="message-header">
+                    <span class="message-sender">${escHtml(m.sender)}</span>
+                    <span class="message-divider"></span>
+                </div>
                 <div class="message-bubble">${escHtml(m.content)}</div>
                 <div class="message-time">${formatTimestamp(m.timestamp)}</div>
             </div>
@@ -164,9 +164,9 @@ async function handleSend() {
     if (!content) return;
 
     const sendBtn = document.getElementById('send-btn');
-    input.value       = '';
-    input.disabled    = true;
-    sendBtn.disabled  = true;
+    input.value      = '';
+    input.disabled   = true;
+    sendBtn.disabled = true;
 
     try {
         // 最新SHAを取得してからマージ（並行書き込み競合防止）

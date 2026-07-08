@@ -1,160 +1,192 @@
 /* ── Reset ── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-body { font-family: 'Hiragino Sans', 'Meiryo', sans-serif; height: 100vh; overflow: hidden; }
 .hidden { display: none !important; }
+
+/* ── Base ── */
+body {
+    font-family: 'Hiragino Mincho ProN', 'Yu Mincho', 'YuMincho', 'Georgia', serif;
+    background: #f7f4ed;
+    color: #3a3028;
+    height: 100vh;
+    overflow: hidden;
+}
 
 /* ── ログイン ── */
 .login-modal {
     position: fixed; inset: 0;
-    background: rgba(0, 0, 0, 0.55);
+    background: rgba(60, 45, 30, 0.45);
     display: flex; align-items: center; justify-content: center;
     z-index: 1000;
 }
 .login-box {
-    background: white; border-radius: 14px; padding: 36px 32px;
-    width: 360px; display: flex; flex-direction: column; gap: 10px;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
+    background: #fefcf7;
+    border: 1px solid #d4c4a8;
+    padding: 40px 36px;
+    width: 360px;
+    display: flex; flex-direction: column; gap: 12px;
+    box-shadow: 0 4px 24px rgba(60, 45, 30, 0.14);
 }
 .login-box h2 {
-    text-align: center; color: #00b900;
-    font-size: 22px; margin-bottom: 10px;
+    font-size: 20px; font-weight: normal;
+    color: #5a4030; letter-spacing: 2px;
+    border-bottom: 1px solid #d4c4a8;
+    padding-bottom: 14px; margin-bottom: 4px;
+    text-align: center;
 }
-.login-box label { font-size: 13px; color: #555; }
+.login-box label { font-size: 12px; color: #7a6050; letter-spacing: 0.5px; }
 .login-box input {
-    padding: 10px 14px; border: 1px solid #ddd; border-radius: 8px;
-    font-size: 14px; outline: none;
+    background: transparent;
+    border: none; border-bottom: 1px solid #c4b09a;
+    padding: 8px 4px; font-size: 14px;
+    font-family: inherit; color: #3a3028;
+    outline: none;
 }
-.login-box input:focus { border-color: #00b900; }
+.login-box input:focus { border-bottom-color: #8a6040; }
 .login-box button {
-    background: #00b900; color: white; border: none;
-    padding: 12px; border-radius: 8px; font-size: 15px;
-    cursor: pointer; margin-top: 6px;
+    background: #6a4c30; color: #fefcf7;
+    border: none; padding: 12px;
+    font-family: inherit; font-size: 14px;
+    letter-spacing: 1px; cursor: pointer;
+    margin-top: 8px;
 }
-.login-box button:hover { background: #009900; }
-.error { color: #e74c3c; font-size: 13px; }
+.login-box button:hover { background: #5a3c20; }
+.error { color: #c0392b; font-size: 13px; }
 
 /* ── アプリ全体 ── */
-.app { display: flex; height: 100vh; }
+.app { display: flex; flex-direction: column; height: 100vh; }
 
-/* ── サイドバー ── */
-.sidebar {
-    width: 220px; background: #1a1a2e;
-    display: flex; flex-direction: column;
-    color: white; flex-shrink: 0;
-}
-.sidebar-header {
-    padding: 18px 16px; font-size: 17px; font-weight: bold;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-    color: #00cc00; letter-spacing: 0.5px;
-}
-.room-list {
-    flex: 1; padding: 10px 8px;
-    display: flex; flex-direction: column; gap: 4px;
-}
-.room-btn {
-    width: 100%; text-align: left;
-    padding: 10px 14px; border: none;
-    background: transparent; color: #bbb;
-    border-radius: 8px; cursor: pointer;
-    font-size: 14px; transition: background 0.15s;
-}
-.room-btn:hover  { background: rgba(255, 255, 255, 0.08); color: white; }
-.room-btn.active { background: rgba(0, 185, 0, 0.2); color: #00e600; font-weight: bold; }
-.sidebar-footer {
-    padding: 14px 16px;
-    border-top: 1px solid rgba(255, 255, 255, 0.1);
-    display: flex; align-items: center; justify-content: space-between;
-    font-size: 13px; color: #999;
-}
-.sidebar-footer button {
-    background: none; border: 1px solid #555;
-    color: #999; padding: 4px 10px; border-radius: 4px;
-    cursor: pointer; font-size: 12px;
-}
-.sidebar-footer button:hover { border-color: #aaa; color: #ccc; }
-
-/* ── チャットメイン ── */
-.chat-main {
-    flex: 1; display: flex; flex-direction: column;
-    background: #eef0f3; overflow: hidden;
-}
+/* ── ヘッダー（タブ付き） ── */
 .chat-header {
-    background: white; padding: 12px 20px;
-    display: flex; align-items: center; justify-content: space-between;
-    border-bottom: 1px solid #e0e0e0;
-    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+    background: #fefcf7;
+    border-bottom: 2px solid #d4c4a8;
+    padding: 0 28px;
+    display: flex; align-items: stretch;
+    flex-shrink: 0;
 }
-.chat-header h1 { font-size: 16px; color: #333; }
-.chat-header-right { display: flex; align-items: center; gap: 10px; }
-#auto-refresh-indicator { color: #00b900; font-size: 9px; }
-#refresh-btn {
-    background: none; border: 1px solid #ddd;
-    padding: 5px 12px; border-radius: 6px; cursor: pointer;
-    font-size: 13px; color: #555;
+.header-title {
+    font-size: 14px; font-weight: normal;
+    color: #5a4030; letter-spacing: 3px;
+    padding: 0 24px 0 0;
+    margin-right: 4px;
+    border-right: 1px solid #e4d8c8;
+    display: flex; align-items: center;
+    white-space: nowrap;
 }
-#refresh-btn:hover { background: #f5f5f5; }
+.room-tabs { display: flex; align-items: stretch; flex: 1; }
+.room-tab {
+    padding: 0 22px;
+    background: none; border: none;
+    border-bottom: 3px solid transparent;
+    margin-bottom: -2px;
+    font-family: inherit; font-size: 14px;
+    color: #a09080; cursor: pointer; letter-spacing: 0.5px;
+    transition: color 0.15s, border-color 0.15s;
+}
+.room-tab:hover  { color: #5a4030; }
+.room-tab.active { color: #3a2818; border-bottom-color: #8a6040; }
 
-/* ── メッセージリスト ── */
+.header-right {
+    display: flex; align-items: center; gap: 14px;
+    padding-left: 16px; border-left: 1px solid #e4d8c8;
+}
+#current-user  { font-size: 13px; color: #9a8070; }
+#auto-refresh-indicator { color: #8a6040; font-size: 9px; }
+.header-right button {
+    background: none; border: 1px solid #c4b09a;
+    padding: 5px 12px; font-family: inherit;
+    font-size: 12px; color: #7a6050; cursor: pointer;
+    letter-spacing: 0.5px;
+}
+.header-right button:hover { border-color: #8a6040; color: #4a3020; }
+
+/* ── チャット本体 ── */
+.chat-body { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
+
+/* ── メッセージリスト（罫線ノート背景） ── */
 .message-list {
     flex: 1; overflow-y: auto;
-    padding: 16px 20px;
-    display: flex; flex-direction: column; gap: 10px;
+    padding: 28px 56px;
+    display: flex; flex-direction: column; gap: 22px;
+    background-color: #f7f4ed;
+    background-image: repeating-linear-gradient(
+        to bottom,
+        transparent,
+        transparent 27px,
+        #e4ddd2 28px
+    );
+    background-position: 0 12px;
 }
 .no-messages {
-    text-align: center; color: #aaa;
-    margin-top: 60px; font-size: 14px;
+    text-align: center; color: #b4a494;
+    margin-top: 80px; font-size: 14px;
+    font-style: italic; letter-spacing: 0.5px;
 }
 
-/* ── メッセージバブル ── */
+/* ── メッセージ ── */
 .message {
     display: flex; flex-direction: column;
-    max-width: 68%;
+    max-width: 72%;
 }
 .message--mine   { align-self: flex-end;   align-items: flex-end; }
 .message--theirs { align-self: flex-start; align-items: flex-start; }
 
+/* 送信者名 + 区切り線 */
+.message-header {
+    display: flex; align-items: center; gap: 8px;
+    margin-bottom: 4px; width: 100%;
+    min-width: 200px;
+}
+.message--theirs .message-header { flex-direction: row; }
+.message--mine   .message-header { flex-direction: row-reverse; }
+
 .message-sender {
-    font-size: 12px; color: #888;
-    margin-bottom: 3px; padding-left: 6px;
+    font-size: 12px; color: #8a6848;
+    white-space: nowrap; letter-spacing: 0.5px;
 }
+.message-divider {
+    flex: 1; height: 1px; background: #d4c4a8;
+}
+
+/* テキスト本文 */
 .message-bubble {
-    padding: 10px 14px; border-radius: 18px;
-    font-size: 14px; line-height: 1.55;
+    font-size: 14px; line-height: 1.75;
+    color: #3a3028;
     white-space: pre-wrap; word-break: break-word;
+    padding: 0 4px;
 }
-.message--mine .message-bubble {
-    background: #00b900; color: white;
-    border-bottom-right-radius: 4px;
-}
-.message--theirs .message-bubble {
-    background: white; color: #333;
-    border-bottom-left-radius: 4px;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.09);
-}
+.message--mine .message-bubble { text-align: right; }
+
 .message-time {
-    font-size: 11px; color: #aaa;
-    margin-top: 3px; padding: 0 6px;
+    font-size: 11px; color: #b4a494;
+    margin-top: 4px; letter-spacing: 0.3px;
 }
 
 /* ── 入力エリア ── */
 .input-area {
-    background: white; padding: 12px 16px;
-    display: flex; gap: 8px; align-items: flex-end;
-    border-top: 1px solid #e0e0e0;
+    background: #fefcf7;
+    border-top: 1px solid #d4c4a8;
+    padding: 14px 56px;
+    display: flex; gap: 16px; align-items: flex-end;
+    flex-shrink: 0;
 }
 #message-input {
     flex: 1; resize: none;
-    border: 1px solid #ddd; border-radius: 20px;
-    padding: 10px 16px; font-size: 14px;
-    font-family: inherit; outline: none;
-    line-height: 1.4;
+    background: transparent;
+    border: none; border-bottom: 1px solid #c4b09a;
+    padding: 8px 4px; font-size: 14px;
+    font-family: inherit; color: #3a3028;
+    outline: none; line-height: 1.6;
 }
-#message-input:focus { border-color: #00b900; }
+#message-input:focus { border-bottom-color: #8a6040; }
+#message-input::placeholder { color: #c4b4a0; }
+
 #send-btn {
-    background: #00b900; color: white; border: none;
-    padding: 10px 22px; border-radius: 20px;
-    font-size: 14px; cursor: pointer; white-space: nowrap;
-    transition: background 0.15s;
+    background: none; color: #6a4c30;
+    border: 1px solid #c4b09a;
+    padding: 8px 24px; font-family: inherit;
+    font-size: 14px; cursor: pointer;
+    white-space: nowrap; letter-spacing: 1px;
+    transition: background 0.15s, color 0.15s;
 }
-#send-btn:hover     { background: #009900; }
-#send-btn:disabled  { background: #ccc; cursor: not-allowed; }
+#send-btn:hover    { background: #6a4c30; color: #fefcf7; }
+#send-btn:disabled { opacity: 0.35; cursor: not-allowed; }
