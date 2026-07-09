@@ -45,6 +45,26 @@ export function getCalendarMarkDate(row, todayJP) {
     return todayJP;
 }
 
+/**
+ * 「未設定/設定済みタスク」欄用のマーク日判定。カレンダーの●印（getCalendarMarkDate）とは異なり、
+ * 報告待ち・連絡待ちは自分の作業自体は完了していても、いずれ報告・フォローが必要なため「未完了」として扱い、
+ * 通常のタスクと同様に開始予定〜終了予定の範囲で表示され続けるようにする（完了・中断のみ完了日基準）。
+ */
+function getDayPlanListMarkDate(row, todayJP) {
+    const start = jpDateOnly(row['開始予定']) || jpDateOnly(row['終了予定']);
+    const end   = jpDateOnly(row['終了予定']) || start;
+
+    if (['完了', '中断'].includes(row['ステータス'])) {
+        const done = jpDateOnly(row['完了日']);
+        return done || null;
+    }
+
+    if (!start) return null;
+    if (todayJP < start) return start;
+    if (todayJP > end)   return end;
+    return todayJP;
+}
+
 /** カテゴリ・calendarFiltersで絞り込んだメインデータのうち、データ区分がタスクで1日タスクでない行を返す（内部共通処理）。 */
 function filterCalendarTasks(mainData, category, calendarFilters) {
     return mainData.filter(r => {
@@ -63,6 +83,32 @@ export function getTasksForDate(mainData, category, calendarFilters, dateJP) {
     const todayJP = jpDateOnly(formatJpDatetime(new Date()));
     return filterCalendarTasks(mainData, category, calendarFilters)
         .filter(r => getCalendarMarkDate(r, todayJP) === dateJP);
+}
+
+/**
+ * dateJP の1日タスク編集対象として扱うタスクを返す（フィルタ適用済み）。
+ * dateJP が未来日の場合、その日にマークされるタスクに加えて、今日マークされている進行中のタスク
+ * （開始予定〜終了予定の範囲内に今日が含まれるもの）も編集対象に含め、将来の1日タスクへ前倒しで計画できるようにする。
+ * ただし、ステータスが「完了」のもの、および終了予定がその未来日（dateJP）より前のもの（その日には
+ * 既に期限切れになる）は対象から除外する。dateJP が今日以前の場合は getTasksForDate と同じ結果を返す。
+ */
+export function getTasksAvailableForDayPlan(mainData, category, calendarFilters, dateJP) {
+    const todayJP = jpDateOnly(formatJpDatetime(new Date()));
+    const pool = filterCalendarTasks(mainData, category, calendarFilters);
+
+    if (dateJP <= todayJP) {
+        return pool.filter(r => getDayPlanListMarkDate(r, todayJP) === dateJP);
+    }
+    return pool.filter(r => {
+        const mark = getDayPlanListMarkDate(r, todayJP);
+        if (mark === dateJP) return true;
+        if (mark !== todayJP) return false;
+
+        if (r['ステータス'] === '完了') return false;
+        const end = jpDateOnly(r['終了予定']) || jpDateOnly(r['開始予定']);
+        if (end && dateJP > end) return false;
+        return true;
+    });
 }
 
 /** 指定日の1日タスク（ハブ=DAYPLAN_HUB、開始予定=dateJP のタスク行）を返す。無ければ null。 */
@@ -92,6 +138,42 @@ export function parseDayPlanContent(content) {
             label:    (m[6] || '').trim()
         };
     }).filter(Boolean);
+}
+
+/**
+ * 1日タスクの内容テキストのうち、blockIndex番目のブロック（parseDayPlanContent順）の時刻だけを書き換えて返す。
+ * タイムラインのドラッグ操作（移動・リサイズ）で使用する。blockIndexが存在しない場合は元のテキストをそのまま返す。
+ */
+export function updateDayPlanBlockTime(content, blockIndex, newStartMin, newEndMin) {
+    const blocks = parseDayPlanContent(content);
+    if (!blocks[blockIndex]) return content;
+    blocks[blockIndex] = { ...blocks[blockIndex], startMin: newStartMin, endMin: newEndMin };
+    return stringifyDayPlanBlocks(blocks);
+}
+
+/** 1日タスクのブロック配列を、開始時刻昇順→終了時刻昇順→（#ID参照があれば）ID昇順で並べ替える。 */
+export function sortDayPlanBlocks(blocks) {
+    return [...blocks].sort((a, b) => {
+        if (a.startMin !== b.startMin) return a.startMin - b.startMin;
+        if (a.endMin !== b.endMin) return a.endMin - b.endMin;
+        const idA = a.refId != null ? Number(a.refId) : NaN;
+        const idB = b.refId != null ? Number(b.refId) : NaN;
+        if (!isNaN(idA) && !isNaN(idB)) return idA - idB;
+        if (!isNaN(idA)) return -1;
+        if (!isNaN(idB)) return 1;
+        return 0;
+    });
+}
+
+/** parseDayPlanContent の結果（ブロック配列）を、元の「HH:MM-HH:MM #ID ラベル」形式のテキストに戻す。 */
+export function stringifyDayPlanBlocks(blocks) {
+    const fmt = m => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+    return blocks.map(b => {
+        const timePart  = `${fmt(b.startMin)}-${fmt(b.endMin)}`;
+        const idPart    = b.refId ? ` #${b.refId}` : '';
+        const labelPart = b.label ? ` ${b.label}` : '';
+        return `${timePart}${idPart}${labelPart}`;
+    }).join('\n');
 }
 
 /** データ区分がタスクで、指定フィールドが value と一致し、ステータスが完了・中断以外の件数を、カテゴリで絞り込んで返す。 */
@@ -181,7 +263,7 @@ export function getCalendarSegmentsForDate(mainData, category, calendarFilters, 
     const unscheduled = [];
     const referencedRows = [];
 
-    getTasksForDate(mainData, category, calendarFilters, dateJP).forEach(row => {
+    getTasksAvailableForDayPlan(mainData, category, calendarFilters, dateJP).forEach(row => {
         if (referencedIds.has(String(row['ID']))) {
             referencedRows.push(row);
             return;
@@ -206,13 +288,14 @@ export function getCalendarSegmentsForDate(mainData, category, calendarFilters, 
         timed.push({ row, startMin, endMin });
     });
 
-    dayPlanBlocks.forEach(b => {
+    dayPlanBlocks.forEach((b, dayPlanBlockIndex) => {
         const linkedRow = b.refId ? mainData.find(r => String(r['ID']) === b.refId) : null;
         timed.push({
             row: linkedRow || { ID: null, タイトル: b.label || '（ラベルなし）', ステータス: null },
             startMin: b.startMin,
             endMin: b.endMin,
-            isDayPlanBlock: true
+            isDayPlanBlock: true,
+            dayPlanBlockIndex
         });
     });
 
@@ -248,30 +331,106 @@ export function getCalendarStatusClass(status) {
 }
 
 /** 現在時刻を30分刻みで切り上げた開始時刻と、その1時間後の終了時刻を "HH:MM" 形式で返す。 */
-export function computeDayPlanTimeSlot() {
-    const now = new Date();
+/**
+ * 現在時刻以降で30分刻みに丸めた時刻から、既存の1日タスクブロック（busyBlocks、{startMin,endMin}の配列）と
+ * 重ならない1時間の空き枠を探して返す（startStr/endStrは"HH:MM"）。busyBlocksは未指定なら空き枠なしとして扱う。
+ */
+export function computeDayPlanTimeSlot(busyBlocks = [], now = new Date()) {
+    const DURATION = 60;
     const minutesNow = now.getHours() * 60 + now.getMinutes();
-    const startMin = Math.ceil(minutesNow / 30) * 30;
-    const endMin   = startMin + 60;
-    const fmt = m => {
-        const wrapped = ((m % 1440) + 1440) % 1440;
-        return `${String(Math.floor(wrapped / 60)).padStart(2, '0')}:${String(wrapped % 60).padStart(2, '0')}`;
-    };
+    let startMin = Math.ceil(minutesNow / 30) * 30;
+
+    const busy = [...busyBlocks].sort((a, b) => a.startMin - b.startMin);
+    while (startMin + DURATION <= 1440) {
+        const endMin = startMin + DURATION;
+        const blocking = busy.find(b => startMin < b.endMin && endMin > b.startMin);
+        if (!blocking) break;
+        startMin = Math.ceil(blocking.endMin / 30) * 30;
+    }
+    const endMin = Math.min(startMin + DURATION, 1440);
+
+    const fmt = m => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
     return { startStr: fmt(startMin), endStr: fmt(endMin) };
 }
 
 /**
- * タスクの開始予定・終了予定が共に「今日」の日付かつ時刻まで指定されている場合、その時間帯を "HH:MM" 形式で返す。
- * 条件を満たさない場合は null。
+ * タスクの開始予定・終了予定が共に dateJP（1日タスクの対象日）の日付かつ時刻まで指定されている場合、
+ * その時間帯を "HH:MM" 形式で返す。条件を満たさない場合は null。
  */
-export function getTaskScheduledTimeToday(row) {
-    const todayJP  = jpDateOnly(formatJpDatetime(new Date()));
-    const startInfo = extractTimeOnDate(row['開始予定'], todayJP);
-    const endInfo   = extractTimeOnDate(row['終了予定'], todayJP);
+export function getTaskScheduledTimeOnDate(row, dateJP) {
+    const startInfo = extractTimeOnDate(row['開始予定'], dateJP);
+    const endInfo   = extractTimeOnDate(row['終了予定'], dateJP);
     if (!startInfo?.hasTime || !endInfo?.hasTime) return null;
 
     const fmt = m => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
     return { startStr: fmt(startInfo.minutes), endStr: fmt(endInfo.minutes) };
+}
+
+/** データ区分がタスクで、1日タスク自体・繰返し親を除いた行を返す（未設定タスク各領域の共通母集団）。 */
+function unsetTaskPool(mainData) {
+    return mainData.filter(r => {
+        if (r['データ区分'] !== 'タスク') return false;
+        if (r['ハブ'] === DAYPLAN_HUB) return false;
+        if (r['繰返し識別子'] === '1' && !r['繰返し親ID']) return false;
+        return true;
+    });
+}
+
+/** row のカテゴリが currentCategory に一致するか、row にカテゴリが未入力かを判定する（カテゴリ未入力は常に一致扱い）。 */
+function matchesCategoryOrUnset(row, category) {
+    return category === 'すべて' || !row['カテゴリ'] || row['カテゴリ'] === category;
+}
+
+/**
+ * カテゴリ・ステータス・優先度・ハブそれぞれが未設定のタスクを、領域ごとに分けて返す（重複あり）。
+ * カテゴリ未設定の領域は currentCategory の絞り込みを受けない（カテゴリが無いので判定不能なため）。
+ * それ以外の領域は、行にカテゴリがあれば currentCategory と一致するもののみ、カテゴリが無ければ常に対象にする。
+ */
+export function getUnsetAttributeGroups(mainData, category) {
+    const pool = unsetTaskPool(mainData);
+    return {
+        categoryUnset: pool.filter(r => !r['カテゴリ']),
+        statusUnset:   pool.filter(r => !r['ステータス'] && matchesCategoryOrUnset(r, category)),
+        priorityUnset: pool.filter(r => !r['優先度']   && matchesCategoryOrUnset(r, category)),
+        hubUnset:      pool.filter(r => !r['ハブ']     && matchesCategoryOrUnset(r, category)),
+    };
+}
+
+/** ステータスが「中断」のタスクを、終了予定が近い順（空欄は最後）に並べて返す。 */
+export function getSuspendedTasks(mainData, category) {
+    return unsetTaskPool(mainData)
+        .filter(r => r['ステータス'] === '中断' && matchesCategoryOrUnset(r, category))
+        .sort((a, b) => compareDateAscEmptyLast(a['終了予定'], b['終了予定']));
+}
+
+// タスク整理系リストの整理表示順（この順にグループ化し、リストに無いステータス・空欄は最後尾）。
+const TASK_ORGANIZE_STATUS_ORDER = ['未着手', '進行中', '中断', '連絡待ち', '報告待ち', '完了'];
+
+/** ステータス名の整理表示順ランクを返す（未着手→進行中→中断→連絡待ち→報告待ち→完了→その他の順）。 */
+export function taskOrganizeStatusRank(status) {
+    const idx = TASK_ORGANIZE_STATUS_ORDER.indexOf(status);
+    return idx !== -1 ? idx : TASK_ORGANIZE_STATUS_ORDER.length;
+}
+
+/**
+ * タスク一覧を、ステータス（未着手→進行中→中断→連絡待ち→報告待ち→完了→その他の順）でグループ化し、
+ * 各グループ内は終了予定が近い順（空欄は最後）に並べて返す。
+ * @returns {Array<{status: string, rows: Array}>}
+ */
+export function groupUnsetTasksByStatus(rows) {
+    const groups = new Map();
+    rows.forEach(row => {
+        const status = row['ステータス'] || '（未設定）';
+        if (!groups.has(status)) groups.set(status, []);
+        groups.get(status).push(row);
+    });
+
+    const sortedStatuses = [...groups.keys()].sort((a, b) => taskOrganizeStatusRank(a) - taskOrganizeStatusRank(b));
+
+    return sortedStatuses.map(status => ({
+        status,
+        rows: [...groups.get(status)].sort((a, b) => compareDateAscEmptyLast(a['終了予定'], b['終了予定']))
+    }));
 }
 
 /** 開始予定・終了予定の少なくとも一方が空欄のタスク（フィルタ適用済み、繰返し親は除外）を返す。 */

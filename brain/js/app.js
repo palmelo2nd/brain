@@ -19,8 +19,10 @@ import {
     sortByTotalCountDesc as sortByTotalCountDescM, calendarTaskListStatusRank, compareDateAscEmptyLast,
     getCalendarFilteredTaskList as getCalendarFilteredTaskListM, extractTimeOnDate,
     getCalendarSegmentsForDate as getCalendarSegmentsForDateM, assignCalendarLanes, getCalendarStatusClass,
-    computeDayPlanTimeSlot, getTaskScheduledTimeToday,
-    getIncompleteDateTasks as getIncompleteDateTasksM
+    computeDayPlanTimeSlot, getTaskScheduledTimeOnDate,
+    getIncompleteDateTasks as getIncompleteDateTasksM, getUnsetAttributeGroups as getUnsetAttributeGroupsM,
+    getSuspendedTasks as getSuspendedTasksM, taskOrganizeStatusRank,
+    sortDayPlanBlocks, stringifyDayPlanBlocks, updateDayPlanBlockTime
 } from './modules/calendar.js';
 import {
     getAllHubNamesForAdmin as getAllHubNamesForAdminM, countHubUsage as countHubUsageM,
@@ -2084,6 +2086,16 @@ function renderCalendarTimeline(dateJP) {
     const pxPerMin = CALENDAR_HOUR_HEIGHT / 60;
     const fmt = m => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
 
+    // 横軸グリッド線（00分=太、30分=中、15分・45分=細）
+    for (let m = 0; m < 1440; m += 15) {
+        const minuteOfHour = m % 60;
+        const variant = minuteOfHour === 0 ? 'hour' : minuteOfHour === 30 ? 'half' : 'quarter';
+        const line = document.createElement('div');
+        line.className = `calendar-timeline-gridline calendar-timeline-gridline--${variant}`;
+        line.style.top = `${m * pxPerMin}px`;
+        lanesEl.appendChild(line);
+    }
+
     timed.forEach(seg => {
         const laneWidthPct = 100 / seg.laneCount;
         const block = document.createElement('div');
@@ -2094,14 +2106,130 @@ function renderCalendarTimeline(dateJP) {
         block.style.height = `${(seg.endMin - seg.startMin) * pxPerMin}px`;
         block.style.left   = `${seg.lane * laneWidthPct}%`;
         block.style.width  = `calc(${laneWidthPct}% - 4px)`;
-        block.textContent  = `${fmt(seg.startMin)}–${fmt(seg.endMin)} ${seg.row['タイトル'] || '（無題）'}`;
-        if (hasLinkedTask) block.addEventListener('click', () => openCalendarTaskEdit(String(seg.row['ID'])));
+
+        const labelSpan = document.createElement('span');
+        labelSpan.textContent = `${fmt(seg.startMin)}–${fmt(seg.endMin)} ${seg.row['タイトル'] || '（無題）'}`;
+        block.appendChild(labelSpan);
+
+        const handle = document.createElement('div');
+        handle.className = 'calendar-time-block-resize-handle';
+        block.appendChild(handle);
+
+        attachTimelineDragHandlers(block, handle, labelSpan, seg, dateJP, pxPerMin, hasLinkedTask);
         lanesEl.appendChild(block);
     });
 
     // デフォルトで 8:00〜18:00 が見える位置までスクロールする
     const scrollEl = document.getElementById('calendar-timeline-scroll');
     if (scrollEl) scrollEl.scrollTop = 8 * CALENDAR_HOUR_HEIGHT;
+}
+
+const TIMELINE_SNAP_MIN = 15;         // ドラッグ操作のスナップ単位（分）
+const TIMELINE_DRAG_THRESHOLD_MIN = 8; // これ未満の移動量はクリック（属性編集を開く）として扱う
+
+/** 分を15分単位に丸める。 */
+function snapTimelineMinutes(min) {
+    return Math.round(min / TIMELINE_SNAP_MIN) * TIMELINE_SNAP_MIN;
+}
+
+/**
+ * タイムラインのブロックへ「移動（ブロック全体をドラッグ）」「リサイズ（下端ハンドルをドラッグ）」操作を付与する。
+ * Pointer Events を使うためマウス・タッチいずれにも対応する。移動量が小さい場合はクリックとして扱い、
+ * リンク先タスクがあれば属性編集パネルを開く（従来のクリック挙動を維持）。
+ */
+function attachTimelineDragHandlers(block, handle, labelSpan, seg, dateJP, pxPerMin, hasLinkedTask) {
+    const fmt = m => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+    let dragMode  = null; // 'move' | 'resize'
+    let pointerId = null;
+    let startClientY = 0;
+    let origStart = seg.startMin;
+    let origEnd   = seg.endMin;
+    let pendingStart = seg.startMin;
+    let pendingEnd   = seg.endMin;
+
+    function updatePreview(newStart, newEnd) {
+        pendingStart = newStart;
+        pendingEnd   = newEnd;
+        block.style.top    = `${newStart * pxPerMin}px`;
+        block.style.height = `${(newEnd - newStart) * pxPerMin}px`;
+        labelSpan.textContent = `${fmt(newStart)}–${fmt(newEnd)} ${seg.row['タイトル'] || '（無題）'}`;
+    }
+
+    function onPointerMove(e) {
+        if (!dragMode) return;
+        const deltaMin = snapTimelineMinutes((e.clientY - startClientY) / pxPerMin);
+
+        if (dragMode === 'move') {
+            const duration = origEnd - origStart;
+            const newStart = Math.max(0, Math.min(1440 - duration, origStart + deltaMin));
+            updatePreview(newStart, newStart + duration);
+        } else {
+            const newEnd = Math.max(origStart + TIMELINE_SNAP_MIN, Math.min(1440, origEnd + deltaMin));
+            updatePreview(origStart, newEnd);
+        }
+    }
+
+    function onPointerUp() {
+        if (!dragMode) return;
+        block.releasePointerCapture(pointerId);
+        block.removeEventListener('pointermove', onPointerMove);
+        block.removeEventListener('pointerup', onPointerUp);
+        block.removeEventListener('pointercancel', onPointerUp);
+
+        const movedMin = Math.abs(pendingStart - origStart) + Math.abs(pendingEnd - origEnd);
+        if (movedMin < TIMELINE_DRAG_THRESHOLD_MIN) {
+            updatePreview(origStart, origEnd); // 微小な移動は元に戻す
+            if (dragMode === 'move' && hasLinkedTask) openCalendarTaskEdit(String(seg.row['ID']));
+        } else {
+            commitTimelineDrag(seg, dateJP, pendingStart, pendingEnd);
+        }
+        dragMode = null;
+    }
+
+    function startDrag(mode, e) {
+        if (e.pointerType === 'mouse' && e.button !== 0) return;
+        dragMode      = mode;
+        pointerId     = e.pointerId;
+        startClientY  = e.clientY;
+        origStart     = seg.startMin;
+        origEnd       = seg.endMin;
+        pendingStart  = origStart;
+        pendingEnd    = origEnd;
+        block.setPointerCapture(pointerId);
+        block.addEventListener('pointermove', onPointerMove);
+        block.addEventListener('pointerup', onPointerUp);
+        block.addEventListener('pointercancel', onPointerUp);
+        e.preventDefault();
+        e.stopPropagation();
+    }
+
+    block.addEventListener('pointerdown', (e) => startDrag('move', e));
+    handle.addEventListener('pointerdown', (e) => startDrag('resize', e));
+}
+
+/**
+ * タイムラインのドラッグ操作結果を確定保存する。
+ * 1日タスクのスケジュール行（isDayPlanBlock）はその行の時刻を、通常のタスクは開始予定・終了予定（dateJP当日分）を書き換える。
+ */
+function commitTimelineDrag(seg, dateJP, newStartMin, newEndMin) {
+    const fmt = m => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+
+    if (seg.isDayPlanBlock) {
+        const dayPlan = getDayPlanTask(dateJP);
+        if (!dayPlan) return;
+        dayPlan['内容']     = updateDayPlanBlockTime(dayPlan['内容'], seg.dayPlanBlockIndex, newStartMin, newEndMin);
+        dayPlan['更新日時'] = formatJpDatetime(new Date());
+    } else {
+        const row = currentMainData.find(r => String(r['ID']) === String(seg.row['ID']));
+        if (!row) return;
+        row['開始予定'] = `${dateJP} ${fmt(newStartMin)}`;
+        row['終了予定'] = `${dateJP} ${fmt(newEndMin)}`;
+        row['更新日時'] = formatJpDatetime(new Date());
+    }
+
+    saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
+    renderCalendarDetail();
+    renderTaskRunner();
 }
 
 /** 1日タスクの作成ボタン／編集エリアを、選択中の日付の状態に合わせて描画する。 */
@@ -2129,7 +2257,17 @@ function renderDayPlanSection() {
     }
 }
 
-/** 選択中日付の1日タスクを新規作成する（ハブ=DAYPLAN_HUB、開始予定=選択中日付、内容は空欄）。 */
+/** "HH:MM" 文字列を分に変換する。 */
+function parseHHMMToMinutes(str) {
+    const [h, m] = str.split(':').map(Number);
+    return h * 60 + m;
+}
+
+/**
+ * 選択中日付の1日タスクを新規作成する（ハブ=DAYPLAN_HUB、開始予定=選択中日付）。
+ * 内容には既定の「09:00-09:30 メールチェック、予定整理」に加え、その日既に開始予定・終了予定が
+ * 時刻まで指定されている既存タスクを取り込む（カテゴリの絞り込みは適用、タグ／ハブ／ステータスの絞り込みは適用しない）。
+ */
 function createDayPlanTask() {
     if (!selectedCalendarDate) return;
 
@@ -2139,6 +2277,23 @@ function createDayPlanTask() {
     }, 0);
     const ts = formatJpDatetime(new Date());
 
+    const noFilters = { tag: new Set(), hub: new Set(), status: new Set() };
+    const scheduledBlocks = getTasksForDateM(currentMainData, currentCategory, noFilters, selectedCalendarDate)
+        .map(row => {
+            const timeInfo = getTaskScheduledTimeOnDate(row, selectedCalendarDate);
+            if (!timeInfo) return null;
+            return {
+                startMin: parseHHMMToMinutes(timeInfo.startStr),
+                endMin:   parseHHMMToMinutes(timeInfo.endStr),
+                refId:    String(row['ID']),
+                label:    ''
+            };
+        })
+        .filter(Boolean);
+
+    const defaultBlock = { startMin: 9 * 60, endMin: 9 * 60 + 30, refId: null, label: 'メールチェック、予定整理' };
+    const content = stringifyDayPlanBlocks(sortDayPlanBlocks([defaultBlock, ...scheduledBlocks]));
+
     const entry = Object.fromEntries(MAIN_DATA_COLUMNS.map(col => [col, '']));
     entry['ID']        = String(maxId + 1);
     entry['データ区分'] = 'タスク';
@@ -2146,6 +2301,7 @@ function createDayPlanTask() {
     entry['ハブ']       = DAYPLAN_HUB;
     entry['開始予定']   = selectedCalendarDate;
     entry['ステータス'] = '未着手';
+    entry['内容']       = content;
     entry['作成日時']   = ts;
     entry['更新日時']   = ts;
 
@@ -2160,11 +2316,14 @@ function saveDayPlanContent() {
     if (!selectedCalendarDate) return;
     const dayPlan = getDayPlanTask(selectedCalendarDate);
     if (!dayPlan) return;
-    const contentEl = document.getElementById('dayplan-content');
-    dayPlan['内容']     = contentEl ? contentEl.value : '';
+    const contentEl  = document.getElementById('dayplan-content');
+    const rawContent = contentEl ? contentEl.value : '';
+    const sortedBlocks = sortDayPlanBlocks(parseDayPlanContent(rawContent));
+    dayPlan['内容']     = stringifyDayPlanBlocks(sortedBlocks);
     dayPlan['更新日時'] = formatJpDatetime(new Date());
+    if (contentEl) contentEl.value = dayPlan['内容'];
     saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
-    renderCalendarTimeline(selectedCalendarDate);
+    renderCalendarDetail();
 }
 
 /** 選択中日付の1日タスクを削除する。 */
@@ -2184,7 +2343,8 @@ document.getElementById('dayplan-delete-btn')?.addEventListener('click', deleteD
 
 /**
  * タスクを選択中日付の1日タスクに「HH:MM-HH:MM #ID タイトル」の1行として追加する。1日タスクが無ければ新規作成する。
- * 開始予定・終了予定が今日の日付かつ時刻まで指定されていれば、その時間帯をそのまま使う（未指定時は現在時刻ベースの仮の枠）。
+ * 開始予定・終了予定が今日の日付かつ時刻まで指定されていれば、その時間帯をそのまま使う。
+ * 未指定時は、現在時刻以降で30分刻みに丸めた時刻から、その日の既存の予定と重ならない1時間の空き枠を自動で探して挿入する。
  */
 function addTaskToDayPlan(row) {
     if (!selectedCalendarDate) return;
@@ -2194,7 +2354,8 @@ function addTaskToDayPlan(row) {
         dayPlan = getDayPlanTask(selectedCalendarDate);
         if (!dayPlan) return;
     }
-    const { startStr, endStr } = getTaskScheduledTimeToday(row) || computeDayPlanTimeSlot();
+    const busyBlocks = parseDayPlanContent(dayPlan['内容']);
+    const { startStr, endStr } = getTaskScheduledTimeOnDate(row, selectedCalendarDate) || computeDayPlanTimeSlot(busyBlocks);
     const line = `${startStr}-${endStr} #${row['ID']} ${row['タイトル'] || '（無題）'}`;
     dayPlan['内容']     = dayPlan['内容'] ? `${dayPlan['内容']}\n${line}` : line;
     dayPlan['更新日時'] = formatJpDatetime(new Date());
@@ -2243,26 +2404,114 @@ function renderCalendarChipList(container, chipEntries, emptyText, options = {})
     });
 }
 
+/**
+ * 未設定タスクの一覧を、ステータス（未着手→進行中→中断→連絡待ち→報告待ち→完了→その他の順）でグループ化して描画する。
+ * 各グループの見出しは青色太字（calendar-section-label--accent）、グループ内は終了予定が近い順。
+ */
+function renderGroupedTaskChips(container, chipEntries, emptyText, options = {}) {
+    const { showAddButton = false } = options;
+    if (!container) return;
+    container.innerHTML = '';
+    if (chipEntries.length === 0) {
+        const p = document.createElement('p');
+        p.className = 'calendar-empty-text';
+        p.textContent = emptyText;
+        container.appendChild(p);
+        return;
+    }
+
+    const groups = new Map();
+    chipEntries.forEach(entry => {
+        const status = entry.row['ステータス'] || '（未設定）';
+        if (!groups.has(status)) groups.set(status, []);
+        groups.get(status).push(entry);
+    });
+    const sortedStatuses = [...groups.keys()].sort((a, b) => taskOrganizeStatusRank(a) - taskOrganizeStatusRank(b));
+
+    sortedStatuses.forEach(status => {
+        const groupEntries = groups.get(status)
+            .sort((a, b) => compareDateAscEmptyLast(a.row['終了予定'], b.row['終了予定']));
+
+        const header = document.createElement('p');
+        header.className = 'calendar-section-label calendar-section-label--accent calendar-section-label--nested';
+        header.textContent = `${status}（${groupEntries.length}）`;
+        container.appendChild(header);
+
+        const listEl = document.createElement('div');
+        listEl.className = 'calendar-unscheduled-list';
+        container.appendChild(listEl);
+
+        renderCalendarChipList(listEl, groupEntries, '', { showAddButton });
+    });
+}
+
 /** 開始予定・終了予定の少なくとも一方が空欄のタスク（フィルタ適用済み）を返す。 */
 function getIncompleteDateTasks() {
     return getIncompleteDateTasksM(currentMainData, currentCategory, calendarFilters);
 }
 
+/** カテゴリ／ステータス／優先度／ハブそれぞれが未設定のタスクを、領域ごとに分けて返す（重複あり）。 */
+function getUnsetAttributeGroups() {
+    return getUnsetAttributeGroupsM(currentMainData, currentCategory);
+}
+
+/** ステータスが「中断」のタスクを返す（終了予定が近い順）。 */
+function getSuspendedTasks() {
+    return getSuspendedTasksM(currentMainData, currentCategory);
+}
+
 /** 選択中の日付の詳細ビュー（時間帯未定タスク・1日の予定表・属性編集パネル）を描画する。 */
+/** id要素（expander-count用span）に "N 件" 形式で件数を表示する。 */
+function setExpanderCount(id, count) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = `${count} 件`;
+}
+
+/** id要素（expander-count用span）に "N件 / N件" 形式で2つの件数を表示する。 */
+function setExpanderCountPair(id, countA, countB) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = `${countA} 件 / ${countB} 件`;
+}
+
 function renderCalendarDetail() {
     const titleEl        = document.getElementById('calendar-detail-title');
     const unscheduledEl  = document.getElementById('calendar-unscheduled-list');
     const dayplanAddedEl = document.getElementById('calendar-dayplan-added-list');
-    const incompleteEl   = document.getElementById('calendar-incomplete-date-list');
+    const incompleteEl      = document.getElementById('calendar-incomplete-date-list');
+    const unsetCategoryEl   = document.getElementById('calendar-unset-category-list');
+    const unsetStatusEl     = document.getElementById('calendar-unset-status-list');
+    const unsetPriorityEl   = document.getElementById('calendar-unset-priority-list');
+    const unsetHubEl        = document.getElementById('calendar-unset-hub-list');
+    const suspendedEl       = document.getElementById('calendar-suspended-list');
     if (!titleEl) return;
 
     const incompleteChips = getIncompleteDateTasks().map(row => ({ row, label: row['タイトル'] || '（無題）' }));
     renderCalendarChipList(incompleteEl, incompleteChips, '該当するタスクはありません');
+    setExpanderCount('calendar-incomplete-count', incompleteChips.length);
+
+    const unsetGroups = getUnsetAttributeGroups();
+    const toChips = rows => rows.map(row => ({ row, label: row['タイトル'] || '（無題）' }));
+    renderCalendarChipList(unsetCategoryEl, toChips(unsetGroups.categoryUnset), '該当するタスクはありません', { showAddButton: false });
+    renderCalendarChipList(unsetStatusEl,   toChips(unsetGroups.statusUnset),   '該当するタスクはありません', { showAddButton: false });
+    renderCalendarChipList(unsetPriorityEl, toChips(unsetGroups.priorityUnset), '該当するタスクはありません', { showAddButton: false });
+    renderCalendarChipList(unsetHubEl,      toChips(unsetGroups.hubUnset),      '該当するタスクはありません', { showAddButton: false });
+    setExpanderCount('calendar-unset-category-count', unsetGroups.categoryUnset.length);
+    setExpanderCount('calendar-unset-status-count',   unsetGroups.statusUnset.length);
+    setExpanderCount('calendar-unset-priority-count', unsetGroups.priorityUnset.length);
+    setExpanderCount('calendar-unset-hub-count',      unsetGroups.hubUnset.length);
+    setExpanderCount('calendar-unset-total-count',
+        unsetGroups.categoryUnset.length + unsetGroups.statusUnset.length +
+        unsetGroups.priorityUnset.length + unsetGroups.hubUnset.length);
+
+    const suspendedChips = toChips(getSuspendedTasks());
+    renderCalendarChipList(suspendedEl, suspendedChips, '該当するタスクはありません', { showAddButton: false });
+    setExpanderCount('calendar-suspended-count', suspendedChips.length);
 
     if (!selectedCalendarDate) {
         titleEl.textContent = 'カレンダーで日付を選択してください';
         if (unscheduledEl)  unscheduledEl.innerHTML = '';
         if (dayplanAddedEl) dayplanAddedEl.innerHTML = '';
+        setExpanderCountPair('calendar-todo-dayplan-count', 0, 0);
         const hoursEl = document.getElementById('calendar-timeline-hours');
         const lanesEl = document.getElementById('calendar-timeline-lanes');
         if (hoursEl) hoursEl.innerHTML = '';
@@ -2283,10 +2532,12 @@ function renderCalendarDetail() {
                 .map(seg => ({ row: seg.row, label: `${fmt(seg.startMin)}–${fmt(seg.endMin)} ${seg.row['タイトル'] || '（無題）'}` })),
     ];
     chipEntries.sort((a, b) => compareDateAscEmptyLast(a.row['終了予定'], b.row['終了予定']));
-    renderCalendarChipList(unscheduledEl, chipEntries, 'この日のタスクはありません');
+    renderGroupedTaskChips(unscheduledEl, chipEntries, 'この日のタスクはありません', { showAddButton: true });
 
     const referencedChips = referenced.map(row => ({ row, label: row['タイトル'] || '（無題）' }));
-    renderCalendarChipList(dayplanAddedEl, referencedChips, 'まだありません', { showAddButton: false });
+    renderGroupedTaskChips(dayplanAddedEl, referencedChips, 'まだありません');
+
+    setExpanderCountPair('calendar-todo-dayplan-count', chipEntries.length, referencedChips.length);
 
     renderCalendarTimeline(selectedCalendarDate);
     renderCalendarTaskEdit();

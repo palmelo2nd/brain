@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Second Brain タスク管理</title>
-    <link rel="stylesheet" href="css/style.css?v=1">
+    <link rel="stylesheet" href="css/style.css?v=2">
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
@@ -21,7 +21,10 @@
             <div id="taskorg-details">
 
                 <!-- タグ／ハブ／ステータスのフィルタ -->
-                <div id="calendar-filter-area" class="triage-filter-area"></div>
+                <details class="expander calendar-sub-expander">
+                    <summary class="expander-title">タグ／ハブ／ステータスのフィルタ</summary>
+                    <div id="calendar-filter-area" class="triage-filter-area"></div>
+                </details>
 
                 <!-- カレンダー／ガントチャートの切り替え -->
                 <div class="taskorg-view-toggle">
@@ -92,11 +95,11 @@
                             </div>
                         </div>
 
-                        <!-- 今日のタスク／設定済みタスク（既定は折りたたみ） -->
+                        <!-- 未設定／設定済みタスク（既定は折りたたみ） -->
                         <details class="expander calendar-sub-expander">
-                            <summary class="expander-title">今日のタスク／設定済みタスク</summary>
+                            <summary class="expander-title">未設定/設定済みタスク<span id="calendar-todo-dayplan-count" class="expander-count"></span></summary>
                             <div class="calendar-unscheduled-section">
-                                <p class="calendar-section-label">今日のタスク</p>
+                                <p class="calendar-section-label">未設定タスク</p>
                                 <div id="calendar-unscheduled-list" class="calendar-unscheduled-list"></div>
                                 <p class="calendar-section-label calendar-section-label--sub">設定済みタスク</p>
                                 <div id="calendar-dayplan-added-list" class="calendar-unscheduled-list"></div>
@@ -105,17 +108,49 @@
 
                         <!-- 開始予定・終了予定のいずれかが空欄のタスク（既定は折りたたみ） -->
                         <details class="expander calendar-sub-expander">
-                            <summary class="expander-title">日付未確定のタスク（開始予定・終了予定のいずれかが空欄）</summary>
+                            <summary class="expander-title">日付未確定のタスク<span id="calendar-incomplete-count" class="expander-count"></span></summary>
+                            <p class="calendar-dayplan-hint">開始予定・終了予定のいずれかが空欄のタスクです。</p>
                             <div class="calendar-unscheduled-section">
                                 <div id="calendar-incomplete-date-list" class="calendar-unscheduled-list"></div>
+                            </div>
+                        </details>
+
+                        <!-- カテゴリ／ステータス／優先度／ハブのいずれかが未設定のタスク（既定は折りたたみ） -->
+                        <details class="expander calendar-sub-expander">
+                            <summary class="expander-title">属性未設定タスク<span id="calendar-unset-total-count" class="expander-count"></span></summary>
+                            <p class="calendar-dayplan-hint">カテゴリ・ステータス・優先度・ハブのいずれかが未入力のタスクです（複数の領域に重複して表示される場合があります）。</p>
+
+                            <div class="calendar-unscheduled-section">
+                                <p class="calendar-section-label calendar-section-label--accent">カテゴリ<span id="calendar-unset-category-count" class="expander-count"></span></p>
+                                <div id="calendar-unset-category-list" class="calendar-unscheduled-list"></div>
+                            </div>
+                            <div class="calendar-unscheduled-section">
+                                <p class="calendar-section-label calendar-section-label--accent">ステータス<span id="calendar-unset-status-count" class="expander-count"></span></p>
+                                <div id="calendar-unset-status-list" class="calendar-unscheduled-list"></div>
+                            </div>
+                            <div class="calendar-unscheduled-section">
+                                <p class="calendar-section-label calendar-section-label--accent">優先度<span id="calendar-unset-priority-count" class="expander-count"></span></p>
+                                <div id="calendar-unset-priority-list" class="calendar-unscheduled-list"></div>
+                            </div>
+                            <div class="calendar-unscheduled-section">
+                                <p class="calendar-section-label calendar-section-label--accent">ハブ<span id="calendar-unset-hub-count" class="expander-count"></span></p>
+                                <div id="calendar-unset-hub-list" class="calendar-unscheduled-list"></div>
+                            </div>
+                        </details>
+
+                        <!-- ステータスが「中断」のタスク（既定は折りたたみ） -->
+                        <details class="expander calendar-sub-expander">
+                            <summary class="expander-title">中断タスク<span id="calendar-suspended-count" class="expander-count"></span></summary>
+                            <div class="calendar-unscheduled-section">
+                                <div id="calendar-suspended-list" class="calendar-unscheduled-list"></div>
                             </div>
                         </details>
                     </div>
 
                     <div class="calendar-edit-col">
-                        <!-- 新規追加・編集（未選択時は新規登録、選択時はその行の編集） -->
+                        <!-- 編集（未選択時は新規登録、選択時はその行の編集） -->
                         <div id="calendar-task-edit" class="calendar-task-edit">
-                            <p class="calendar-section-label">新規追加・編集</p>
+                            <p class="calendar-section-label">編集</p>
                             <div class="calendar-edit-row">
                                 <label>ID</label>
                                 <input type="text" id="dayedit-id" readonly placeholder="（新規登録時は未採番）">
@@ -162,8 +197,8 @@
                                 <select id="dayedit-priority"></select>
                             </div>
                             <div class="calendar-edit-row">
-                                <label>見積時間（h）</label>
-                                <input type="number" id="dayedit-estimate" min="0" step="0.5" placeholder="（省略可）">
+                                <label>見積時間（分）</label>
+                                <input type="number" id="dayedit-estimate" min="0" step="1" placeholder="（省略可）">
                             </div>
                             <div class="calendar-edit-row">
                                 <label>実績時間（h）</label>
@@ -186,7 +221,7 @@
                             <div class="calendar-edit-row">
                                 <label>完了日</label>
                                 <input type="date" id="dayedit-complete-date">
-                                <button type="button" id="dayedit-fill-date-from-complete-btn" class="calendar-add-btn">完了日を開始/終了予定に代入</button>
+                                <button type="button" id="dayedit-fill-date-from-complete-btn" class="calendar-add-btn">開始/終了に反映</button>
                             </div>
                             <div class="calendar-edit-row">
                                 <label>カテゴリ</label>
@@ -201,11 +236,9 @@
                                 <select id="dayedit-hub"></select>
                             </div>
                             <div class="calendar-edit-toolbar">
+                                <button id="dayedit-new-btn" class="calendar-add-btn">新規</button>
                                 <button id="dayedit-apply-btn">適用</button>
                                 <button id="dayedit-delete-btn" class="calendar-danger-btn">削除</button>
-                            </div>
-                            <div class="calendar-edit-toolbar">
-                                <button id="dayedit-new-btn" class="calendar-add-btn">新規登録</button>
                             </div>
                         </div>
                     </div>
@@ -313,8 +346,8 @@
                                 <select id="recuredit-priority"></select>
                             </div>
                             <div class="calendar-edit-row">
-                                <label>見積時間（h）</label>
-                                <input type="number" id="recuredit-estimate" min="0" step="0.5" placeholder="（省略可）">
+                                <label>見積時間（分）</label>
+                                <input type="number" id="recuredit-estimate" min="0" step="1" placeholder="（省略可）">
                             </div>
                             <div class="calendar-edit-row">
                                 <label>実績時間（h）</label>
@@ -564,8 +597,8 @@
                         <input type="date" id="edit-end">
                     </div>
                     <div id="edit-estimate-row" class="triage-form-row" style="display:none">
-                        <label>見積時間（h）</label>
-                        <input type="number" id="edit-estimate" min="0" step="0.5" placeholder="（省略可）">
+                        <label>見積時間（分）</label>
+                        <input type="number" id="edit-estimate" min="0" step="1" placeholder="（省略可）">
                     </div>
 
                     <!-- Input・Output（ナレッジ選択時のみ） -->
@@ -636,6 +669,6 @@
 
 </div>
 
-<script type="module" src="js/app.js?v=1"></script>
+<script type="module" src="js/app.js?v=5"></script>
 </body>
 </html>
