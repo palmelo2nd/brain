@@ -1810,7 +1810,7 @@ function renderTagHubStatusFilters(area, filters, onChange) {
         const selectAllBtn = document.createElement('button');
         selectAllBtn.type = 'button';
         selectAllBtn.className = 'calendar-filter-bulk-btn';
-        selectAllBtn.textContent = '全て選択';
+        selectAllBtn.textContent = '全選択';
         selectAllBtn.addEventListener('click', () => {
             options.forEach(v => selectedSet.add(v));
             onChange();
@@ -1819,7 +1819,7 @@ function renderTagHubStatusFilters(area, filters, onChange) {
         const deselectAllBtn = document.createElement('button');
         deselectAllBtn.type = 'button';
         deselectAllBtn.className = 'calendar-filter-bulk-btn';
-        deselectAllBtn.textContent = '全て解除';
+        deselectAllBtn.textContent = '全解除';
         deselectAllBtn.addEventListener('click', () => {
             selectedSet.clear();
             onChange();
