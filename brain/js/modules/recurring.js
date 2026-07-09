@@ -1,5 +1,6 @@
 // (1) インポート
 import { MAIN_DATA_COLUMNS } from './dataModel.js';
+import { parseTimestampLog } from './task.js';
 
 // 曜日名（JS の getDay() と対応: 0=日）
 const WEEKDAY_NAMES = ['日', '月', '火', '水', '木', '金', '土'];
@@ -26,9 +27,45 @@ export function formatYYYYMMDD(date) {
 }
 
 /** date を "YYYY/MM/DD" 形式の文字列で返す（開始予定・重複判定キーに使用） */
-function formatSlashDate(date) {
+export function formatSlashDate(date) {
     const pad = n => String(n).padStart(2, '0');
     return `${date.getFullYear()}/${pad(date.getMonth() + 1)}/${pad(date.getDate())}`;
+}
+
+/** 親タスクの頻度設定（月/日/曜日）を一覧表示用の文字列にまとめる。すべて空欄なら「毎日」。 */
+export function formatRecurringFrequencyLabel(parent) {
+    const parts = [];
+    if (parent['繰返し頻度_月'])  parts.push(`月:${parent['繰返し頻度_月']}`);
+    if (parent['繰返し頻度_日'])  parts.push(`日:${parent['繰返し頻度_日']}`);
+    if (parent['繰返し頻度_曜日']) parts.push(`曜日:${parent['繰返し頻度_曜日']}`);
+    return parts.length > 0 ? parts.join(' / ') : '毎日';
+}
+
+/** 子タスク配列から Chart.js 用の labels / data（実績時間, h）を作成する */
+export function buildChildChartData(children) {
+    const sorted = [...children]
+        .filter(r => r['完了日'] || r['作成日時'])
+        .sort((a, b) => {
+            const da = a['完了日'] || a['作成日時'];
+            const db = b['完了日'] || b['作成日時'];
+            return da.localeCompare(db);
+        });
+
+    const labels = sorted.map(r => (r['完了日'] || r['作成日時']).slice(0, 10));
+    const data   = sorted.map(r => {
+        const manual = parseFloat(r['実績時間'] || '');
+        if (!isNaN(manual) && manual > 0) return manual;
+        const ms = parseTimestampLog(r['タイムスタンプログ'] || '');
+        return ms > 0 ? Math.round(ms / 360000) / 10 : 0;
+    });
+
+    return { labels, data };
+}
+
+/** 週間ビュー用: date を含む週の月曜日（今日を含む週）を返す。 */
+export function getMondayOf(date) {
+    const mondayOffset = (date.getDay() + 6) % 7; // 日曜=0を6扱いにして月曜起点に変換
+    return new Date(date.getFullYear(), date.getMonth(), date.getDate() - mondayOffset);
 }
 
 function makeTsStr(date) {

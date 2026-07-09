@@ -633,6 +633,23 @@ details[open] > .expander-title::after { transform: rotate(90deg); }
     font-size: 13px;
 }
 
+/* タスク整理のタグ／ハブ／ステータスフィルタを点線で区切る */
+#calendar-filter-area.triage-filter-area {
+    flex-direction: column;
+    align-items: stretch;
+}
+
+#calendar-filter-area .triage-filter-row {
+    flex-wrap: wrap;
+    padding-bottom: 8px;
+    border-bottom: 1px dashed #d0d7de;
+}
+
+#calendar-filter-area .triage-filter-row:last-child {
+    border-bottom: none;
+    padding-bottom: 0;
+}
+
 .triage-filter-label {
     color: #555;
     white-space: nowrap;
@@ -871,6 +888,22 @@ details[open] > .expander-title::after { transform: rotate(90deg); }
     font-weight: 600;
 }
 
+/* Summaryページ最上部のメインタブ（ﾀｽｸ整理〜勤務）はボタンサイズを揃える。文字サイズは幅に合わせて縮めてよい。 */
+.summary-main-tabs {
+    flex-wrap: wrap;
+}
+
+.summary-main-tabs .taskorg-view-btn {
+    flex: 1 1 0;
+    min-width: 64px;
+    padding: 8px 4px;
+    font-size: 12px;
+    text-align: center;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
 .gantt-unit-toggle {
     display: flex;
     gap: 8px;
@@ -1016,6 +1049,13 @@ details[open] > .expander-title::after { transform: rotate(90deg); }
     font-size: 12px;
     font-weight: 600;
     color: #8b949e;
+}
+
+.calendar-section-label--sub {
+    margin-top: 16px;
+    padding-top: 10px;
+    border-top: 1px dashed #30363d;
+    opacity: 0.75;
 }
 
 /* --- タグ／ハブ／ステータス マルチセレクトフィルタ --- */
