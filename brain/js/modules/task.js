@@ -69,9 +69,9 @@ export function computeActualHours(row) {
     return ms > 0 ? Math.round(ms / 360000) / 10 : 0;
 }
 
-/** (M)ハブ_ステータスが '0'（無効）でない行かどうかを判定する。未入力は有効扱いにする。 */
-export function isHubActive(row) {
-    return row['(M)ハブ_ステータス'] !== '0' && row['(M)ハブ_ステータス'] !== 0;
+/** (M)プロジェクト_ステータスが '0'（無効）でない行かどうかを判定する。未入力は有効扱いにする。 */
+export function isProjectActive(row) {
+    return row['(M)プロジェクト_ステータス'] !== '0' && row['(M)プロジェクト_ステータス'] !== 0;
 }
 
 /** 選択中カテゴリでフィルタされたメインデータを返す。「すべて」選択時は全件返す（複製配列）。 */
@@ -95,18 +95,18 @@ export function filterTagsByCategory(masterData, category) {
 }
 
 /**
- * 選択中カテゴリに属する、有効な（(M)ハブ_ステータスが0でない）ハブ名一覧を返す。
- * 「すべて」選択時は (M)ハブ_子 の全値、それ以外は (M)ハブ_親 === category の行の (M)ハブ_子 を返す。
+ * 選択中カテゴリに属する、有効な（(M)プロジェクト_ステータスが0でない）プロジェクト名一覧を返す。
+ * 「すべて」選択時は (M)プロジェクト_子 の全値、それ以外は (M)プロジェクト_親 === category の行の (M)プロジェクト_子 を返す。
  */
-export function filterHubsByCategory(masterData, category) {
+export function filterProjectsByCategory(masterData, category) {
     if (category === 'すべて') {
         return [...new Set(
-            masterData.filter(isHubActive).map(r => r['(M)ハブ_子']).filter(Boolean)
+            masterData.filter(isProjectActive).map(r => r['(M)プロジェクト_子']).filter(Boolean)
         )];
     }
     return masterData
-        .filter(r => r['(M)ハブ_親'] === category && isHubActive(r))
-        .map(r => r['(M)ハブ_子'])
+        .filter(r => r['(M)プロジェクト_親'] === category && isProjectActive(r))
+        .map(r => r['(M)プロジェクト_子'])
         .filter(Boolean);
 }
 

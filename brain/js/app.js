@@ -9,11 +9,11 @@ import {
 import { parseExceptions, stringifyExceptions, computeMonthCalendar, computeMonthStats, getDefaultType } from './modules/workCalendar.js';
 import {
     parseJpDatetime, formatJpDatetime, parseTimestampLog, formatDuration, isLogRunning,
-    computeTotalDuration as computeTotalDurationM, isHubActive as isHubActiveM,
-    filterMainDataByCategory, filterTagsByCategory, filterHubsByCategory, computeActualHours
+    computeTotalDuration as computeTotalDurationM, isProjectActive as isProjectActiveM,
+    filterMainDataByCategory, filterTagsByCategory, filterProjectsByCategory, computeActualHours
 } from './modules/task.js';
 import {
-    DAYPLAN_HUB, matchesMultiFilter, isTaskDoneForCalendar, getCalendarMarkDate,
+    DAYPLAN_PROJECT, matchesMultiFilter, isTaskDoneForCalendar, getCalendarMarkDate,
     getTasksForDate as getTasksForDateM, getDayPlanTask as getDayPlanTaskM, parseDayPlanContent,
     countActiveTasksByField as countActiveTasksByFieldM, countTasksByField as countTasksByFieldM,
     sortByTotalCountDesc as sortByTotalCountDescM, calendarTaskListStatusRank, compareDateAscEmptyLast,
@@ -25,10 +25,10 @@ import {
     sortDayPlanBlocks, stringifyDayPlanBlocks, updateDayPlanBlockTime
 } from './modules/calendar.js';
 import {
-    getAllHubNamesForAdmin as getAllHubNamesForAdminM, countHubUsage as countHubUsageM,
-    renameHubMaster as renameHubMasterM, mergeHubInto as mergeHubIntoM,
-    deleteHub as deleteHubM, toggleHubStatus as toggleHubStatusM
-} from './modules/hub.js';
+    getAllProjectNamesForAdmin as getAllProjectNamesForAdminM, countProjectUsage as countProjectUsageM,
+    renameProjectMaster as renameProjectMasterM, mergeProjectInto as mergeProjectIntoM,
+    deleteProject as deleteProjectM, toggleProjectStatus as toggleProjectStatusM
+} from './modules/project.js';
 import {
     getAllKnownColumns as getAllKnownColumnsM, computeMasterWarnings as computeMasterWarningsM,
     createEmptyMasterRow as createEmptyMasterRowM
@@ -36,7 +36,7 @@ import {
 
 const OWNER = 'palmelo2nd';
 const REPO  = 'brain_data';
-const PATH  = 'brain/todo.md';
+const PATH  = 'brain/data.md';
 
 // ===== グローバル状態 =====
 let currentSha        = null;
@@ -55,11 +55,11 @@ let calendarYear         = todayForCalendar.getFullYear(); // カレンダーの
 let calendarMonth        = todayForCalendar.getMonth();    // カレンダーの表示月（0-11）
 let selectedCalendarDate = null;       // カレンダーで選択中の日付（"YYYY/MM/DD"）
 let selectedCalendarTaskId = null;     // 日別予定表で選択中のタスクID（属性編集パネル用）
-let calendarFilters = { tag: new Set(), hub: new Set(), status: new Set() }; // カレンダーのタグ／ハブ／ステータスフィルタ値（複数選択）
+let calendarFilters = { tag: new Set(), project: new Set(), status: new Set() }; // カレンダーのタグ／プロジェクト／ステータスフィルタ値（複数選択）
 let calendarQuickNewMode = false;      // true時: タスク一覧の「（新規作成）」行から起動した新規登録モード（日付は空欄のまま）
-let taskOrgView = 'calendar';          // 「タスク整理」の表示ビュー（'calendar' | 'gantt'）。年月・タグ/ハブ/ステータスフィルタ・選択中タスクは両ビューで共有する
+let taskOrgView = 'calendar';          // 「タスク整理」の表示ビュー（'calendar' | 'gantt'）。年月・タグ/プロジェクト/ステータスフィルタ・選択中タスクは両ビューで共有する
 let ganttViewUnit = 'day';             // ガントチャートの列の単位（'day' | 'week'）
-let summaryView          = 'taskorg';   // Summary ページの表示ビュー（'top' | 'runner' | 'taskorg' | 'recurring' | 'edit' | 'data' | 'hub' | 'work'）
+let summaryView          = 'taskorg';   // Summary ページの表示ビュー（'top' | 'runner' | 'taskorg' | 'recurring' | 'edit' | 'data' | 'project' | 'work'）
 let workCalendarYear  = new Date().getFullYear();
 let workCalendarMonth = new Date().getMonth();
 
@@ -68,7 +68,7 @@ window.addEventListener('DOMContentLoaded', () => {
     const saved = loadToken();
     if (saved) {
         setTokenInputs(saved);
-        loadFromGithub(saved, true);
+        loadFromGitproject(saved, true);
     }
     renderSummary();
 });
@@ -104,16 +104,16 @@ function mountSection(elId, anchorId) {
 
 // --- ページレンダラー ---
 
-const SUMMARY_VIEWS = ['taskorg', 'runner', 'top', 'recurring', 'edit', 'hub', 'data', 'work'];
+const SUMMARY_VIEWS = ['taskorg', 'runner', 'top', 'recurring', 'edit', 'project', 'data', 'work'];
 
-/** Summary ページ（INBOX／タスク整理／タスク実行／習慣／編集／ハブ／データの表示切り替え。PW・Load〜Import・カテゴリは常時表示バーで共通）を描画する */
+/** Summary ページ（INBOX／タスク整理／タスク実行／習慣／編集／プロジェクト／データの表示切り替え。PW・Load〜Import・カテゴリは常時表示バーで共通）を描画する */
 function renderSummary() {
     // 選択中のビューに応じて、セクション本体をこのページへ移動する
     if (summaryView === 'taskorg')   mountSection('taskorg-details',   'taskorg-anchor-summary');
     if (summaryView === 'recurring') mountSection('recurring-details', 'recurring-anchor-summary');
     if (summaryView === 'edit')      mountSection('edit-details',      'edit-anchor-summary');
     if (summaryView === 'data')      mountSection('data-group',        'data-anchor-summary');
-    if (summaryView === 'hub')       mountSection('hub-group',         'hub-anchor-summary');
+    if (summaryView === 'project')       mountSection('project-group',         'project-anchor-summary');
 
     renderCategoryFilter(); // 常時表示バーのカテゴリ選択を最新化
     renderWarnings(computeMasterWarnings());
@@ -124,9 +124,9 @@ function renderSummary() {
     if (summaryView === 'edit')      renderEdit();
     if (summaryView === 'data') {
         renderDataTable('table-main',   'summary-main',   getFilteredMainData(),   MAIN_DATA_COLUMNS,   'メインデータ',   { editable: true, idColumn: 'ID' });
-        renderDataTable('table-master', 'summary-master', currentMasterData, MASTER_DATA_COLUMNS, 'マスタデータ', { editable: true, onEdit: () => { renderWarnings(computeMasterWarnings()); renderHubAdmin(); } });
+        renderDataTable('table-master', 'summary-master', currentMasterData, MASTER_DATA_COLUMNS, 'マスタデータ', { editable: true, onEdit: () => { renderWarnings(computeMasterWarnings()); renderProjectAdmin(); } });
     }
-    if (summaryView === 'hub')  renderHubAdmin();
+    if (summaryView === 'project')  renderProjectAdmin();
     if (summaryView === 'work') renderWorkCalendar();
 
     SUMMARY_VIEWS.forEach(view => {
@@ -191,7 +191,7 @@ function renderDataTable(tableId, summaryId, data, columns, label, options = {})
         const td = document.createElement('td');
         td.colSpan   = columns.length;
         td.className = 'empty-cell';
-        td.textContent = 'データがありません。GitHubから読み込んでください。';
+        td.textContent = 'データがありません。GitProjectから読み込んでください。';
         tr.appendChild(td);
         tbody.appendChild(tr);
     } else {
@@ -272,9 +272,9 @@ function createFilterSelect(options, placeholder, currentValue, onChange) {
 
 /** editKubun に応じたテーブル列定義を返す（タスク／ナレッジは専用列、それ以外は共通列） */
 function getEditCols(kubun) {
-    if (kubun === 'タスク')   return ['タイトル', 'ステータス', '優先度', '開始予定', '終了予定', '見積時間', 'カテゴリ', 'タグ', 'ハブ'];
-    if (kubun === 'ナレッジ') return ['タイトル', 'ステータス', 'Input', 'カテゴリ', 'タグ', 'ハブ', '更新日時'];
-    return ['カテゴリ', 'タイトル', '内容', 'タグ', 'ハブ', '作成日時', '更新日時'];
+    if (kubun === 'タスク')   return ['タイトル', 'ステータス', '優先度', '開始予定', '終了予定', '見積時間', 'カテゴリ', 'タグ', 'プロジェクト'];
+    if (kubun === 'ナレッジ') return ['タイトル', 'ステータス', 'Input', 'カテゴリ', 'タグ', 'プロジェクト', '更新日時'];
+    return ['カテゴリ', 'タイトル', '内容', 'タグ', 'プロジェクト', '作成日時', '更新日時'];
 }
 
 /** editKubun + editFilters を適用したメインデータの絞り込み結果を返す */
@@ -283,7 +283,7 @@ function getFilteredEditItems() {
 
     // 共通フィルタ
     if (editFilters.tag)         rows = rows.filter(r => r['タグ'] === editFilters.tag);
-    if (editFilters.hub)         rows = rows.filter(r => r['ハブ'] === editFilters.hub);
+    if (editFilters.project)         rows = rows.filter(r => r['プロジェクト'] === editFilters.project);
     if (editFilters.createdFrom) rows = rows.filter(r => jpDateOnly(r['作成日時']) >= isoToJP(editFilters.createdFrom));
     if (editFilters.createdTo)   rows = rows.filter(r => jpDateOnly(r['作成日時']) <= isoToJP(editFilters.createdTo));
     if (editFilters.updatedFrom) rows = rows.filter(r => jpDateOnly(r['更新日時']) >= isoToJP(editFilters.updatedFrom));
@@ -390,7 +390,7 @@ function renderEditFilters() {
 
     // 共通フィルタ
     makeRow('タグ',    makeSelect(getFilteredTags(), 'すべて', 'tag'));
-    makeRow('ハブ',    makeSelect(getFilteredHubs(), 'すべて', 'hub'));
+    makeRow('プロジェクト',    makeSelect(getFilteredProjects(), 'すべて', 'project'));
     makeRow('作成日時', makeDateRange('createdFrom', 'createdTo'));
     makeRow('更新日時', makeDateRange('updatedFrom', 'updatedTo'));
 
@@ -521,7 +521,7 @@ function updateEditSelectionInfo() {
         : `${selectedEditIds.size} 件選択中`;
 }
 
-/** フォームを再構築する（移動先データ区分ドロップダウン・タグ・ハブ・カテゴリ・条件フィールド） */
+/** フォームを再構築する（移動先データ区分ドロップダウン・タグ・プロジェクト・カテゴリ・条件フィールド） */
 function updateEditForm() {
     const kubunOptions = [...new Set(currentMasterData.map(r => r['(M)データ区分']).filter(Boolean))];
     rebuildSelectById('edit-kubun', kubunOptions, '（選択してください）');
@@ -536,7 +536,7 @@ function updateEditForm() {
     }
 
     rebuildSelectById('edit-tag',      getFilteredTags());
-    rebuildSelectById('edit-hub',      getFilteredHubs());
+    rebuildSelectById('edit-project',      getFilteredProjects());
     rebuildSelectById('edit-category', [...new Set(currentMasterData.map(r => r['(M)カテゴリ']).filter(Boolean))]);
 
     updateEditConditionalFields(kubunEl?.value || editKubun);
@@ -598,8 +598,8 @@ function prefillEditForm() {
 
     const tagEl = document.getElementById('edit-tag');
     if (tagEl) tagEl.value = row['タグ'] ?? '';
-    const hubEl = document.getElementById('edit-hub');
-    if (hubEl) hubEl.value = row['ハブ'] ?? '';
+    const projectEl = document.getElementById('edit-project');
+    if (projectEl) projectEl.value = row['プロジェクト'] ?? '';
     const categoryEl = document.getElementById('edit-category');
     if (categoryEl) categoryEl.value = row['カテゴリ'] ?? '';
 
@@ -630,7 +630,7 @@ function prefillEditForm() {
 function clearEditForm() {
     ['edit-title', 'edit-content', 'edit-biko', 'edit-status', 'edit-priority',
      'edit-start', 'edit-end', 'edit-estimate', 'edit-input', 'edit-output',
-     'edit-category', 'edit-tag', 'edit-hub'].forEach(id => {
+     'edit-category', 'edit-tag', 'edit-project'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.value = '';
     });
@@ -651,7 +651,7 @@ document.getElementById('edit-new-btn')?.addEventListener('click', () => {
     const biko     = document.getElementById('edit-biko').value.trim();
     const category = document.getElementById('edit-category').value;
     const tag      = document.getElementById('edit-tag').value;
-    const hub      = document.getElementById('edit-hub').value;
+    const project      = document.getElementById('edit-project').value;
     const status   = document.getElementById('edit-status')?.value   || '';
     const priority = document.getElementById('edit-priority')?.value || '';
     const start    = document.getElementById('edit-start')?.value    || '';
@@ -677,7 +677,7 @@ document.getElementById('edit-new-btn')?.addEventListener('click', () => {
     entry['内容']       = content;
     entry['備考']       = biko;
     entry['タグ']       = tag;
-    entry['ハブ']       = hub;
+    entry['プロジェクト']       = project;
     entry['作成日時']   = ts;
     entry['更新日時']   = ts;
 
@@ -719,7 +719,7 @@ document.getElementById('edit-apply-btn')?.addEventListener('click', () => {
     const biko     = document.getElementById('edit-biko').value.trim();
     const category = document.getElementById('edit-category').value;
     const tag      = document.getElementById('edit-tag').value;
-    const hub      = document.getElementById('edit-hub').value;
+    const project      = document.getElementById('edit-project').value;
     // 内容は1件選択時のみ適用
     const content = selectedEditIds.size === 1
         ? (document.getElementById('edit-content')?.value ?? null) : null;
@@ -746,7 +746,7 @@ document.getElementById('edit-apply-btn')?.addEventListener('click', () => {
         if (biko)                        row['備考']     = biko;
         if (category)                    row['カテゴリ'] = category;
         if (tag)                         row['タグ']     = tag;
-        if (hub)                         row['ハブ']     = hub;
+        if (project)                         row['プロジェクト']     = project;
         if (content !== null && content) row['内容']     = content;
 
         if (kubun === 'タスク' || kubun === 'ナレッジ') {
@@ -817,67 +817,67 @@ function addMasterRow() {
 
 document.getElementById('add-master-data-row-btn')?.addEventListener('click', addMasterRow);
 
-// ===== ハブ管理（名前変更・削除・統合） =====
+// ===== プロジェクト管理（名前変更・削除・統合） =====
 
-let hubAdminDeletePending = null; // 削除確認中のハブ名（使用中の場合、再割り当てUIを表示するため）
+let projectAdminDeletePending = null; // 削除確認中のプロジェクト名（使用中の場合、再割り当てUIを表示するため）
 
-/** マスタに登録済みの全ハブ名（重複除去、有効/無効を問わない）を返す。1日タスク用の予約ハブは対象外。 */
-function getAllHubNamesForAdmin() {
-    return getAllHubNamesForAdminM(currentMasterData);
+/** マスタに登録済みの全プロジェクト名（重複除去、有効/無効を問わない）を返す。1日タスク用の予約プロジェクトは対象外。 */
+function getAllProjectNamesForAdmin() {
+    return getAllProjectNamesForAdminM(currentMasterData);
 }
 
-/** 指定ハブ名がメインデータ（タスク／ナレッジ等）で使用されている件数を返す。 */
-function countHubUsage(name) {
-    return countHubUsageM(currentMainData, name);
+/** 指定プロジェクト名がメインデータ（タスク／ナレッジ等）で使用されている件数を返す。 */
+function countProjectUsage(name) {
+    return countProjectUsageM(currentMainData, name);
 }
 
 /**
- * ハブ名を旧名から新名へ変更する。メインデータの参照とマスタの(M)ハブ_子を書き換える。
- * newName が既存の別ハブ名と一致する場合は実質的に統合（mergeHubInto）と同じ結果になる。
+ * プロジェクト名を旧名から新名へ変更する。メインデータの参照とマスタの(M)プロジェクト_子を書き換える。
+ * newName が既存の別プロジェクト名と一致する場合は実質的に統合（mergeProjectInto）と同じ結果になる。
  */
-function renameHubMaster(oldName, newName) {
-    const result = renameHubMasterM(currentMainData, currentMasterData, oldName, newName);
+function renameProjectMaster(oldName, newName) {
+    const result = renameProjectMasterM(currentMainData, currentMasterData, oldName, newName);
     currentMainData   = result.mainData;
     currentMasterData = result.masterData;
     saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
 }
 
-/** sourceName のハブを targetName に統合する。メインデータの参照を付け替え、source側のマスタ行のハブ関連列だけを消す。 */
-function mergeHubInto(sourceName, targetName) {
-    const result = mergeHubIntoM(currentMainData, currentMasterData, sourceName, targetName);
+/** sourceName のプロジェクトを targetName に統合する。メインデータの参照を付け替え、source側のマスタ行のプロジェクト関連列だけを消す。 */
+function mergeProjectInto(sourceName, targetName) {
+    const result = mergeProjectIntoM(currentMainData, currentMasterData, sourceName, targetName);
     currentMainData   = result.mainData;
     currentMasterData = result.masterData;
     saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
 }
 
-/** ハブを削除する。reassignTo を指定すればそのハブへ再割り当てしてから削除、未指定なら参照を空欄にして削除する。 */
-function deleteHub(name, reassignTo) {
-    const result = deleteHubM(currentMainData, currentMasterData, name, reassignTo);
+/** プロジェクトを削除する。reassignTo を指定すればそのプロジェクトへ再割り当てしてから削除、未指定なら参照を空欄にして削除する。 */
+function deleteProject(name, reassignTo) {
+    const result = deleteProjectM(currentMainData, currentMasterData, name, reassignTo);
     currentMainData   = result.mainData;
     currentMasterData = result.masterData;
     saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
 }
 
-/** 指定ハブ名の (M)ハブ_ステータス を切り替える（同名の全マスタ行に反映）。 */
-function toggleHubStatus(name) {
-    currentMasterData = toggleHubStatusM(currentMasterData, name);
+/** 指定プロジェクト名の (M)プロジェクト_ステータス を切り替える（同名の全マスタ行に反映）。 */
+function toggleProjectStatus(name) {
+    currentMasterData = toggleProjectStatusM(currentMasterData, name);
     saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
 }
 
-/** ハブ管理テーブルを描画する。名前変更・統合・削除の操作列を持つ。 */
-function renderHubAdmin() {
-    const table = document.getElementById('hub-admin-table');
+/** プロジェクト管理テーブルを描画する。名前変更・統合・削除の操作列を持つ。 */
+function renderProjectAdmin() {
+    const table = document.getElementById('project-admin-table');
     if (!table) return;
 
-    const hubNames = getAllHubNamesForAdmin();
+    const projectNames = getAllProjectNamesForAdmin();
     table.className = 'data-table';
 
-    if (hubNames.length === 0) {
+    if (projectNames.length === 0) {
         const tbody = document.createElement('tbody');
         const tr = document.createElement('tr');
         const td = document.createElement('td');
         td.className = 'empty-cell';
-        td.textContent = '登録済みのハブがありません';
+        td.textContent = '登録済みのプロジェクトがありません';
         tr.appendChild(td);
         tbody.appendChild(tr);
         table.replaceChildren(tbody);
@@ -886,7 +886,7 @@ function renderHubAdmin() {
 
     const thead = document.createElement('thead');
     const hRow  = document.createElement('tr');
-    ['ハブ名', '使用件数', '状態', '名前変更', '統合', '削除'].forEach(col => {
+    ['プロジェクト名', '使用件数', '状態', '名前変更', '統合', '削除'].forEach(col => {
         const th = document.createElement('th');
         th.textContent = col;
         hRow.appendChild(th);
@@ -894,9 +894,9 @@ function renderHubAdmin() {
     thead.appendChild(hRow);
 
     const tbody = document.createElement('tbody');
-    hubNames.forEach(name => {
-        const count = countHubUsage(name);
-        const otherNames = hubNames.filter(n => n !== name);
+    projectNames.forEach(name => {
+        const count = countProjectUsage(name);
+        const otherNames = projectNames.filter(n => n !== name);
 
         const tr = document.createElement('tr');
 
@@ -910,13 +910,13 @@ function renderHubAdmin() {
 
         // 状態（表示/非表示の切り替え）
         const statusTd = document.createElement('td');
-        const active = currentMasterData.some(r => r['(M)ハブ_子'] === name && isHubActive(r));
+        const active = currentMasterData.some(r => r['(M)プロジェクト_子'] === name && isProjectActive(r));
         const statusBtn = document.createElement('button');
         statusBtn.textContent = active ? '表示中' : '非表示中';
-        statusBtn.className = active ? 'hub-admin-status-btn hub-admin-status-btn--on' : 'hub-admin-status-btn hub-admin-status-btn--off';
+        statusBtn.className = active ? 'project-admin-status-btn project-admin-status-btn--on' : 'project-admin-status-btn project-admin-status-btn--off';
         statusBtn.addEventListener('click', () => {
-            toggleHubStatus(name);
-            renderHubAdmin();
+            toggleProjectStatus(name);
+            renderProjectAdmin();
             renderCalendar();
         });
         statusTd.appendChild(statusBtn);
@@ -927,15 +927,15 @@ function renderHubAdmin() {
         const renameInput = document.createElement('input');
         renameInput.type = 'text';
         renameInput.placeholder = '新しい名前';
-        renameInput.className = 'hub-admin-input';
+        renameInput.className = 'project-admin-input';
         const renameBtn = document.createElement('button');
         renameBtn.textContent = '変更';
         renameBtn.addEventListener('click', () => {
             const newName = renameInput.value.trim();
             if (!newName || newName === name) return;
-            renameHubMaster(name, newName);
-            hubAdminDeletePending = null;
-            renderHubAdmin();
+            renameProjectMaster(name, newName);
+            projectAdminDeletePending = null;
+            renderProjectAdmin();
             renderCalendar();
         });
         renameTd.append(renameInput, renameBtn);
@@ -952,12 +952,12 @@ function renderHubAdmin() {
                 mergeSelect.appendChild(opt);
             });
             const mergeBtn = document.createElement('button');
-            mergeBtn.textContent = 'このハブへ統合';
+            mergeBtn.textContent = 'このプロジェクトへ統合';
             mergeBtn.addEventListener('click', () => {
                 if (!confirm(`「${name}」を「${mergeSelect.value}」に統合します。「${name}」を使用中の全タスク／ナレッジが「${mergeSelect.value}」に書き換わります。よろしいですか？`)) return;
-                mergeHubInto(name, mergeSelect.value);
-                hubAdminDeletePending = null;
-                renderHubAdmin();
+                mergeProjectInto(name, mergeSelect.value);
+                projectAdminDeletePending = null;
+                renderProjectAdmin();
                 renderCalendar();
             });
             mergeTd.append(mergeSelect, mergeBtn);
@@ -968,7 +968,7 @@ function renderHubAdmin() {
 
         // 削除
         const deleteTd = document.createElement('td');
-        if (hubAdminDeletePending === name) {
+        if (projectAdminDeletePending === name) {
             const p = document.createElement('p');
             p.className = 'warning-text';
             p.textContent = `「${name}」は${count}件のタスク／ナレッジに割り当てられています。`;
@@ -985,9 +985,9 @@ function renderHubAdmin() {
                 const reassignBtn = document.createElement('button');
                 reassignBtn.textContent = '再割り当てして削除';
                 reassignBtn.addEventListener('click', () => {
-                    deleteHub(name, reassignSelect.value);
-                    hubAdminDeletePending = null;
-                    renderHubAdmin();
+                    deleteProject(name, reassignSelect.value);
+                    projectAdminDeletePending = null;
+                    renderProjectAdmin();
                     renderCalendar();
                 });
                 deleteTd.append(reassignSelect, reassignBtn);
@@ -997,17 +997,17 @@ function renderHubAdmin() {
             unassignBtn.className = 'calendar-danger-btn';
             unassignBtn.textContent = '割り当てずに削除';
             unassignBtn.addEventListener('click', () => {
-                if (!confirm(`「${name}」を削除し、割り当てられていた${count}件のハブを空欄にします。よろしいですか？`)) return;
-                deleteHub(name, null);
-                hubAdminDeletePending = null;
-                renderHubAdmin();
+                if (!confirm(`「${name}」を削除し、割り当てられていた${count}件のプロジェクトを空欄にします。よろしいですか？`)) return;
+                deleteProject(name, null);
+                projectAdminDeletePending = null;
+                renderProjectAdmin();
                 renderCalendar();
             });
             const cancelBtn = document.createElement('button');
             cancelBtn.textContent = 'キャンセル';
             cancelBtn.addEventListener('click', () => {
-                hubAdminDeletePending = null;
-                renderHubAdmin();
+                projectAdminDeletePending = null;
+                renderProjectAdmin();
             });
             deleteTd.append(unassignBtn, cancelBtn);
         } else {
@@ -1017,12 +1017,12 @@ function renderHubAdmin() {
             deleteBtn.addEventListener('click', () => {
                 if (count === 0) {
                     if (!confirm(`「${name}」を削除します。よろしいですか？`)) return;
-                    deleteHub(name, null);
-                    renderHubAdmin();
+                    deleteProject(name, null);
+                    renderProjectAdmin();
                     renderCalendar();
                 } else {
-                    hubAdminDeletePending = name;
-                    renderHubAdmin();
+                    projectAdminDeletePending = name;
+                    renderProjectAdmin();
                 }
             });
             deleteTd.appendChild(deleteBtn);
@@ -1084,13 +1084,13 @@ function applyContent(content, sha) {
     renderSummary();
 }
 
-// ===== GitHubから読み込み =====
+// ===== GitProjectから読み込み =====
 
 /**
- * GitHubからデータを読み込み、失敗時はローカルキャッシュへフォールバックする。
+ * GitProjectからデータを読み込み、失敗時はローカルキャッシュへフォールバックする。
  * (2) インプット: token (string), silent (boolean) - trueの場合トークン未入力時にアラートを出さない
  */
-async function loadFromGithub(token, silent = false) {
+async function loadFromGitproject(token, silent = false) {
     const contentBox = document.getElementById('content-box');
 
     if (!token) { if (!silent) alert('トークンを入力してください'); return; }
@@ -1118,10 +1118,10 @@ async function loadFromGithub(token, silent = false) {
 }
 
 document.querySelectorAll('.js-load-btn').forEach(btn => {
-    btn.addEventListener('click', () => loadFromGithub(getTokenValue()));
+    btn.addEventListener('click', () => loadFromGitproject(getTokenValue()));
 });
 
-// ===== GitHubへ保存 =====
+// ===== GitProjectへ保存 =====
 document.querySelectorAll('.js-save-btn').forEach(btn => {
     btn.addEventListener('click', async () => {
         const token      = getTokenValue();
@@ -1133,7 +1133,7 @@ document.querySelectorAll('.js-save-btn').forEach(btn => {
         const newMarkdown = stringifyMarkdown(currentMainData, currentMasterData);
 
         saveCache(newMarkdown, currentSha);
-        contentBox.textContent = 'GitHubへ保存中...';
+        contentBox.textContent = 'GitProjectへ保存中...';
 
         try {
             const { newSha } = await saveFile(token, OWNER, REPO, PATH, newMarkdown, currentSha);
@@ -1141,12 +1141,12 @@ document.querySelectorAll('.js-save-btn').forEach(btn => {
             saveCache(newMarkdown, newSha);
             setNetworkStatus('<span class="status-badge online-badge">オンライン（同期完了）</span>');
             contentBox.innerHTML = window.marked.parse(newMarkdown);
-            alert('GitHubへの保存が成功しました！');
+            alert('GitProjectへの保存が成功しました！');
         } catch (error) {
             console.error(error);
             setNetworkStatus('<span class="status-badge offline-badge">未同期の変更あり</span>');
             contentBox.innerHTML = window.marked.parse(newMarkdown);
-            alert('現在通信ができません。変更はスマホ内に一時保存されました。電波の良い場所に移動してから、再度「GitHubへ保存する」を押して同期してください。');
+            alert('現在通信ができません。変更はスマホ内に一時保存されました。電波の良い場所に移動してから、再度「GitProjectへ保存する」を押して同期してください。');
         }
     });
 });
@@ -1155,7 +1155,7 @@ document.querySelectorAll('.js-save-btn').forEach(btn => {
 document.querySelectorAll('.js-excel-export-btn').forEach(btn => {
     btn.addEventListener('click', () => {
         if (currentMainData.length === 0 && currentMasterData.length === 0) {
-            return alert('エクスポートするデータがありません。先にGitHubからデータを読み込んでください。');
+            return alert('エクスポートするデータがありません。先にGitProjectからデータを読み込んでください。');
         }
         exportToExcel(currentMainData, currentMasterData);
     });
@@ -1179,7 +1179,7 @@ document.querySelectorAll('.js-excel-import').forEach(input => {
         e.target.value = ''; // 同一ファイルの再インポートを可能にするためリセット
 
         if (token && currentSha) {
-            contentBox.textContent = 'GitHubへ保存中...';
+            contentBox.textContent = 'GitProjectへ保存中...';
             try {
                 const { newSha } = await saveFile(token, OWNER, REPO, PATH, newMarkdown, currentSha);
                 currentSha = newSha;
@@ -1191,12 +1191,12 @@ document.querySelectorAll('.js-excel-import').forEach(input => {
                 console.error(error);
                 setNetworkStatus('<span class="status-badge offline-badge">未同期の変更あり</span>');
                 contentBox.innerHTML = window.marked.parse(newMarkdown);
-                alert('インポートデータを端末内に保存しました。「GitHubへ保存する」で同期してください。');
+                alert('インポートデータを端末内に保存しました。「GitProjectへ保存する」で同期してください。');
             }
         } else {
             setNetworkStatus('<span class="status-badge offline-badge">端末内に保存済み（未同期）</span>');
             contentBox.innerHTML = window.marked.parse(newMarkdown);
-            alert('インポートデータを端末内に保存しました。GitHubへ同期するには、トークンを入力して読み込んでから再度インポートしてください。');
+            alert('インポートデータを端末内に保存しました。GitProjectへ同期するには、トークンを入力して読み込んでから再度インポートしてください。');
         }
     });
 });
@@ -1247,6 +1247,7 @@ document.querySelectorAll('.js-inbox-submit').forEach(btn => {
         const entry = Object.fromEntries(MAIN_DATA_COLUMNS.map(col => [col, '']));
         entry['ID']        = String(maxId + 1);
         entry['データ区分'] = 'INBOX';
+        entry['タイトル']   = content.slice(0, 15);
         entry['内容']       = content;
         entry['作成日時']   = ts;
         entry['更新日時']   = ts;
@@ -1254,7 +1255,7 @@ document.querySelectorAll('.js-inbox-submit').forEach(btn => {
 
         currentMainData.push(entry);
 
-        // LocalStorage に自動保存（GitHub push 前の安全網）
+        // LocalStorage に自動保存（GitProject push 前の安全網）
         saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
 
         document.querySelectorAll('.js-inbox-content').forEach(ta => { ta.value = ''; });
@@ -1323,19 +1324,19 @@ export function getFilteredTags() {
     return filterTagsByCategory(currentMasterData, currentCategory);
 }
 
-/** (M)ハブ_ステータスが '0'（無効）でない行かどうかを判定する。未入力は有効扱いにする。 */
-function isHubActive(row) {
-    return isHubActiveM(row);
+/** (M)プロジェクト_ステータスが '0'（無効）でない行かどうかを判定する。未入力は有効扱いにする。 */
+function isProjectActive(row) {
+    return isProjectActiveM(row);
 }
 
 /**
- * 選択中のカテゴリに属する、有効な（(M)ハブ_ステータスが0でない）ハブ名一覧を返す。
- * 「すべて」選択時は (M)ハブ_子 の全値を返す。
- * それ以外は (M)ハブ_親 === currentCategory の行の (M)ハブ_子 を返す。
+ * 選択中のカテゴリに属する、有効な（(M)プロジェクト_ステータスが0でない）プロジェクト名一覧を返す。
+ * 「すべて」選択時は (M)プロジェクト_子 の全値を返す。
+ * それ以外は (M)プロジェクト_親 === currentCategory の行の (M)プロジェクト_子 を返す。
  * @returns {string[]}
  */
-export function getFilteredHubs() {
-    return filterHubsByCategory(currentMasterData, currentCategory);
+export function getFilteredProjects() {
+    return filterProjectsByCategory(currentMasterData, currentCategory);
 }
 
 // ===== タスク実行機能 =====
@@ -1704,10 +1705,10 @@ function buildRunnerAttributeEditor(row) {
     tagSelect.value = row['タグ'] || '';
     addRow('タグ', tagSelect);
 
-    const hubSelect = document.createElement('select');
-    populateSelectOptions(hubSelect, getFilteredHubs(), '（未設定）');
-    hubSelect.value = row['ハブ'] || '';
-    addRow('ハブ', hubSelect);
+    const projectSelect = document.createElement('select');
+    populateSelectOptions(projectSelect, getFilteredProjects(), '（未設定）');
+    projectSelect.value = row['プロジェクト'] || '';
+    addRow('プロジェクト', projectSelect);
 
     const toolbar = document.createElement('div');
     toolbar.className = 'calendar-edit-toolbar';
@@ -1720,7 +1721,7 @@ function buildRunnerAttributeEditor(row) {
         row['優先度']   = prioritySelect.value;
         row['カテゴリ'] = categorySelect.value;
         row['タグ']     = tagSelect.value;
-        row['ハブ']     = hubSelect.value;
+        row['プロジェクト']     = projectSelect.value;
 
         const startTime = start.hourInput.value !== '' && start.minuteInput.value !== ''
             ? `${String(start.hourInput.value).padStart(2, '0')}:${String(start.minuteInput.value).padStart(2, '0')}` : '';
@@ -1749,7 +1750,7 @@ function getTasksForDate(dateJP) {
     return getTasksForDateM(currentMainData, currentCategory, calendarFilters, dateJP);
 }
 
-/** 指定日の1日タスク（ハブ=DAYPLAN_HUB、開始予定=dateJP のタスク行）を返す。無ければ null。 */
+/** 指定日の1日タスク（プロジェクト=DAYPLAN_PROJECT、開始予定=dateJP のタスク行）を返す。無ければ null。 */
 function getDayPlanTask(dateJP) {
     return getDayPlanTaskM(currentMainData, dateJP);
 }
@@ -1792,13 +1793,13 @@ function sortByTotalCountDesc(options, field) {
 }
 
 /**
- * タグ／ハブ／ステータスの絞り込みチップ（いずれも複数選択可、件数(n/N)併記・N降順）を area に描画する。
+ * タグ／プロジェクト／ステータスの絞り込みチップ（いずれも複数選択可、件数(n/N)併記・N降順）を area に描画する。
  * カレンダー・ガントチャートなど複数箇所から共通利用する。
  * @param {HTMLElement} area     - チップ群を描画する要素
- * @param {{tag:Set, hub:Set, status:Set}} filters - 選択状態を持つフィルタ値（複数選択）
+ * @param {{tag:Set, project:Set, status:Set}} filters - 選択状態を持つフィルタ値（複数選択）
  * @param {Function} onChange    - 選択変更時に呼ぶ再描画コールバック
  */
-function renderTagHubStatusFilters(area, filters, onChange) {
+function renderTagProjectStatusFilters(area, filters, onChange) {
     if (!area) return;
     area.innerHTML = '';
 
@@ -1838,10 +1839,10 @@ function renderTagHubStatusFilters(area, filters, onChange) {
         onChange
     ));
 
-    const hubOptions = sortByTotalCountDesc(getFilteredHubs(), 'ハブ');
-    makeRow('ハブ', hubOptions, filters.hub, createCalendarMultiFilter(
-        hubOptions, filters.hub,
-        v => `${v} (${countActiveTasksByField('ハブ', v)}/${countTasksByField('ハブ', v)})`,
+    const projectOptions = sortByTotalCountDesc(getFilteredProjects(), 'プロジェクト');
+    makeRow('プロジェクト', projectOptions, filters.project, createCalendarMultiFilter(
+        projectOptions, filters.project,
+        v => `${v} (${countActiveTasksByField('プロジェクト', v)}/${countTasksByField('プロジェクト', v)})`,
         onChange
     ));
 
@@ -1857,20 +1858,20 @@ function renderTagHubStatusFilters(area, filters, onChange) {
     ));
 }
 
-/** カレンダー上部のタグ／ハブ／ステータスフィルタ（いずれも複数選択可）を描画する。 */
+/** カレンダー上部のタグ／プロジェクト／ステータスフィルタ（いずれも複数選択可）を描画する。 */
 function renderCalendarFilters() {
-    renderTagHubStatusFilters(document.getElementById('calendar-filter-area'), calendarFilters, () => renderCalendar());
+    renderTagProjectStatusFilters(document.getElementById('calendar-filter-area'), calendarFilters, () => renderCalendar());
 }
 
 /**
- * タグ／ハブ／ステータスでフィルタ中のタスク一覧（日付を問わず全件）を返す。
+ * タグ／プロジェクト／ステータスでフィルタ中のタスク一覧（日付を問わず全件）を返す。
  * ソート順: ステータス（完了・報告待ち・連絡待ち・中断・進行中・未着手・空欄の順）→ 完了日 昇順 → 開始予定 昇順 → 終了予定 昇順。
  */
 function getCalendarFilteredTaskList() {
     return getCalendarFilteredTaskListM(currentMainData, currentCategory, calendarFilters);
 }
 
-/** タグ／ハブでフィルタ中のタスク一覧テーブルを、指定した table 要素（カレンダー／ガントチャート共通）に描画する。 */
+/** タグ／プロジェクトでフィルタ中のタスク一覧テーブルを、指定した table 要素（カレンダー／ガントチャート共通）に描画する。 */
 function renderCalendarTaskList(tableId = 'calendar-task-list-table') {
     const table = document.getElementById(tableId);
     if (!table) return;
@@ -2264,9 +2265,9 @@ function parseHHMMToMinutes(str) {
 }
 
 /**
- * 選択中日付の1日タスクを新規作成する（ハブ=DAYPLAN_HUB、開始予定=選択中日付）。
+ * 選択中日付の1日タスクを新規作成する（プロジェクト=DAYPLAN_PROJECT、開始予定=選択中日付）。
  * 内容には既定の「09:00-09:30 メールチェック、予定整理」に加え、その日既に開始予定・終了予定が
- * 時刻まで指定されている既存タスクを取り込む（カテゴリの絞り込みは適用、タグ／ハブ／ステータスの絞り込みは適用しない）。
+ * 時刻まで指定されている既存タスクを取り込む（カテゴリの絞り込みは適用、タグ／プロジェクト／ステータスの絞り込みは適用しない）。
  */
 function createDayPlanTask() {
     if (!selectedCalendarDate) return;
@@ -2277,7 +2278,7 @@ function createDayPlanTask() {
     }, 0);
     const ts = formatJpDatetime(new Date());
 
-    const noFilters = { tag: new Set(), hub: new Set(), status: new Set() };
+    const noFilters = { tag: new Set(), project: new Set(), status: new Set() };
     const scheduledBlocks = getTasksForDateM(currentMainData, currentCategory, noFilters, selectedCalendarDate)
         .map(row => {
             const timeInfo = getTaskScheduledTimeOnDate(row, selectedCalendarDate);
@@ -2298,7 +2299,7 @@ function createDayPlanTask() {
     entry['ID']        = String(maxId + 1);
     entry['データ区分'] = 'タスク';
     entry['タイトル']   = `1日タスク ${selectedCalendarDate}`;
-    entry['ハブ']       = DAYPLAN_HUB;
+    entry['プロジェクト']       = DAYPLAN_PROJECT;
     entry['開始予定']   = selectedCalendarDate;
     entry['ステータス'] = '未着手';
     entry['内容']       = content;
@@ -2450,7 +2451,7 @@ function getIncompleteDateTasks() {
     return getIncompleteDateTasksM(currentMainData, currentCategory, calendarFilters);
 }
 
-/** カテゴリ／ステータス／優先度／ハブそれぞれが未設定のタスクを、領域ごとに分けて返す（重複あり）。 */
+/** カテゴリ／ステータス／優先度／プロジェクトそれぞれが未設定のタスクを、領域ごとに分けて返す（重複あり）。 */
 function getUnsetAttributeGroups() {
     return getUnsetAttributeGroupsM(currentMainData, currentCategory);
 }
@@ -2481,7 +2482,7 @@ function renderCalendarDetail() {
     const unsetCategoryEl   = document.getElementById('calendar-unset-category-list');
     const unsetStatusEl     = document.getElementById('calendar-unset-status-list');
     const unsetPriorityEl   = document.getElementById('calendar-unset-priority-list');
-    const unsetHubEl        = document.getElementById('calendar-unset-hub-list');
+    const unsetProjectEl        = document.getElementById('calendar-unset-project-list');
     const suspendedEl       = document.getElementById('calendar-suspended-list');
     if (!titleEl) return;
 
@@ -2494,14 +2495,14 @@ function renderCalendarDetail() {
     renderCalendarChipList(unsetCategoryEl, toChips(unsetGroups.categoryUnset), '該当するタスクはありません', { showAddButton: false });
     renderCalendarChipList(unsetStatusEl,   toChips(unsetGroups.statusUnset),   '該当するタスクはありません', { showAddButton: false });
     renderCalendarChipList(unsetPriorityEl, toChips(unsetGroups.priorityUnset), '該当するタスクはありません', { showAddButton: false });
-    renderCalendarChipList(unsetHubEl,      toChips(unsetGroups.hubUnset),      '該当するタスクはありません', { showAddButton: false });
+    renderCalendarChipList(unsetProjectEl,      toChips(unsetGroups.projectUnset),      '該当するタスクはありません', { showAddButton: false });
     setExpanderCount('calendar-unset-category-count', unsetGroups.categoryUnset.length);
     setExpanderCount('calendar-unset-status-count',   unsetGroups.statusUnset.length);
     setExpanderCount('calendar-unset-priority-count', unsetGroups.priorityUnset.length);
-    setExpanderCount('calendar-unset-hub-count',      unsetGroups.hubUnset.length);
+    setExpanderCount('calendar-unset-project-count',      unsetGroups.projectUnset.length);
     setExpanderCount('calendar-unset-total-count',
         unsetGroups.categoryUnset.length + unsetGroups.statusUnset.length +
-        unsetGroups.priorityUnset.length + unsetGroups.hubUnset.length);
+        unsetGroups.priorityUnset.length + unsetGroups.projectUnset.length);
 
     const suspendedChips = toChips(getSuspendedTasks());
     renderCalendarChipList(suspendedEl, suspendedChips, '該当するタスクはありません', { showAddButton: false });
@@ -2606,7 +2607,7 @@ function renderCalendarTaskEdit() {
     document.getElementById('dayedit-priority').value = row['優先度']     ?? '';
     document.getElementById('dayedit-category').value = row['カテゴリ']   ?? '';
     document.getElementById('dayedit-tag').value      = row['タグ']       ?? '';
-    document.getElementById('dayedit-hub').value      = row['ハブ']       ?? '';
+    document.getElementById('dayedit-project').value      = row['プロジェクト']       ?? '';
 
     writeTaskDateTimeFieldsToForm('dayedit', row);
     writeTaskEstimateActualToForm('dayedit', row);
@@ -2622,7 +2623,7 @@ function renderCalendarTaskEdit() {
 /**
  * 編集フォームをクリアし、新規登録モードの初期値を設定する。
  * - 開始予定・終了予定の日付: 選択中のカレンダー日付
- * - タグ／ハブ: カレンダーで絞り込み中の値があればそれ
+ * - タグ／プロジェクト: カレンダーで絞り込み中の値があればそれ
  * - ステータス: 未着手／優先度: 中（マスタに存在する場合のみ反映）
  * - カテゴリ: サイドバーで選択中のカテゴリ（「すべて」以外）
  */
@@ -2630,7 +2631,7 @@ function clearCalendarTaskEditForm() {
     ['dayedit-id', 'dayedit-title', 'dayedit-content', 'dayedit-biko', 'dayedit-status', 'dayedit-priority',
      'dayedit-estimate', 'dayedit-actual',
      'dayedit-start-hour', 'dayedit-start-minute', 'dayedit-end-hour', 'dayedit-end-minute',
-     'dayedit-complete-date', 'dayedit-category', 'dayedit-tag', 'dayedit-hub'].forEach(id => {
+     'dayedit-complete-date', 'dayedit-category', 'dayedit-tag', 'dayedit-project'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.value = '';
     });
@@ -2647,11 +2648,11 @@ function clearCalendarTaskEditForm() {
     const endDateEl = document.getElementById('dayedit-end-date');
     if (endDateEl) endDateEl.value = dateValue;
 
-    // タグ／ハブが1つだけ選択されている場合のみ、新規タスクの初期値として反映する
+    // タグ／プロジェクトが1つだけ選択されている場合のみ、新規タスクの初期値として反映する
     const tagEl = document.getElementById('dayedit-tag');
     if (tagEl && calendarFilters.tag.size === 1) tagEl.value = [...calendarFilters.tag][0];
-    const hubEl = document.getElementById('dayedit-hub');
-    if (hubEl && calendarFilters.hub.size === 1) hubEl.value = [...calendarFilters.hub][0];
+    const projectEl = document.getElementById('dayedit-project');
+    if (projectEl && calendarFilters.project.size === 1) projectEl.value = [...calendarFilters.project][0];
 
     const statusEl = document.getElementById('dayedit-status');
     if (statusEl) statusEl.value = '未着手';
@@ -2673,10 +2674,10 @@ function readCalendarTime(hourId, minuteId) {
 
 // ---- タスク編集フォーム（dayedit-* / recuredit-*）共通ヘルパー ----
 // カレンダーの属性編集パネルと繰り返しタスクの編集パネルは、id接頭辞（prefix）が異なるだけで
-// ステータス/優先度/カテゴリ/タグ/ハブの選択肢・日時フィールド・頻度チップの構造が同一のため、
+// ステータス/優先度/カテゴリ/タグ/プロジェクトの選択肢・日時フィールド・頻度チップの構造が同一のため、
 // prefixを引数に取る共通関数へ集約する。
 
-/** prefix-status／priority／category／tag／hub の select 選択肢を再構築する。 */
+/** prefix-status／priority／category／tag／project の select 選択肢を再構築する。 */
 function populateTaskEditSelects(prefix) {
     const statuses = [...new Set(
         currentMasterData.filter(r => r['(M)ステータス_親'] === 'タスク')
@@ -2686,7 +2687,7 @@ function populateTaskEditSelects(prefix) {
     rebuildSelectById(`${prefix}-priority`, [...new Set(currentMasterData.map(r => r['(M)優先度']).filter(Boolean))]);
     rebuildSelectById(`${prefix}-category`, [...new Set(currentMasterData.map(r => r['(M)カテゴリ']).filter(Boolean))]);
     rebuildSelectById(`${prefix}-tag`,      getFilteredTags());
-    rebuildSelectById(`${prefix}-hub`,      getFilteredHubs());
+    rebuildSelectById(`${prefix}-project`,      getFilteredProjects());
 }
 
 /** row の開始予定・終了予定・完了日を、prefix-start-date/hour/minute 等のフォーム欄に分解して反映する。 */
@@ -2813,7 +2814,7 @@ document.getElementById('dayedit-apply-btn')?.addEventListener('click', () => {
     row['見積時間']   = document.getElementById('dayedit-estimate').value;
     row['カテゴリ']   = document.getElementById('dayedit-category').value;
     row['タグ']       = document.getElementById('dayedit-tag').value;
-    row['ハブ']       = document.getElementById('dayedit-hub').value;
+    row['プロジェクト']       = document.getElementById('dayedit-project').value;
     applyRecurringFieldsFromForm(row);
     Object.assign(row, readTaskDateTimeFieldsFromForm('dayedit'));
     row['更新日時'] = formatJpDatetime(new Date());
@@ -2881,7 +2882,7 @@ document.getElementById('dayedit-new-btn')?.addEventListener('click', () => {
     entry['見積時間']   = document.getElementById('dayedit-estimate').value;
     entry['カテゴリ']   = document.getElementById('dayedit-category').value || (currentCategory === 'すべて' ? '' : currentCategory);
     entry['タグ']       = document.getElementById('dayedit-tag').value;
-    entry['ハブ']       = document.getElementById('dayedit-hub').value;
+    entry['プロジェクト']       = document.getElementById('dayedit-project').value;
     applyRecurringFieldsFromForm(entry);
     Object.assign(entry, readTaskDateTimeFieldsFromForm('dayedit'));
     entry['作成日時']   = ts;
@@ -2914,14 +2915,14 @@ document.getElementById('gantt-next-btn')?.addEventListener('click', goToNextMon
 
 // ===== ガントチャート（タスクページ） =====
 
-/** カテゴリ・calendarFilters（タグ／ハブ／ステータス）で絞り込んだタスク一覧を返す。1日タスクは除外し、日付未設定の行も除外する。 */
+/** カテゴリ・calendarFilters（タグ／プロジェクト／ステータス）で絞り込んだタスク一覧を返す。1日タスクは除外し、日付未設定の行も除外する。 */
 function getGanttTasks() {
     return getFilteredMainData().filter(r => {
         if (r['データ区分'] !== 'タスク') return false;
-        if (r['ハブ'] === DAYPLAN_HUB) return false;
+        if (r['プロジェクト'] === DAYPLAN_PROJECT) return false;
         if (!r['開始予定'] && !r['終了予定']) return false;
         if (!matchesMultiFilter(calendarFilters.tag, r['タグ'])) return false;
-        if (!matchesMultiFilter(calendarFilters.hub, r['ハブ'])) return false;
+        if (!matchesMultiFilter(calendarFilters.project, r['プロジェクト'])) return false;
         if (!matchesMultiFilter(calendarFilters.status, r['ステータス'])) return false;
         return true;
     });
@@ -3119,7 +3120,7 @@ document.querySelectorAll('#recurring-tab-all, #recurring-tab-today').forEach(bt
     });
 });
 
-/** 親タスク一覧テーブル（ハブ・親タスク名・子タスク数・ステータス・頻度）を描画する。行クリックで編集パネルに読み込む。 */
+/** 親タスク一覧テーブル（プロジェクト・親タスク名・子タスク数・ステータス・頻度）を描画する。行クリックで編集パネルに読み込む。 */
 function renderRecurringParentTable() {
     const container = document.getElementById('recurring-section');
     if (!container) return;
@@ -3150,7 +3151,7 @@ function renderRecurringParentTable() {
     table.className = 'data-table recurring-parent-table';
     const thead = document.createElement('thead');
     const hRow  = document.createElement('tr');
-    ['ハブ', '親タスク名', '子タスク数', 'ステータス', '頻度'].forEach(col => {
+    ['プロジェクト', '親タスク名', '子タスク数', 'ステータス', '頻度'].forEach(col => {
         const th = document.createElement('th');
         th.textContent = col;
         hRow.appendChild(th);
@@ -3166,7 +3167,7 @@ function renderRecurringParentTable() {
         tr.className = 'recurring-parent-row';
         if (parentId === selectedRecurringParentId) tr.classList.add('selected-row');
         const cells = [
-            parent['ハブ'] || '',
+            parent['プロジェクト'] || '',
             parent['タイトル'] || '（無題）',
             String(childCount),
             parent['ステータス'] || '未設定',
@@ -3478,7 +3479,7 @@ function clearRecurEditForm() {
      'recuredit-estimate', 'recuredit-actual',
      'recuredit-start-date', 'recuredit-start-hour', 'recuredit-start-minute',
      'recuredit-end-date', 'recuredit-end-hour', 'recuredit-end-minute',
-     'recuredit-complete-date', 'recuredit-category', 'recuredit-tag', 'recuredit-hub'].forEach(id => {
+     'recuredit-complete-date', 'recuredit-category', 'recuredit-tag', 'recuredit-project'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.value = '';
     });
@@ -3526,7 +3527,7 @@ function renderRecurringEditPanel() {
     document.getElementById('recuredit-priority').value = row['優先度']     ?? '';
     document.getElementById('recuredit-category').value = row['カテゴリ']   ?? '';
     document.getElementById('recuredit-tag').value      = row['タグ']       ?? '';
-    document.getElementById('recuredit-hub').value      = row['ハブ']       ?? '';
+    document.getElementById('recuredit-project').value      = row['プロジェクト']       ?? '';
 
     writeTaskDateTimeFieldsToForm('recuredit', row);
     writeTaskEstimateActualToForm('recuredit', row);
@@ -3580,7 +3581,7 @@ function applyRecurEditForm() {
     row['見積時間']   = document.getElementById('recuredit-estimate').value;
     row['カテゴリ']   = document.getElementById('recuredit-category').value;
     row['タグ']       = document.getElementById('recuredit-tag').value;
-    row['ハブ']       = document.getElementById('recuredit-hub').value;
+    row['プロジェクト']       = document.getElementById('recuredit-project').value;
     if (isParentRow) {
         row['繰返し識別子']   = '1';
         row['繰返し頻度_月']  = [...recurEditFreq.month].join(',');
@@ -3658,7 +3659,7 @@ document.getElementById('recuredit-new-btn')?.addEventListener('click', () => {
     entry['見積時間']   = document.getElementById('recuredit-estimate').value;
     entry['カテゴリ']   = document.getElementById('recuredit-category').value || (currentCategory === 'すべて' ? '' : currentCategory);
     entry['タグ']       = document.getElementById('recuredit-tag').value;
-    entry['ハブ']       = document.getElementById('recuredit-hub').value;
+    entry['プロジェクト']       = document.getElementById('recuredit-project').value;
     entry['繰返し識別子']   = '1';
     entry['繰返し親ID']     = '';
     entry['繰返し頻度_月']  = [...recurEditFreq.month].join(',');

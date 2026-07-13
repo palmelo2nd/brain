@@ -20,9 +20,9 @@
         <div id="taskorg-anchor-home" style="display:none">
             <div id="taskorg-details">
 
-                <!-- タグ／ハブ／ステータスのフィルタ -->
+                <!-- タグ／プロジェクト／ステータスのフィルタ -->
                 <details class="expander calendar-sub-expander">
-                    <summary class="expander-title">タグ／ハブ／ステータスのフィルタ</summary>
+                    <summary class="expander-title">タグ／プロジェクト／ステータスのフィルタ</summary>
                     <div id="calendar-filter-area" class="triage-filter-area"></div>
                 </details>
 
@@ -115,10 +115,10 @@
                             </div>
                         </details>
 
-                        <!-- カテゴリ／ステータス／優先度／ハブのいずれかが未設定のタスク（既定は折りたたみ） -->
+                        <!-- カテゴリ／ステータス／優先度／プロジェクトのいずれかが未設定のタスク（既定は折りたたみ） -->
                         <details class="expander calendar-sub-expander">
                             <summary class="expander-title">属性未設定タスク<span id="calendar-unset-total-count" class="expander-count"></span></summary>
-                            <p class="calendar-dayplan-hint">カテゴリ・ステータス・優先度・ハブのいずれかが未入力のタスクです（複数の領域に重複して表示される場合があります）。</p>
+                            <p class="calendar-dayplan-hint">カテゴリ・ステータス・優先度・プロジェクトのいずれかが未入力のタスクです（複数の領域に重複して表示される場合があります）。</p>
 
                             <div class="calendar-unscheduled-section">
                                 <p class="calendar-section-label calendar-section-label--accent">カテゴリ<span id="calendar-unset-category-count" class="expander-count"></span></p>
@@ -133,8 +133,8 @@
                                 <div id="calendar-unset-priority-list" class="calendar-unscheduled-list"></div>
                             </div>
                             <div class="calendar-unscheduled-section">
-                                <p class="calendar-section-label calendar-section-label--accent">ハブ<span id="calendar-unset-hub-count" class="expander-count"></span></p>
-                                <div id="calendar-unset-hub-list" class="calendar-unscheduled-list"></div>
+                                <p class="calendar-section-label calendar-section-label--accent">プロジェクト<span id="calendar-unset-project-count" class="expander-count"></span></p>
+                                <div id="calendar-unset-project-list" class="calendar-unscheduled-list"></div>
                             </div>
                         </details>
 
@@ -232,8 +232,8 @@
                                 <select id="dayedit-tag"></select>
                             </div>
                             <div class="calendar-edit-row">
-                                <label>ハブ</label>
-                                <select id="dayedit-hub"></select>
+                                <label>プロジェクト</label>
+                                <select id="dayedit-project"></select>
                             </div>
                             <div class="calendar-edit-toolbar">
                                 <button id="dayedit-new-btn" class="calendar-add-btn">新規</button>
@@ -380,8 +380,8 @@
                                 <select id="recuredit-tag"></select>
                             </div>
                             <div class="calendar-edit-row">
-                                <label>ハブ</label>
-                                <select id="recuredit-hub"></select>
+                                <label>プロジェクト</label>
+                                <select id="recuredit-project"></select>
                             </div>
                             <div class="calendar-edit-toolbar">
                                 <button id="recuredit-apply-btn">適用</button>
@@ -436,14 +436,14 @@
                 </div>
             </div>
 
-            <!-- 表示切り替え（タスク整理／タスク実行／INBOX／習慣／編集／ハブ／データ） -->
+            <!-- 表示切り替え（タスク整理／タスク実行／INBOX／習慣／編集／プロジェクト／データ） -->
             <div class="taskorg-view-toggle summary-main-tabs">
                 <button type="button" id="summary-tab-taskorg" class="taskorg-view-btn taskorg-view-btn--active" data-view="taskorg">タスク整理</button>
                 <button type="button" id="summary-tab-runner" class="taskorg-view-btn" data-view="runner">タスク実行</button>
                 <button type="button" id="summary-tab-top" class="taskorg-view-btn" data-view="top">INBOX</button>
                 <button type="button" id="summary-tab-recurring" class="taskorg-view-btn" data-view="recurring">習慣</button>
                 <button type="button" id="summary-tab-edit" class="taskorg-view-btn" data-view="edit">編集</button>
-                <button type="button" id="summary-tab-hub" class="taskorg-view-btn" data-view="hub">ハブ</button>
+                <button type="button" id="summary-tab-project" class="taskorg-view-btn" data-view="project">プロジェクト</button>
                 <button type="button" id="summary-tab-data" class="taskorg-view-btn" data-view="data">データ</button>
                 <button type="button" id="summary-tab-work" class="taskorg-view-btn" data-view="work">勤務</button>
             </div>
@@ -480,9 +480,9 @@
                 <div id="edit-anchor-summary"></div>
             </div>
 
-            <!-- ハブ（表示切り替え時に本体を移動して表示） -->
-            <div id="summary-view-hub" class="summary-view-panel" style="display:none">
-                <div id="hub-anchor-summary"></div>
+            <!-- プロジェクト（表示切り替え時に本体を移動して表示） -->
+            <div id="summary-view-project" class="summary-view-panel" style="display:none">
+                <div id="project-anchor-summary"></div>
             </div>
 
             <!-- データ（表示切り替え時に本体を移動して表示） -->
@@ -573,8 +573,8 @@
                         <select id="edit-tag"></select>
                     </div>
                     <div class="triage-form-row">
-                        <label>ハブ</label>
-                        <select id="edit-hub"></select>
+                        <label>プロジェクト</label>
+                        <select id="edit-project"></select>
                     </div>
 
                     <!-- ステータス（タスク／ナレッジ選択時） -->
@@ -650,16 +650,16 @@
             </div>
         </div>
 
-        <!-- ハブ管理（名前変更・削除・統合、Summaryページ「ハブ」タブに表示） -->
-        <div id="hub-anchor-home" style="display:none">
-            <div id="hub-group">
+        <!-- プロジェクト管理（名前変更・削除・統合、Summaryページ「プロジェクト」タブに表示） -->
+        <div id="project-anchor-home" style="display:none">
+            <div id="project-group">
                 <details class="expander" open>
-                    <summary class="expander-title" id="summary-hub-admin">
-                        ハブ管理
+                    <summary class="expander-title" id="summary-project-admin">
+                        プロジェクト管理
                     </summary>
-                    <p class="calendar-dayplan-hint">名前変更・統合は既存タスク／ナレッジの「ハブ」を一括で書き換えます。削除は使用中の場合、別のハブへの再割り当て、または未割り当てにしてから削除できます。</p>
+                    <p class="calendar-dayplan-hint">名前変更・統合は既存タスク／ナレッジの「プロジェクト」を一括で書き換えます。削除は使用中の場合、別のプロジェクトへの再割り当て、または未割り当てにしてから削除できます。</p>
                     <div class="table-wrapper table-wrapper--limited">
-                        <table id="hub-admin-table"></table>
+                        <table id="project-admin-table"></table>
                     </div>
                 </details>
             </div>

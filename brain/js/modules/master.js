@@ -21,7 +21,7 @@ export function getAllKnownColumns(mainData, masterData, mainColumns, masterColu
  * - 固定列にあるが masterData 未登録の変数
  * - masterData にあるが固定列に存在しない変数名
  * - (M)変数名/(M)変数分類/(M)変数説明のいずれかが空の行
- * - タグ／ハブの親がカテゴリに未登録
+ * - タグ／プロジェクトの親がカテゴリに未登録
  * - ステータスの親が「タスク」「ナレッジ」以外
  */
 export function computeMasterWarnings(mainData, masterData, mainColumns, masterColumns) {
@@ -48,7 +48,7 @@ export function computeMasterWarnings(mainData, masterData, mainColumns, masterC
         warnings.push(`未入力の項目がある行が ${incomplete.length} 件あります`);
     }
 
-    // タグ・ハブの親がカテゴリに登録されているか確認
+    // タグ・プロジェクトの親がカテゴリに登録されているか確認
     const registeredCategories = [...new Set(masterData.map(r => r['(M)カテゴリ']).filter(Boolean))];
 
     const invalidTagParents = [...new Set(masterData.map(r => r['(M)タグ_親']).filter(Boolean))]
@@ -57,10 +57,10 @@ export function computeMasterWarnings(mainData, masterData, mainColumns, masterC
         warnings.push(`タグの親「${invalidTagParents[0]}」はカテゴリに未登録です`);
     }
 
-    const invalidHubParents = [...new Set(masterData.map(r => r['(M)ハブ_親']).filter(Boolean))]
+    const invalidProjectParents = [...new Set(masterData.map(r => r['(M)プロジェクト_親']).filter(Boolean))]
         .filter(p => !registeredCategories.includes(p));
-    if (invalidHubParents.length > 0) {
-        warnings.push(`ハブの親「${invalidHubParents[0]}」はカテゴリに未登録です`);
+    if (invalidProjectParents.length > 0) {
+        warnings.push(`プロジェクトの親「${invalidProjectParents[0]}」はカテゴリに未登録です`);
     }
 
     // ステータスの親が「タスク」か「ナレッジ」か確認

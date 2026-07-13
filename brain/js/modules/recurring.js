@@ -94,7 +94,7 @@ function buildChild(parent, dateStr, slashDate, id, ts) {
     child['内容']         = parent['内容']      || '';
     child['カテゴリ']     = parent['カテゴリ']  || '';
     child['タグ']         = parent['タグ']      || '';
-    child['ハブ']         = parent['ハブ']      || '';
+    child['プロジェクト']         = parent['プロジェクト']      || '';
     child['優先度']       = parent['優先度']    || '';
     child['見積時間']     = parent['見積時間']  || '';
     child['開始予定']     = slashDate;

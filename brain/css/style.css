@@ -357,24 +357,24 @@ details[open] > .expander-title::after { transform: rotate(90deg); }
     white-space: normal;
 }
 
-/* ===== ハブ管理 ===== */
-#hub-admin-table td {
+/* ===== プロジェクト管理 ===== */
+#project-admin-table td {
     white-space: normal;
     max-width: none;
     vertical-align: middle;
 }
 
-#hub-admin-table td > * { margin-right: 6px; vertical-align: middle; }
-#hub-admin-table td > *:last-child { margin-right: 0; }
+#project-admin-table td > * { margin-right: 6px; vertical-align: middle; }
+#project-admin-table td > *:last-child { margin-right: 0; }
 
-.hub-admin-input {
+.project-admin-input {
     width: 120px;
     padding: 3px 6px;
     border: 1px solid #d0d7de;
     border-radius: 4px;
 }
 
-.hub-admin-status-btn {
+.project-admin-status-btn {
     border: 1px solid transparent;
     border-radius: 12px;
     padding: 3px 12px;
@@ -383,8 +383,8 @@ details[open] > .expander-title::after { transform: rotate(90deg); }
     cursor: pointer;
 }
 
-.hub-admin-status-btn--on  { background: #d4edda; color: #1e7e34; border-color: #b7dfc0; }
-.hub-admin-status-btn--off { background: #f0f2f5; color: #6a737d; border-color: #d0d7de; }
+.project-admin-status-btn--on  { background: #d4edda; color: #1e7e34; border-color: #b7dfc0; }
+.project-admin-status-btn--off { background: #f0f2f5; color: #6a737d; border-color: #d0d7de; }
 
 /* ===== ガントチャート ===== */
 .gantt-legend {
@@ -633,7 +633,7 @@ details[open] > .expander-title::after { transform: rotate(90deg); }
     font-size: 13px;
 }
 
-/* タスク整理のタグ／ハブ／ステータスフィルタを点線で区切る */
+/* タスク整理のタグ／プロジェクト／ステータスフィルタを点線で区切る */
 #calendar-filter-area.triage-filter-area {
     flex-direction: column;
     align-items: stretch;
@@ -1069,7 +1069,7 @@ details[open] > .expander-title::after { transform: rotate(90deg); }
     font-size: 12px;
 }
 
-/* --- タグ／ハブ／ステータス マルチセレクトフィルタ --- */
+/* --- タグ／プロジェクト／ステータス マルチセレクトフィルタ --- */
 .calendar-multi-filter {
     display: flex;
     flex-wrap: wrap;
