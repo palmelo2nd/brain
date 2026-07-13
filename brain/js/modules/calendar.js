@@ -1,8 +1,8 @@
 // (1) インポート
 import { formatJpDatetime } from './task.js';
 
-// 1日タスク（その日のタイムスケジュールを文法で記述する特殊タスク）を表す予約ハブ名。
-export const DAYPLAN_HUB = '1日タスク';
+// 1日タスク（その日のタイムスケジュールを文法で記述する特殊タスク）を表す予約プロジェクト名。
+export const DAYPLAN_PROJECT = '1日タスク';
 
 // 完了・中断・報告待ち・連絡待ちのステータスなら「残務なし（緑）」扱いとする。
 const CALENDAR_DONE_STATUSES = ['完了', '中断', '報告待ち', '連絡待ち'];
@@ -70,9 +70,9 @@ function filterCalendarTasks(mainData, category, calendarFilters) {
     return mainData.filter(r => {
         if (category !== 'すべて' && r['カテゴリ'] !== category) return false;
         if (r['データ区分'] !== 'タスク') return false;
-        if (r['ハブ'] === DAYPLAN_HUB) return false;
+        if (r['プロジェクト'] === DAYPLAN_PROJECT) return false;
         if (!matchesMultiFilter(calendarFilters.tag, r['タグ'])) return false;
-        if (!matchesMultiFilter(calendarFilters.hub, r['ハブ'])) return false;
+        if (!matchesMultiFilter(calendarFilters.project, r['プロジェクト'])) return false;
         if (!matchesMultiFilter(calendarFilters.status, r['ステータス'])) return false;
         return true;
     });
@@ -111,10 +111,10 @@ export function getTasksAvailableForDayPlan(mainData, category, calendarFilters,
     });
 }
 
-/** 指定日の1日タスク（ハブ=DAYPLAN_HUB、開始予定=dateJP のタスク行）を返す。無ければ null。 */
+/** 指定日の1日タスク（プロジェクト=DAYPLAN_PROJECT、開始予定=dateJP のタスク行）を返す。無ければ null。 */
 export function getDayPlanTask(mainData, dateJP) {
     return mainData.find(r =>
-        r['データ区分'] === 'タスク' && r['ハブ'] === DAYPLAN_HUB && jpDateOnly(r['開始予定']) === dateJP
+        r['データ区分'] === 'タスク' && r['プロジェクト'] === DAYPLAN_PROJECT && jpDateOnly(r['開始予定']) === dateJP
     ) || null;
 }
 
@@ -214,7 +214,7 @@ export function compareDateAscEmptyLast(a, b) {
 }
 
 /**
- * タグ／ハブ／ステータスでフィルタ中のタスク一覧（日付を問わず全件）を返す。
+ * タグ／プロジェクト／ステータスでフィルタ中のタスク一覧（日付を問わず全件）を返す。
  * ソート順: ステータス（完了・報告待ち・連絡待ち・中断・進行中・未着手・空欄の順）→ 完了日 昇順 → 開始予定 昇順 → 終了予定 昇順。
  */
 export function getCalendarFilteredTaskList(mainData, category, calendarFilters) {
@@ -370,7 +370,7 @@ export function getTaskScheduledTimeOnDate(row, dateJP) {
 function unsetTaskPool(mainData) {
     return mainData.filter(r => {
         if (r['データ区分'] !== 'タスク') return false;
-        if (r['ハブ'] === DAYPLAN_HUB) return false;
+        if (r['プロジェクト'] === DAYPLAN_PROJECT) return false;
         if (r['繰返し識別子'] === '1' && !r['繰返し親ID']) return false;
         return true;
     });
@@ -382,7 +382,7 @@ function matchesCategoryOrUnset(row, category) {
 }
 
 /**
- * カテゴリ・ステータス・優先度・ハブそれぞれが未設定のタスクを、領域ごとに分けて返す（重複あり）。
+ * カテゴリ・ステータス・優先度・プロジェクトそれぞれが未設定のタスクを、領域ごとに分けて返す（重複あり）。
  * カテゴリ未設定の領域は currentCategory の絞り込みを受けない（カテゴリが無いので判定不能なため）。
  * それ以外の領域は、行にカテゴリがあれば currentCategory と一致するもののみ、カテゴリが無ければ常に対象にする。
  */
@@ -392,7 +392,7 @@ export function getUnsetAttributeGroups(mainData, category) {
         categoryUnset: pool.filter(r => !r['カテゴリ']),
         statusUnset:   pool.filter(r => !r['ステータス'] && matchesCategoryOrUnset(r, category)),
         priorityUnset: pool.filter(r => !r['優先度']   && matchesCategoryOrUnset(r, category)),
-        hubUnset:      pool.filter(r => !r['ハブ']     && matchesCategoryOrUnset(r, category)),
+        projectUnset:      pool.filter(r => !r['プロジェクト']     && matchesCategoryOrUnset(r, category)),
     };
 }
 
