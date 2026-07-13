@@ -1247,6 +1247,7 @@ document.querySelectorAll('.js-inbox-submit').forEach(btn => {
         const entry = Object.fromEntries(MAIN_DATA_COLUMNS.map(col => [col, '']));
         entry['ID']        = String(maxId + 1);
         entry['データ区分'] = 'INBOX';
+        entry['タイトル']   = content.slice(0, 15);
         entry['内容']       = content;
         entry['作成日時']   = ts;
         entry['更新日時']   = ts;
