@@ -53,7 +53,7 @@ let timerInterval        = null;       // setInterval ハンドル
 const todayForCalendar   = new Date();
 let calendarYear         = todayForCalendar.getFullYear(); // カレンダーの表示年
 let calendarMonth        = todayForCalendar.getMonth();    // カレンダーの表示月（0-11）
-let selectedCalendarDate = null;       // カレンダーで選択中の日付（"YYYY/MM/DD"）
+let selectedCalendarDate = jpDateOnly(formatJpDatetime(todayForCalendar)); // カレンダーで選択中の日付（"YYYY/MM/DD"）。初期値は今日
 let selectedCalendarTaskId = null;     // 日別予定表で選択中のタスクID（属性編集パネル用）
 let calendarFilters = { tag: new Set(), project: new Set(), status: new Set() }; // カレンダーのタグ／プロジェクト／ステータスフィルタ値（複数選択）
 let calendarQuickNewMode = false;      // true時: タスク一覧の「（新規作成）」行から起動した新規登録モード（日付は空欄のまま）
@@ -191,7 +191,7 @@ function renderDataTable(tableId, summaryId, data, columns, label, options = {})
         const td = document.createElement('td');
         td.colSpan   = columns.length;
         td.className = 'empty-cell';
-        td.textContent = 'データがありません。GitProjectから読み込んでください。';
+        td.textContent = 'データがありません。GitHubから読み込んでください。';
         tr.appendChild(td);
         tbody.appendChild(tr);
     } else {
@@ -1084,10 +1084,10 @@ function applyContent(content, sha) {
     renderSummary();
 }
 
-// ===== GitProjectから読み込み =====
+// ===== GitHubから読み込み =====
 
 /**
- * GitProjectからデータを読み込み、失敗時はローカルキャッシュへフォールバックする。
+ * GitHubからデータを読み込み、失敗時はローカルキャッシュへフォールバックする。
  * (2) インプット: token (string), silent (boolean) - trueの場合トークン未入力時にアラートを出さない
  */
 async function loadFromGitproject(token, silent = false) {
@@ -1121,7 +1121,7 @@ document.querySelectorAll('.js-load-btn').forEach(btn => {
     btn.addEventListener('click', () => loadFromGitproject(getTokenValue()));
 });
 
-// ===== GitProjectへ保存 =====
+// ===== GitHubへ保存 =====
 document.querySelectorAll('.js-save-btn').forEach(btn => {
     btn.addEventListener('click', async () => {
         const token      = getTokenValue();
@@ -1133,7 +1133,7 @@ document.querySelectorAll('.js-save-btn').forEach(btn => {
         const newMarkdown = stringifyMarkdown(currentMainData, currentMasterData);
 
         saveCache(newMarkdown, currentSha);
-        contentBox.textContent = 'GitProjectへ保存中...';
+        contentBox.textContent = 'GitHubへ保存中...';
 
         try {
             const { newSha } = await saveFile(token, OWNER, REPO, PATH, newMarkdown, currentSha);
@@ -1141,12 +1141,12 @@ document.querySelectorAll('.js-save-btn').forEach(btn => {
             saveCache(newMarkdown, newSha);
             setNetworkStatus('<span class="status-badge online-badge">オンライン（同期完了）</span>');
             contentBox.innerHTML = window.marked.parse(newMarkdown);
-            alert('GitProjectへの保存が成功しました！');
+            alert('GitHubへの保存が成功しました！');
         } catch (error) {
             console.error(error);
             setNetworkStatus('<span class="status-badge offline-badge">未同期の変更あり</span>');
             contentBox.innerHTML = window.marked.parse(newMarkdown);
-            alert('現在通信ができません。変更はスマホ内に一時保存されました。電波の良い場所に移動してから、再度「GitProjectへ保存する」を押して同期してください。');
+            alert('現在通信ができません。変更はスマホ内に一時保存されました。電波の良い場所に移動してから、再度「GitHubへ保存する」を押して同期してください。');
         }
     });
 });
@@ -1155,7 +1155,7 @@ document.querySelectorAll('.js-save-btn').forEach(btn => {
 document.querySelectorAll('.js-excel-export-btn').forEach(btn => {
     btn.addEventListener('click', () => {
         if (currentMainData.length === 0 && currentMasterData.length === 0) {
-            return alert('エクスポートするデータがありません。先にGitProjectからデータを読み込んでください。');
+            return alert('エクスポートするデータがありません。先にGitHubからデータを読み込んでください。');
         }
         exportToExcel(currentMainData, currentMasterData);
     });
@@ -1179,7 +1179,7 @@ document.querySelectorAll('.js-excel-import').forEach(input => {
         e.target.value = ''; // 同一ファイルの再インポートを可能にするためリセット
 
         if (token && currentSha) {
-            contentBox.textContent = 'GitProjectへ保存中...';
+            contentBox.textContent = 'GitHubへ保存中...';
             try {
                 const { newSha } = await saveFile(token, OWNER, REPO, PATH, newMarkdown, currentSha);
                 currentSha = newSha;
@@ -1191,12 +1191,12 @@ document.querySelectorAll('.js-excel-import').forEach(input => {
                 console.error(error);
                 setNetworkStatus('<span class="status-badge offline-badge">未同期の変更あり</span>');
                 contentBox.innerHTML = window.marked.parse(newMarkdown);
-                alert('インポートデータを端末内に保存しました。「GitProjectへ保存する」で同期してください。');
+                alert('インポートデータを端末内に保存しました。「GitHubへ保存する」で同期してください。');
             }
         } else {
             setNetworkStatus('<span class="status-badge offline-badge">端末内に保存済み（未同期）</span>');
             contentBox.innerHTML = window.marked.parse(newMarkdown);
-            alert('インポートデータを端末内に保存しました。GitProjectへ同期するには、トークンを入力して読み込んでから再度インポートしてください。');
+            alert('インポートデータを端末内に保存しました。GitHubへ同期するには、トークンを入力して読み込んでから再度インポートしてください。');
         }
     });
 });
@@ -1255,7 +1255,7 @@ document.querySelectorAll('.js-inbox-submit').forEach(btn => {
 
         currentMainData.push(entry);
 
-        // LocalStorage に自動保存（GitProject push 前の安全網）
+        // LocalStorage に自動保存（GitHub push 前の安全網）
         saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
 
         document.querySelectorAll('.js-inbox-content').forEach(ta => { ta.value = ''; });
