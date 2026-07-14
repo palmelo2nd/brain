@@ -15,9 +15,14 @@ const CALENDAR_TASK_LIST_STATUS_ORDER = ['完了', '報告待ち', '連絡待ち
 /** 日時文字列 "YYYY/MM/DD HH:mm:ss" の日付部分のみを返す */
 function jpDateOnly(dt) { return (dt || '').slice(0, 10); }
 
-/** 選択肢（Set）が空なら常にtrue、そうでなければ値がSetに含まれるかを判定する。 */
+/**
+ * 値がSetに含まれるかを判定する（チェックが外れている＝選択されていない、を素直に反映する）。
+ * ただし値が未設定（空文字等）の行は、そもそもチェックボックスの選択肢として存在しえないため、
+ * どのフィルタにも引っかからず常に表示する（除外しない）。
+ */
 export function matchesMultiFilter(selectedSet, value) {
-    return selectedSet.size === 0 || selectedSet.has(value);
+    if (!value) return true;
+    return selectedSet.has(value);
 }
 
 /** 完了・中断・報告待ち・連絡待ちのいずれかのステータスかどうかを判定する。 */
