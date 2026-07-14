@@ -62,6 +62,8 @@
             <div class="update-form">
                 <p class="update-form-title">株価一括取得（銘柄マスタ master.csv から範囲指定）</p>
                 <p class="placeholder-text">対象: 内国株式＋ETF・ETN。20件処理するごとに自動でコミットされるため、途中で失敗しても20件分より多くは失われません。</p>
+                <button type="button" id="bulk-update-check-btn" class="run-btn run-btn--secondary">取得状況を確認</button>
+                <p id="bulk-update-progress" class="update-status"></p>
                 <div class="update-form-row">
                     <label>開始位置</label>
                     <input type="number" id="bulk-update-offset" value="0" min="0" step="1">

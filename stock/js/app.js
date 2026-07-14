@@ -1,11 +1,16 @@
 import { loadToken, saveToken } from './modules/storage.js';
-import { dispatchWorkflow } from './modules/github.js';
+import { dispatchWorkflow, fetchFile, listDirectory } from './modules/github.js';
+import { parseCsv } from './modules/csv.js';
 
 const OWNER              = 'palmelo2nd';
-const CODE_REPO          = 'brain';   // ワークフローファイルが置かれているコードリポジトリ
+const CODE_REPO          = 'brain';        // ワークフローファイルが置かれているコードリポジトリ
+const DATA_REPO          = 'brain_data';   // 銘柄マスタ・株価データが置かれているデータリポジトリ
 const CODE_REPO_BRANCH   = 'main';
 const PRICE_WORKFLOW_FILE      = 'fetch-stock-prices.yml';
 const PRICE_BULK_WORKFLOW_FILE = 'fetch-stock-prices-bulk.yml';
+const MASTER_PATH   = 'stock/master.csv';
+const PRICES_DIR    = 'stock/prices';
+const BULK_ASSET_TYPES = ['内国株式', 'ETF・ETN']; // fetch_prices.pyの--asset-types既定値と揃えている
 
 // ===== PW（GitHub PAT）入力欄 =====
 // 一度入力すればlocalStorageに保存され、次回以降は自動的に入力済みの状態になる（brainのトークン入力と同じ仕組み）。
@@ -93,5 +98,44 @@ document.getElementById('bulk-update-run-btn')?.addEventListener('click', async 
     } catch (error) {
         console.error(error);
         statusEl.textContent = `失敗しました: ${error.message}`;
+    }
+});
+
+// ===== データ更新：一括取得の進捗確認（銘柄マスタ×既存の保存済みCSVを突き合わせ、次の開始位置を提案） =====
+document.getElementById('bulk-update-check-btn')?.addEventListener('click', async () => {
+    const progressEl  = document.getElementById('bulk-update-progress');
+    const offsetInput = document.getElementById('bulk-update-offset');
+
+    const token = getTokenValue();
+    if (!token) { alert('PWを入力してください'); return; }
+
+    progressEl.textContent = '確認中...';
+
+    try {
+        const masterText = await fetchFile(token, OWNER, DATA_REPO, MASTER_PATH);
+        const targetRows = parseCsv(masterText).filter(r =>
+            r.status === 'listed' && BULK_ASSET_TYPES.includes(r.asset_type)
+        );
+
+        const files = await listDirectory(token, OWNER, DATA_REPO, PRICES_DIR);
+        const existingCodes = new Set(
+            files.filter(f => f.type === 'file' && f.name.endsWith('.csv'))
+                 .map(f => f.name.replace(/\.csv$/, ''))
+        );
+
+        const doneCount = targetRows.filter(r => existingCodes.has(r.code)).length;
+        const nextIndex = targetRows.findIndex(r => !existingCodes.has(r.code));
+
+        if (nextIndex === -1) {
+            progressEl.textContent = `対象 ${targetRows.length}件のうち ${doneCount}件取得済み。すべて完了しています。`;
+        } else {
+            if (offsetInput) offsetInput.value = nextIndex;
+            progressEl.textContent =
+                `対象 ${targetRows.length}件のうち ${doneCount}件取得済み。` +
+                `次の開始位置候補: ${nextIndex}（自動入力しました）`;
+        }
+    } catch (error) {
+        console.error(error);
+        progressEl.textContent = `確認に失敗しました: ${error.message}`;
     }
 });

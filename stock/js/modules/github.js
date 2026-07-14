@@ -27,3 +27,49 @@ export async function dispatchWorkflow(token, owner, repo, workflowFile, ref, in
         throw new Error(`ワークフロー起動に失敗しました (${response.status}) ${detail}`);
     }
 }
+
+/**
+ * GitHub上のファイルを取得し、デコード済みテキストを返す。
+ *
+ * (2) インプット: token, owner, repo, path
+ * (3) メイン: GET /repos/{owner}/{repo}/contents/{path}
+ * (4) アウトプット: ファイル内容の文字列
+ */
+export async function fetchFile(token, owner, repo, path) {
+    const url = `${API_BASE}/repos/${owner}/${repo}/contents/${path}`;
+
+    const response = await fetch(url, {
+        headers: {
+            'Authorization': `Bearer ${token}`,
+            'Accept': 'application/vnd.github.v3+json'
+        }
+    });
+
+    if (!response.ok) throw new Error(`取得失敗 (${response.status})`);
+
+    const data = await response.json();
+    return decodeURIComponent(escape(atob(data.content)));
+}
+
+/**
+ * GitHub上のディレクトリの内容一覧を取得する。
+ *
+ * (2) インプット: token, owner, repo, path（ディレクトリのパス）
+ * (3) メイン: GET /repos/{owner}/{repo}/contents/{path}
+ * (4) アウトプット: Array<{ name, path, type, ... }>（ディレクトリが空/存在しない場合は空配列）
+ */
+export async function listDirectory(token, owner, repo, path) {
+    const url = `${API_BASE}/repos/${owner}/${repo}/contents/${path}`;
+
+    const response = await fetch(url, {
+        headers: {
+            'Authorization': `Bearer ${token}`,
+            'Accept': 'application/vnd.github.v3+json'
+        }
+    });
+
+    if (response.status === 404) return [];
+    if (!response.ok) throw new Error(`一覧取得に失敗しました (${response.status})`);
+
+    return response.json();
+}
