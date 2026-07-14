@@ -1,6 +1,7 @@
 ﻿import { loadToken, saveToken, loadCache, saveCache } from './modules/storage.js';
 import { fetchFile, saveFile } from './modules/github.js';
 import { parseMarkdown, stringifyMarkdown, MAIN_DATA_COLUMNS, MASTER_DATA_COLUMNS } from './modules/dataModel.js';
+import { mergeMainData } from './modules/merge.js';
 import { exportToExcel, importFromExcel } from './modules/excel.js';
 import {
     generateChildManually, matchesSchedule, checkAndGenerateChildren,
@@ -42,6 +43,7 @@ const PATH  = 'brain/data.md';
 let currentSha        = null;
 let currentMainData   = [];
 let currentMasterData = [];
+let lastSyncedMarkdown = null;   // 直近でGitHub/キャッシュと一致している状態のMarkdown（未保存差分の判定基準）
 let currentCategory   = 'すべて';        // カテゴリフィルタの選択値
 let categoryInitialized = false;         // 初回ロード時にデフォルトカテゴリを設定済みか
 let selectedEditIds = new Set();       // 編集セクションで選択中の行ID
@@ -93,6 +95,26 @@ document.querySelectorAll('.js-token-input').forEach(input => {
 /** すべてのネットワークステータス表示（サイドバー・TOPページ）を更新する */
 function setNetworkStatus(html) {
     document.querySelectorAll('.js-network-status').forEach(el => { el.innerHTML = html; });
+}
+
+/**
+ * 現在のMarkdownが直近の同期済み内容と一致しているかどうかで「最新」「未保存の変更あり」バッジを切り替える。
+ * オフライン表示中（読込失敗でキャッシュ表示中）はここでは上書きしない。
+ */
+function updateSyncBadge(markdown) {
+    if (lastSyncedMarkdown === null) return; // 未読み込み状態では何もしない
+    if (markdown === lastSyncedMarkdown) {
+        setNetworkStatus('<span class="status-badge online-badge">オンライン（最新）</span>');
+    } else {
+        setNetworkStatus('<span class="status-badge unsaved-badge">オンライン（更新あり）</span>');
+    }
+}
+
+/** データ変更のたびに呼ぶ：ローカルキャッシュへ保存し、未保存差分バッジを更新する */
+function persistLocalCache() {
+    const markdown = stringifyMarkdown(currentMainData, currentMasterData);
+    saveCache(markdown, currentSha);
+    updateSyncBadge(markdown);
 }
 
 /** id要素が指定アンカーの子でなければ移動する（Summary内の各タブでセクション本体を使い回すため） */
@@ -212,7 +234,7 @@ function renderDataTable(tableId, summaryId, data, columns, label, options = {})
                         const newVal = td.textContent.trim();
                         if ((row[col] ?? '') === newVal) return;
                         row[col] = newVal;
-                        saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
+                        persistLocalCache();
                         if (onEdit) onEdit();
                     });
                 }
@@ -694,7 +716,7 @@ document.getElementById('edit-new-btn')?.addEventListener('click', () => {
     }
 
     currentMainData.push(entry);
-    saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
+    persistLocalCache();
 
     selectedEditIds.clear();
     clearEditForm();
@@ -765,7 +787,7 @@ document.getElementById('edit-apply-btn')?.addEventListener('click', () => {
     });
 
     selectedEditIds.clear();
-    saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
+    persistLocalCache();
     renderEdit();
 });
 
@@ -777,7 +799,7 @@ document.getElementById('edit-delete-btn')?.addEventListener('click', () => {
     currentMainData = currentMainData.filter(r => !selectedEditIds.has(String(r['ID'])));
 
     selectedEditIds.clear();
-    saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
+    persistLocalCache();
     renderEdit();
 });
 
@@ -810,7 +832,7 @@ function createEmptyMasterRow() {
 /** 空のマスタデータ行を1件追加し、マスタデータ一覧テーブルを再描画する。 */
 function addMasterRow() {
     currentMasterData.push(createEmptyMasterRow());
-    saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
+    persistLocalCache();
     renderDataTable('table-master', 'summary-master', currentMasterData, MASTER_DATA_COLUMNS, 'マスタデータ', { editable: true, onEdit: () => renderWarnings(computeMasterWarnings()) });
     renderWarnings(computeMasterWarnings());
 }
@@ -839,7 +861,7 @@ function renameProjectMaster(oldName, newName) {
     const result = renameProjectMasterM(currentMainData, currentMasterData, oldName, newName);
     currentMainData   = result.mainData;
     currentMasterData = result.masterData;
-    saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
+    persistLocalCache();
 }
 
 /** sourceName のプロジェクトを targetName に統合する。メインデータの参照を付け替え、source側のマスタ行のプロジェクト関連列だけを消す。 */
@@ -847,7 +869,7 @@ function mergeProjectInto(sourceName, targetName) {
     const result = mergeProjectIntoM(currentMainData, currentMasterData, sourceName, targetName);
     currentMainData   = result.mainData;
     currentMasterData = result.masterData;
-    saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
+    persistLocalCache();
 }
 
 /** プロジェクトを削除する。reassignTo を指定すればそのプロジェクトへ再割り当てしてから削除、未指定なら参照を空欄にして削除する。 */
@@ -855,13 +877,13 @@ function deleteProject(name, reassignTo) {
     const result = deleteProjectM(currentMainData, currentMasterData, name, reassignTo);
     currentMainData   = result.mainData;
     currentMasterData = result.masterData;
-    saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
+    persistLocalCache();
 }
 
 /** 指定プロジェクト名の (M)プロジェクト_ステータス を切り替える（同名の全マスタ行に反映）。 */
 function toggleProjectStatus(name) {
     currentMasterData = toggleProjectStatusM(currentMasterData, name);
-    saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
+    persistLocalCache();
 }
 
 /** プロジェクト管理テーブルを描画する。名前変更・統合・削除の操作列を持つ。 */
@@ -1047,7 +1069,7 @@ document.getElementById('add-main-row-btn')?.addEventListener('click', () => {
     entry['カテゴリ'] = currentCategory === 'すべて' ? '' : currentCategory;
 
     currentMainData.push(entry);
-    saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
+    persistLocalCache();
 
     renderDataTable('table-main', 'summary-main', getFilteredMainData(), MAIN_DATA_COLUMNS, 'メインデータ', { editable: true, idColumn: 'ID' });
 });
@@ -1070,7 +1092,7 @@ function applyContent(content, sha) {
     const newChildren = checkAndGenerateChildren(currentMainData, new Date());
     if (newChildren.length > 0) {
         currentMainData.push(...newChildren);
-        saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
+        persistLocalCache();
     }
 
     // 初回ロード時のみ、先頭カテゴリをデフォルト選択にする
@@ -1100,15 +1122,16 @@ async function loadFromGitproject(token, silent = false) {
     try {
         const { content, sha } = await fetchFile(token, OWNER, REPO, PATH);
         applyContent(content, sha);
-        saveCache(content, sha);
-        setNetworkStatus('<span class="status-badge online-badge">オンライン（最新）</span>');
+        lastSyncedMarkdown = content; // GitHub上の内容を「同期済み」の基準にする
+        persistLocalCache();          // 繰り返しタスク自動生成分も含めた現在の状態をキャッシュ＆バッジ反映
         contentBox.innerHTML = window.marked.parse(content);
     } catch (error) {
         console.error(error);
         const cached = loadCache();
         if (cached) {
             applyContent(cached.content, cached.sha);
-            setNetworkStatus('<span class="status-badge offline-badge">オフライン（端末内データ）</span>');
+            lastSyncedMarkdown = cached.content; // 端末内キャッシュを「同期済み」の基準にする
+            setNetworkStatus('<span class="status-badge offline-badge">オフライン（未同期）</span>');
             contentBox.innerHTML = window.marked.parse(cached.content);
             if (!silent) alert('通信できませんでした。スマホ内に一時保存されている前回のデータを表示します。');
         } else {
@@ -1122,34 +1145,130 @@ document.querySelectorAll('.js-load-btn').forEach(btn => {
 });
 
 // ===== GitHubへ保存 =====
-document.querySelectorAll('.js-save-btn').forEach(btn => {
-    btn.addEventListener('click', async () => {
-        const token      = getTokenValue();
-        const contentBox = document.getElementById('content-box');
 
-        if (!token)      return alert('トークンを入力してください');
-        if (!currentSha) return alert('先にデータを読み込んでください（またはオフラインキャッシュを読み込んでください）');
+/**
+ * masterDataの競合を解決する。片方しか変更していなければその内容を採用し、
+ * 両方が異なる内容に変更している場合のみユーザーに選ばせる（マージはしない）。
+ */
+function resolveMasterData(baseMasterData, localMasterData, remoteMasterData) {
+    const baseJson   = JSON.stringify(baseMasterData);
+    const localJson  = JSON.stringify(localMasterData);
+    const remoteJson = JSON.stringify(remoteMasterData);
 
-        const newMarkdown = stringifyMarkdown(currentMainData, currentMasterData);
+    if (localJson === remoteJson) return localMasterData;
+    if (localJson === baseJson)   return remoteMasterData; // ローカルは未変更 → 相手を採用
+    if (remoteJson === baseJson)  return localMasterData;  // 相手は未変更 → ローカルを採用
 
-        saveCache(newMarkdown, currentSha);
-        contentBox.textContent = 'GitHubへ保存中...';
+    const useLocal = confirm(
+        'マスタデータ（カテゴリ・タグ等の設定）が他端末でも更新されており、競合しています。\n' +
+        'OK：自分のマスタ変更を優先して保存します\nキャンセル：他端末のマスタ内容を優先して保存します'
+    );
+    return useLocal ? localMasterData : remoteMasterData;
+}
 
-        try {
-            const { newSha } = await saveFile(token, OWNER, REPO, PATH, newMarkdown, currentSha);
-            currentSha = newSha;
-            saveCache(newMarkdown, newSha);
-            setNetworkStatus('<span class="status-badge online-badge">オンライン（同期完了）</span>');
+/**
+ * 保存時に409（他端末との更新競合）が発生した場合の処理。
+ * 相手の最新版を取得し、mainDataはID単位で3-wayマージ、masterDataは競合時のみユーザーに選ばせて、
+ * 相手の最新SHAに対して保存し直す。
+ */
+async function handleSaveConflict(token, silent) {
+    const contentBox = document.getElementById('content-box');
+
+    try {
+        const { content: remoteContent, sha: remoteSha } = await fetchFile(token, OWNER, REPO, PATH);
+        const { mainData: remoteMain, masterData: remoteMaster } = parseMarkdown(remoteContent);
+        const { mainData: baseMain,   masterData: baseMaster }   = parseMarkdown(lastSyncedMarkdown);
+
+        const { merged, conflicts } = mergeMainData(baseMain, currentMainData, remoteMain);
+        currentMainData   = merged;
+        currentMasterData = resolveMasterData(baseMaster, currentMasterData, remoteMaster);
+
+        const mergedMarkdown = stringifyMarkdown(currentMainData, currentMasterData);
+        const { newSha } = await saveFile(token, OWNER, REPO, PATH, mergedMarkdown, remoteSha);
+
+        currentSha = newSha;
+        lastSyncedMarkdown = mergedMarkdown;
+        saveCache(mergedMarkdown, newSha);
+        updateSyncBadge(mergedMarkdown);
+
+        if (!silent) {
+            contentBox.innerHTML = window.marked.parse(mergedMarkdown);
+            alert(conflicts.length > 0
+                ? `他端末の更新と自動マージして保存しました（${conflicts.length}件は更新日時の新しい方を優先しました）。`
+                : '他端末の更新を取り込んでマージし、保存しました。');
+        }
+    } catch (error) {
+        console.error(error);
+        setNetworkStatus('<span class="status-badge offline-badge">オフライン（未同期）</span>');
+        if (!silent) {
+            alert('他端末の更新との自動マージに失敗しました。変更は端末内に保存されています。時間をおいて再度「GitHubへ保存する」を押してください。');
+        }
+    }
+}
+
+/**
+ * 現在のデータをGitHubへ保存する。直近の同期済み内容と変わっていなければ何もしない。
+ * 他端末との更新競合（409）が起きた場合は自動マージを試みる。
+ * (2) インプット: token (string), silent (boolean) - trueの場合、進捗表示・完了アラートを出さない（自動保存用）
+ */
+async function saveToGithub(token, silent = false) {
+    const contentBox = document.getElementById('content-box');
+
+    const newMarkdown = stringifyMarkdown(currentMainData, currentMasterData);
+
+    if (newMarkdown === lastSyncedMarkdown) {
+        if (!silent) {
+            contentBox.textContent = '変更がないため保存をスキップしました。';
+            setTimeout(() => { contentBox.innerHTML = window.marked.parse(newMarkdown); }, 1500);
+        }
+        return;
+    }
+
+    saveCache(newMarkdown, currentSha);
+    if (!silent) contentBox.textContent = 'GitHubへ保存中...';
+
+    try {
+        const { newSha } = await saveFile(token, OWNER, REPO, PATH, newMarkdown, currentSha);
+        currentSha = newSha;
+        lastSyncedMarkdown = newMarkdown;
+        saveCache(newMarkdown, newSha);
+        updateSyncBadge(newMarkdown); // 保存直後は lastSyncedMarkdown と一致するため「オンライン（最新）」になる
+        if (!silent) {
             contentBox.innerHTML = window.marked.parse(newMarkdown);
             alert('GitHubへの保存が成功しました！');
-        } catch (error) {
-            console.error(error);
-            setNetworkStatus('<span class="status-badge offline-badge">未同期の変更あり</span>');
+        }
+    } catch (error) {
+        console.error(error);
+
+        if (error.status === 409) {
+            await handleSaveConflict(token, silent);
+            return;
+        }
+
+        setNetworkStatus('<span class="status-badge offline-badge">オフライン（未同期）</span>');
+        if (!silent) {
             contentBox.innerHTML = window.marked.parse(newMarkdown);
             alert('現在通信ができません。変更はスマホ内に一時保存されました。電波の良い場所に移動してから、再度「GitHubへ保存する」を押して同期してください。');
         }
+    }
+}
+
+document.querySelectorAll('.js-save-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        const token = getTokenValue();
+        if (!token)      return alert('トークンを入力してください');
+        if (!currentSha) return alert('先にデータを読み込んでください（またはオフラインキャッシュを読み込んでください）');
+        saveToGithub(token);
     });
 });
+
+// ===== 自動保存（5分ごと。変更がある場合のみGitHubへ保存し、変更が無ければ何もしない） =====
+const AUTO_SAVE_INTERVAL_MS = 5 * 60 * 1000;
+setInterval(() => {
+    const token = getTokenValue();
+    if (!token || !currentSha) return; // 未読み込み・未認証時は自動保存の対象外
+    saveToGithub(token, true);
+}, AUTO_SAVE_INTERVAL_MS);
 
 // ===== Excelエクスポート =====
 document.querySelectorAll('.js-excel-export-btn').forEach(btn => {
@@ -1183,18 +1302,19 @@ document.querySelectorAll('.js-excel-import').forEach(input => {
             try {
                 const { newSha } = await saveFile(token, OWNER, REPO, PATH, newMarkdown, currentSha);
                 currentSha = newSha;
+                lastSyncedMarkdown = newMarkdown;
                 saveCache(newMarkdown, newSha);
-                setNetworkStatus('<span class="status-badge online-badge">オンライン（同期完了）</span>');
+                updateSyncBadge(newMarkdown); // 保存直後は lastSyncedMarkdown と一致するため「オンライン（最新）」になる
                 contentBox.innerHTML = window.marked.parse(newMarkdown);
                 alert('Excelのインポートとデータ保存が完了しました！');
             } catch (error) {
                 console.error(error);
-                setNetworkStatus('<span class="status-badge offline-badge">未同期の変更あり</span>');
+                setNetworkStatus('<span class="status-badge offline-badge">オフライン（未同期）</span>');
                 contentBox.innerHTML = window.marked.parse(newMarkdown);
                 alert('インポートデータを端末内に保存しました。「GitHubへ保存する」で同期してください。');
             }
         } else {
-            setNetworkStatus('<span class="status-badge offline-badge">端末内に保存済み（未同期）</span>');
+            setNetworkStatus('<span class="status-badge offline-badge">オフライン（未同期）</span>');
             contentBox.innerHTML = window.marked.parse(newMarkdown);
             alert('インポートデータを端末内に保存しました。GitHubへ同期するには、トークンを入力して読み込んでから再度インポートしてください。');
         }
@@ -1256,7 +1376,7 @@ document.querySelectorAll('.js-inbox-submit').forEach(btn => {
         currentMainData.push(entry);
 
         // LocalStorage に自動保存（GitHub push 前の安全網）
-        saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
+        persistLocalCache();
 
         document.querySelectorAll('.js-inbox-content').forEach(ta => { ta.value = ''; });
         textarea.focus();
@@ -1480,7 +1600,7 @@ function buildTaskRunnerUI(container) {
     adjInput.value       = selectedRow['補正時間'] || '';
     adjInput.addEventListener('change', () => {
         selectedRow['補正時間'] = adjInput.value;
-        saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
+        persistLocalCache();
         updateRunnerTimerDisplay();
     });
     const adjSuffix = document.createElement('span');
@@ -1509,7 +1629,7 @@ function buildTaskRunnerUI(container) {
         timerIsRunning = true;
         if (timerInterval) clearInterval(timerInterval);
         timerInterval = setInterval(updateRunnerTimerDisplay, 1000);
-        saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
+        persistLocalCache();
         renderTaskRunner();
     });
 
@@ -1522,7 +1642,7 @@ function buildTaskRunnerUI(container) {
         selectedRow['タイムスタンプログ'] = (selectedRow['タイムスタンプログ'] || '') + `${ts}, `;
         timerIsRunning = false;
         if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
-        saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
+        persistLocalCache();
         renderTaskRunner();
     });
 
@@ -1540,7 +1660,7 @@ function buildTaskRunnerUI(container) {
     logArea.value     = selectedRow['タイムスタンプログ'] || '';
     logArea.addEventListener('change', () => {
         selectedRow['タイムスタンプログ'] = logArea.value;
-        saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
+        persistLocalCache();
         updateRunnerTimerDisplay();
     });
     logRow.append(logLabel, logArea);
@@ -1599,7 +1719,7 @@ function buildTaskRunnerUI(container) {
             if (String(selectedRunTaskId) === String(selectedRow['ID'])) {
                 selectedRunTaskId = null;
             }
-            saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
+            persistLocalCache();
             renderTaskRunner();
             renderEditTable();
         });
@@ -1732,7 +1852,7 @@ function buildRunnerAttributeEditor(row) {
         row['完了日']   = completeDateInput.value.replace(/-/g, '/');
         row['更新日時'] = formatJpDatetime(new Date());
 
-        saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
+        persistLocalCache();
         renderCalendar();
         renderRecurringSection();
         renderTaskRunner();
@@ -2228,7 +2348,7 @@ function commitTimelineDrag(seg, dateJP, newStartMin, newEndMin) {
         row['更新日時'] = formatJpDatetime(new Date());
     }
 
-    saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
+    persistLocalCache();
     renderCalendarDetail();
     renderTaskRunner();
 }
@@ -2307,7 +2427,7 @@ function createDayPlanTask() {
     entry['更新日時']   = ts;
 
     currentMainData.push(entry);
-    saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
+    persistLocalCache();
     renderCalendarDetail();
     renderCalendarGrid();
 }
@@ -2323,7 +2443,7 @@ function saveDayPlanContent() {
     dayPlan['内容']     = stringifyDayPlanBlocks(sortedBlocks);
     dayPlan['更新日時'] = formatJpDatetime(new Date());
     if (contentEl) contentEl.value = dayPlan['内容'];
-    saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
+    persistLocalCache();
     renderCalendarDetail();
 }
 
@@ -2333,7 +2453,7 @@ function deleteDayPlanTask() {
     const dayPlan = getDayPlanTask(selectedCalendarDate);
     if (!dayPlan) return;
     currentMainData = currentMainData.filter(r => r !== dayPlan);
-    saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
+    persistLocalCache();
     renderCalendarDetail();
     renderCalendarGrid();
 }
@@ -2360,7 +2480,7 @@ function addTaskToDayPlan(row) {
     const line = `${startStr}-${endStr} #${row['ID']} ${row['タイトル'] || '（無題）'}`;
     dayPlan['内容']     = dayPlan['内容'] ? `${dayPlan['内容']}\n${line}` : line;
     dayPlan['更新日時'] = formatJpDatetime(new Date());
-    saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
+    persistLocalCache();
     renderCalendarDetail();
 }
 
@@ -2819,7 +2939,7 @@ document.getElementById('dayedit-apply-btn')?.addEventListener('click', () => {
     Object.assign(row, readTaskDateTimeFieldsFromForm('dayedit'));
     row['更新日時'] = formatJpDatetime(new Date());
 
-    saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
+    persistLocalCache();
     renderCalendar();
     renderTaskRunner();
     renderRecurringSection();
@@ -2833,7 +2953,7 @@ document.getElementById('dayedit-delete-btn')?.addEventListener('click', () => {
     currentMainData = currentMainData.filter(r => String(r['ID']) !== selectedCalendarTaskId);
     selectedCalendarTaskId = null;
 
-    saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
+    persistLocalCache();
     renderCalendar();
     renderTaskRunner();
     renderRecurringSection();
@@ -2889,7 +3009,7 @@ document.getElementById('dayedit-new-btn')?.addEventListener('click', () => {
     entry['更新日時']   = ts;
 
     currentMainData.push(entry);
-    saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
+    persistLocalCache();
 
     selectedCalendarTaskId = null;
     renderCalendar();
@@ -3560,7 +3680,7 @@ document.getElementById('recurring-edit-manual-btn')?.addEventListener('click', 
     const child = generateChildManually(parent, currentMainData);
     if (!child) { alert('本日分は既に生成済みです'); return; }
     currentMainData.push(child);
-    saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
+    persistLocalCache();
     renderRecurringSection();
     renderEditTable();
 });
@@ -3592,7 +3712,7 @@ function applyRecurEditForm() {
     Object.assign(row, readTaskDateTimeFieldsFromForm('recuredit'));
     row['更新日時'] = formatJpDatetime(new Date());
 
-    saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
+    persistLocalCache();
     renderRecurringSection();
     renderCalendar();
     renderTaskRunner();
@@ -3630,7 +3750,7 @@ document.getElementById('recuredit-delete-btn')?.addEventListener('click', () =>
     if (isParent) selectedRecurringParentId = null;
     selectedRecurringEditId = null;
 
-    saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
+    persistLocalCache();
     renderRecurringSection();
     renderCalendar();
     renderTaskRunner();
@@ -3670,7 +3790,7 @@ document.getElementById('recuredit-new-btn')?.addEventListener('click', () => {
     entry['更新日時']   = ts;
 
     currentMainData.push(entry);
-    saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
+    persistLocalCache();
 
     selectedRecurringParentId = String(entry['ID']);
     selectedRecurringEditId   = String(entry['ID']);
@@ -3715,7 +3835,7 @@ function saveWorkCalendarContent(year, contentText) {
     }
     entry['内容']     = contentText;
     entry['更新日時'] = ts;
-    saveCache(stringifyMarkdown(currentMainData, currentMasterData), currentSha);
+    persistLocalCache();
 }
 
 /** 勤務カレンダービュー全体を描画する。 */

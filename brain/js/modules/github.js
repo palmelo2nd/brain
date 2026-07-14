@@ -52,7 +52,11 @@ export async function saveFile(token, owner, repo, path, markdownContent, sha) {
         })
     });
 
-    if (!response.ok) throw new Error(`保存失敗 (${response.status})`);
+    if (!response.ok) {
+        const error = new Error(`保存失敗 (${response.status})`);
+        error.status = response.status; // 409の場合は他端末との更新競合を意味する
+        throw error;
+    }
 
     const result = await response.json();
 
