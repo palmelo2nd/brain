@@ -75,6 +75,14 @@
                 <button type="button" id="bulk-update-run-btn" class="run-btn">一括取得を実行</button>
                 <p id="bulk-update-status" class="update-status"></p>
             </div>
+
+            <div class="update-form">
+                <p class="update-form-title">データ品質チェック（欠損・重複・古さの検出）</p>
+                <button type="button" id="validate-run-btn" class="run-btn">チェックを実行</button>
+                <button type="button" id="validate-check-btn" class="run-btn run-btn--secondary">結果を確認</button>
+                <p id="validate-status" class="update-status"></p>
+                <div id="validate-report"></div>
+            </div>
         </div>
 
         <!-- 銘柄属性：上場銘柄一覧を母集団に、ラベル付け（高配当認定・高利回り優待認定・NG認定など） -->

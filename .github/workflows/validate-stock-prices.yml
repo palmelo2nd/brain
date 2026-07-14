@@ -1,0 +1,61 @@
+name: Validate Stock Prices
+
+# stock/prices/配下のCSVのデータ品質チェック（欠損・重複・古さ等）を行い、
+# 結果をJSONレポートとしてデータリポジトリにコミットする。
+on:
+  workflow_dispatch:
+    inputs:
+      max_gap_days:
+        description: "これを超える日数の間隔を異常とみなす"
+        required: false
+        default: "10"
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: コードリポジトリをチェックアウト
+        uses: actions/checkout@v4
+        with:
+          path: code-repo
+
+      - name: データリポジトリをチェックアウト
+        uses: actions/checkout@v4
+        with:
+          repository: palmelo2nd/brain_data
+          token: ${{ secrets.DATA_REPO_TOKEN }}
+          path: data-repo
+
+      - name: Python セットアップ
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 依存パッケージをインストール
+        run: pip install -r code-repo/stock/scripts/requirements.txt
+
+      - name: Git ユーザー設定
+        working-directory: data-repo
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: データ品質チェックを実行
+        run: |
+          python code-repo/stock/scripts/validate_prices.py \
+            --dir "${{ github.workspace }}/data-repo/stock/prices" \
+            --max-gap-days "${{ inputs.max_gap_days }}" \
+            --report "${{ github.workspace }}/data-repo/stock/validation_report.json" \
+            || echo "問題が見つかりましたが、レポートのコミットは継続します"
+
+      - name: レポートをコミット
+        working-directory: data-repo
+        run: |
+          git add stock/validation_report.json
+          if git diff --cached --quiet; then
+            echo "変更なし"
+          else
+            git commit -m "chore: 株価データ品質チェックのレポート更新"
+            git push
+          fi
