@@ -44,23 +44,23 @@ STOCK_VIEWS.forEach(v => {
 // ===== データ更新：株価取得（yfinance）のGitHub Actionsワークフローを起動 =====
 document.getElementById('price-update-run-btn')?.addEventListener('click', async () => {
     const statusEl = document.getElementById('price-update-status');
-    const codeInput   = document.getElementById('price-update-code');
+    const codesInput  = document.getElementById('price-update-code');
     const periodInput = document.getElementById('price-update-period');
 
     const token  = getTokenValue();
-    const code   = codeInput.value.trim();
-    const period = periodInput.value.trim() || '5d';
+    const codes  = codesInput.value.trim();
+    const period = periodInput.value.trim(); // 空欄なら2013年以降の全期間（ワークフロー側のデフォルト）
 
     if (!token) { alert('PWを入力してください'); return; }
-    if (!code)  { alert('証券コードを入力してください'); return; }
+    if (!codes) { alert('証券コードを入力してください'); return; }
 
     statusEl.textContent = '実行をリクエスト中...';
 
     try {
-        await dispatchWorkflow(token, OWNER, CODE_REPO, PRICE_WORKFLOW_FILE, CODE_REPO_BRANCH, { code, period });
+        await dispatchWorkflow(token, OWNER, CODE_REPO, PRICE_WORKFLOW_FILE, CODE_REPO_BRANCH, { codes, period });
         statusEl.textContent =
-            `実行をリクエストしました（コード: ${code} / 期間: ${period}）。` +
-            `数十秒〜数分後にデータリポジトリの stock/prices/${code}.csv が更新されます。` +
+            `実行をリクエストしました（コード: ${codes} / 期間: ${period || '2013年以降の全期間'}）。` +
+            `数十秒〜数分後にデータリポジトリの stock/prices/ 配下が更新されます。` +
             `GitHubの Actions タブから進捗を確認できます。`;
     } catch (error) {
         console.error(error);

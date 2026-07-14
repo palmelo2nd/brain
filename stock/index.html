@@ -49,11 +49,11 @@
                 <p class="update-form-title">株価取得（yfinance・日足終値）</p>
                 <div class="update-form-row">
                     <label>証券コード</label>
-                    <input type="text" id="price-update-code" value="7203">
+                    <input type="text" id="price-update-code" value="7203" placeholder="例: 7203,9984,6758">
                 </div>
                 <div class="update-form-row">
                     <label>取得期間</label>
-                    <input type="text" id="price-update-period" value="5d" placeholder="例: 5d, 1mo, max">
+                    <input type="text" id="price-update-period" value="" placeholder="空欄で2013年以降の全期間（例: 5d, 1mo）">
                 </div>
                 <button type="button" id="price-update-run-btn" class="run-btn">株価取得を実行</button>
                 <p id="price-update-status" class="update-status"></p>
