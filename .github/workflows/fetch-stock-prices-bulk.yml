@@ -79,7 +79,14 @@ jobs:
               echo "変更なし（offset=$start〜$((start + count - 1))）"
             else
               git commit -m "chore: 株価データ一括更新（offset=${start}, count=${count}）"
-              git push
+              # 他のワークフロー実行と同時にpushして拒否された場合に備え、pull --rebaseしてから再試行する
+              for i in 1 2 3 4 5; do
+                if git push; then
+                  break
+                fi
+                echo "pushに失敗しました。リモートの変更を取り込んで再試行します（${i}回目）"
+                git pull --rebase origin main
+              done
             fi
             cd ..
           done
