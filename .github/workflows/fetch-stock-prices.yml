@@ -1,0 +1,58 @@
+name: Fetch Stock Prices
+
+# 手動実行（将来的にはstockアプリのフロントエンドからGitHub APIのworkflow_dispatchで起動する想定）
+on:
+  workflow_dispatch:
+    inputs:
+      code:
+        description: "証券コード（例: 7203）"
+        required: true
+        default: "7203"
+      period:
+        description: "取得期間（yfinance形式。例: 5d, 1mo, max）"
+        required: true
+        default: "5d"
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: コードリポジトリ（このリポジトリ）をチェックアウト
+        uses: actions/checkout@v4
+        with:
+          path: code-repo
+
+      - name: データリポジトリをチェックアウト
+        uses: actions/checkout@v4
+        with:
+          repository: palmelo2nd/brain_data
+          token: ${{ secrets.DATA_REPO_TOKEN }}
+          path: data-repo
+
+      - name: Python セットアップ
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 依存パッケージをインストール
+        run: pip install -r code-repo/stock/scripts/requirements.txt
+
+      - name: 株価を取得
+        run: |
+          python code-repo/stock/scripts/fetch_prices.py \
+            --code "${{ inputs.code }}" \
+            --period "${{ inputs.period }}" \
+            --output-dir "${{ github.workspace }}/data-repo/stock/prices"
+
+      - name: データリポジトリへコミット・プッシュ
+        working-directory: data-repo
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add stock/prices
+          if git diff --cached --quiet; then
+            echo "変更なし。コミットをスキップします。"
+          else
+            git commit -m "chore: 株価データ更新（${{ inputs.code }}）"
+            git push
+          fi

@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stock 投資管理</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<div class="app-shell">
+    <main class="main-content">
+        <h1 class="app-title">Stock 投資管理</h1>
+
+        <!-- 表示切り替え（ダッシュボード／保有・履歴／データ更新／銘柄属性／スコア／銘柄提案） -->
+        <div class="view-toggle">
+            <button type="button" id="tab-dashboard"  class="view-btn view-btn--active" data-view="dashboard">ダッシュボード</button>
+            <button type="button" id="tab-holdings"   class="view-btn" data-view="holdings">保有・履歴</button>
+            <button type="button" id="tab-dataupdate" class="view-btn" data-view="dataupdate">データ更新</button>
+            <button type="button" id="tab-attributes" class="view-btn" data-view="attributes">銘柄属性</button>
+            <button type="button" id="tab-score"      class="view-btn" data-view="score">スコア</button>
+            <button type="button" id="tab-suggest"    class="view-btn" data-view="suggest">銘柄提案</button>
+        </div>
+
+        <!-- ダッシュボード：ポートフォリオスコア・直近の提案などのサマリー起点ページ -->
+        <div id="view-dashboard" class="view-panel">
+            <p class="section-label">ダッシュボード</p>
+            <p class="placeholder-text">ポートフォリオスコア・直近の提案などのサマリーをここに表示予定です。</p>
+        </div>
+
+        <!-- 保有・履歴：証券会社ごとの保有銘柄インプット、売買履歴CSVインポート -->
+        <div id="view-holdings" class="view-panel" style="display:none">
+            <p class="section-label">保有・履歴</p>
+            <p class="placeholder-text">証券会社ごとの保有銘柄インプット、売買履歴CSVのインポートをここで行う予定です。</p>
+        </div>
+
+        <!-- データ更新：IRBANK業績情報・yfinance株価のGitHub Actions更新トリガーと実行状況確認 -->
+        <div id="view-dataupdate" class="view-panel" style="display:none">
+            <p class="section-label">データ更新</p>
+            <p class="placeholder-text">IRBANK業績情報・yfinance株価のGitHub Actions更新トリガーと実行状況確認をここで行う予定です。</p>
+        </div>
+
+        <!-- 銘柄属性：上場銘柄一覧を母集団に、ラベル付け（高配当認定・高利回り優待認定・NG認定など） -->
+        <div id="view-attributes" class="view-panel" style="display:none">
+            <p class="section-label">銘柄属性</p>
+            <p class="placeholder-text">上場銘柄一覧を母集団に、ラベル付け（高配当認定・高利回り優待認定・NG認定など）をここで行う予定です。</p>
+        </div>
+
+        <!-- スコア：業績スコア・配当利回り・売買履歴補正後利回り・ポートフォリオスコアの計算結果表示 -->
+        <div id="view-score" class="view-panel" style="display:none">
+            <p class="section-label">スコア</p>
+            <p class="placeholder-text">業績スコア・配当利回り・売買履歴補正後利回り・ポートフォリオスコアの計算結果をここに表示予定です。</p>
+        </div>
+
+        <!-- 銘柄提案：ポートフォリオスコアを最大化する売買方針の提案 -->
+        <div id="view-suggest" class="view-panel" style="display:none">
+            <p class="section-label">銘柄提案</p>
+            <p class="placeholder-text">ポートフォリオスコアを最大化する売買方針の提案をここに表示予定です。</p>
+        </div>
+    </main>
+</div>
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>

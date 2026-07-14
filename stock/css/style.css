@@ -1,0 +1,68 @@
+* { box-sizing: border-box; }
+
+body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Kaku Gothic ProN", Meiryo, sans-serif;
+    background: #f6f8fa;
+    color: #24292e;
+}
+
+.app-shell {
+    display: flex;
+    justify-content: center;
+}
+
+.main-content {
+    width: 100%;
+    max-width: 960px;
+    padding: 20px 16px 60px;
+}
+
+.app-title {
+    font-size: 20px;
+    font-weight: 700;
+    margin: 0 0 16px;
+}
+
+/* ===== 表示切り替えタブ ===== */
+.view-toggle {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 18px;
+}
+
+.view-btn {
+    padding: 8px 16px;
+    font-size: 13px;
+    font-weight: 600;
+    background: #fff;
+    color: #444;
+    border: 1px solid #d0d7de;
+    border-radius: 6px;
+    cursor: pointer;
+}
+.view-btn:hover { background: #eef0f3; }
+.view-btn--active { background: #0d6efd; color: #fff; border-color: #0d6efd; }
+
+/* ===== ページパネル共通 ===== */
+.view-panel {
+    background: #fff;
+    border: 1px solid #e1e4e8;
+    border-radius: 8px;
+    padding: 18px 20px;
+}
+
+.section-label {
+    margin: 0 0 8px;
+    font-size: 16px;
+    font-weight: 700;
+    color: #24292e;
+}
+
+.placeholder-text {
+    margin: 0;
+    color: #8b949e;
+    font-size: 13.5px;
+    line-height: 1.6;
+}
