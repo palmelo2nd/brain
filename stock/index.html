@@ -12,6 +12,12 @@
     <main class="main-content">
         <h1 class="app-title">Stock 投資管理</h1>
 
+        <!-- 常時表示バー（PW入力。GitHub連携が必要な各ページで共通して使う） -->
+        <div class="pw-bar">
+            <label for="pw-input">PW</label>
+            <input type="password" id="pw-input" class="pw-input" autocomplete="off">
+        </div>
+
         <!-- 表示切り替え（ダッシュボード／保有・履歴／データ更新／銘柄属性／スコア／銘柄提案） -->
         <div class="view-toggle">
             <button type="button" id="tab-dashboard"  class="view-btn view-btn--active" data-view="dashboard">ダッシュボード</button>
@@ -37,7 +43,21 @@
         <!-- データ更新：IRBANK業績情報・yfinance株価のGitHub Actions更新トリガーと実行状況確認 -->
         <div id="view-dataupdate" class="view-panel" style="display:none">
             <p class="section-label">データ更新</p>
-            <p class="placeholder-text">IRBANK業績情報・yfinance株価のGitHub Actions更新トリガーと実行状況確認をここで行う予定です。</p>
+            <p class="placeholder-text">業績情報（IRBANK）の更新は今後追加予定です。まずは株価（yfinance）のみ。</p>
+
+            <div class="update-form">
+                <p class="update-form-title">株価取得（yfinance・日足終値）</p>
+                <div class="update-form-row">
+                    <label>証券コード</label>
+                    <input type="text" id="price-update-code" value="7203">
+                </div>
+                <div class="update-form-row">
+                    <label>取得期間</label>
+                    <input type="text" id="price-update-period" value="5d" placeholder="例: 5d, 1mo, max">
+                </div>
+                <button type="button" id="price-update-run-btn" class="run-btn">株価取得を実行</button>
+                <p id="price-update-status" class="update-status"></p>
+            </div>
         </div>
 
         <!-- 銘柄属性：上場銘柄一覧を母集団に、ラベル付け（高配当認定・高利回り優待認定・NG認定など） -->

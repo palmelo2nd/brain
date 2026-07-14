@@ -24,6 +24,28 @@ body {
     margin: 0 0 16px;
 }
 
+/* ===== 常時表示バー（PW） ===== */
+.pw-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+.pw-bar label {
+    font-size: 12px;
+    font-weight: 600;
+    color: #8b949e;
+}
+
+.pw-input {
+    padding: 6px 10px;
+    font-size: 13px;
+    border: 1px solid #d0d7de;
+    border-radius: 6px;
+    width: 160px;
+}
+
 /* ===== 表示切り替えタブ ===== */
 .view-toggle {
     display: flex;
@@ -64,5 +86,59 @@ body {
     margin: 0;
     color: #8b949e;
     font-size: 13.5px;
+    line-height: 1.6;
+}
+
+/* ===== データ更新フォーム ===== */
+.update-form {
+    margin-top: 16px;
+    padding-top: 16px;
+    border-top: 1px solid #e1e4e8;
+}
+
+.update-form-title {
+    margin: 0 0 10px;
+    font-size: 13px;
+    font-weight: 700;
+    color: #57606a;
+}
+
+.update-form-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.update-form-row label {
+    flex: 0 0 80px;
+    font-size: 12.5px;
+    color: #57606a;
+}
+
+.update-form-row input {
+    flex: 0 0 160px;
+    padding: 6px 10px;
+    font-size: 13px;
+    border: 1px solid #d0d7de;
+    border-radius: 6px;
+}
+
+.run-btn {
+    padding: 8px 20px;
+    font-size: 13px;
+    font-weight: 600;
+    background: #28a745;
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+}
+.run-btn:hover { background: #1e7e34; }
+
+.update-status {
+    margin: 10px 0 0;
+    font-size: 12.5px;
+    color: #57606a;
     line-height: 1.6;
 }
