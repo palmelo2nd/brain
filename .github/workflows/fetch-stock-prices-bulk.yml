@@ -1,0 +1,85 @@
+name: Fetch Stock Prices (Bulk from Master)
+
+# 銘柄マスタ（master.csv）を母集団に、指定した範囲（offset〜offset+limit）の株価を一括取得する。
+# 20件処理するごとに自動でコミット・プッシュするため、途中で失敗しても
+# それまでに取得できた分は失われない。
+on:
+  workflow_dispatch:
+    inputs:
+      offset:
+        description: "銘柄マスタの何件目から処理するか（0始まり）"
+        required: true
+        default: "0"
+      limit:
+        description: "何件処理するか"
+        required: true
+        default: "200"
+      asset_types:
+        description: "対象とするasset_type（カンマ区切り）"
+        required: false
+        default: "内国株式,ETF・ETN"
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 340 # GitHub Actionsのジョブ上限（360分）に収まるよう余裕を持たせる
+    steps:
+      - name: コードリポジトリをチェックアウト
+        uses: actions/checkout@v4
+        with:
+          path: code-repo
+
+      - name: データリポジトリをチェックアウト
+        uses: actions/checkout@v4
+        with:
+          repository: palmelo2nd/brain_data
+          token: ${{ secrets.DATA_REPO_TOKEN }}
+          path: data-repo
+
+      - name: Python セットアップ
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 依存パッケージをインストール
+        run: pip install -r code-repo/stock/scripts/requirements.txt
+
+      - name: Git ユーザー設定
+        working-directory: data-repo
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: 銘柄マスタから一括取得（20件のサブバッチごとにコミット）
+        run: |
+          OFFSET=${{ inputs.offset }}
+          LIMIT=${{ inputs.limit }}
+          SUB_BATCH=20
+          END=$((OFFSET + LIMIT))
+
+          for (( start=OFFSET; start<END; start+=SUB_BATCH )); do
+            count=$SUB_BATCH
+            remaining=$((END - start))
+            if (( remaining < count )); then count=$remaining; fi
+
+            echo "=== サブバッチ処理中: offset=$start limit=$count ==="
+
+            # 1銘柄の失敗でスクリプトが非ゼロ終了しても、後続のコミット処理は必ず実行する
+            python code-repo/stock/scripts/fetch_prices.py \
+              --master "${{ github.workspace }}/data-repo/stock/master.csv" \
+              --asset-types "${{ inputs.asset_types }}" \
+              --offset "$start" \
+              --limit "$count" \
+              --output-dir "${{ github.workspace }}/data-repo/stock/prices" \
+              || echo "一部の銘柄で取得に失敗しましたが、成功分のコミットは継続します"
+
+            cd data-repo
+            git add stock/prices
+            if git diff --cached --quiet; then
+              echo "変更なし（offset=$start〜$((start + count - 1))）"
+            else
+              git commit -m "chore: 株価データ一括更新（offset=${start}, count=${count}）"
+              git push
+            fi
+            cd ..
+          done

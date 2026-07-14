@@ -4,7 +4,8 @@ import { dispatchWorkflow } from './modules/github.js';
 const OWNER              = 'palmelo2nd';
 const CODE_REPO          = 'brain';   // ワークフローファイルが置かれているコードリポジトリ
 const CODE_REPO_BRANCH   = 'main';
-const PRICE_WORKFLOW_FILE = 'fetch-stock-prices.yml';
+const PRICE_WORKFLOW_FILE      = 'fetch-stock-prices.yml';
+const PRICE_BULK_WORKFLOW_FILE = 'fetch-stock-prices-bulk.yml';
 
 // ===== PW（GitHub PAT）入力欄 =====
 // 一度入力すればlocalStorageに保存され、次回以降は自動的に入力済みの状態になる（brainのトークン入力と同じ仕組み）。
@@ -61,6 +62,33 @@ document.getElementById('price-update-run-btn')?.addEventListener('click', async
         statusEl.textContent =
             `実行をリクエストしました（コード: ${codes} / 期間: ${period || '2013年以降の全期間'}）。` +
             `数十秒〜数分後にデータリポジトリの stock/prices/ 配下が更新されます。` +
+            `GitHubの Actions タブから進捗を確認できます。`;
+    } catch (error) {
+        console.error(error);
+        statusEl.textContent = `失敗しました: ${error.message}`;
+    }
+});
+
+// ===== データ更新：銘柄マスタ（master.csv）から範囲指定して一括取得するワークフローを起動 =====
+document.getElementById('bulk-update-run-btn')?.addEventListener('click', async () => {
+    const statusEl     = document.getElementById('bulk-update-status');
+    const offsetInput  = document.getElementById('bulk-update-offset');
+    const limitInput   = document.getElementById('bulk-update-limit');
+
+    const token  = getTokenValue();
+    const offset = offsetInput.value.trim() || '0';
+    const limit  = limitInput.value.trim();
+
+    if (!token) { alert('PWを入力してください'); return; }
+    if (!limit) { alert('件数を入力してください'); return; }
+
+    statusEl.textContent = '実行をリクエスト中...';
+
+    try {
+        await dispatchWorkflow(token, OWNER, CODE_REPO, PRICE_BULK_WORKFLOW_FILE, CODE_REPO_BRANCH, { offset, limit });
+        statusEl.textContent =
+            `実行をリクエストしました（開始位置: ${offset} / 件数: ${limit}）。` +
+            `20件処理するごとにデータリポジトリへ自動コミットされます。` +
             `GitHubの Actions タブから進捗を確認できます。`;
     } catch (error) {
         console.error(error);
