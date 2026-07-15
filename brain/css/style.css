@@ -362,14 +362,14 @@ details[open] > .expander-title::after { transform: rotate(90deg); }
 }
 
 /* ===== プロジェクト管理 ===== */
-#project-admin-table td {
+#project-browser-table td {
     white-space: normal;
     max-width: none;
     vertical-align: middle;
 }
 
-#project-admin-table td > * { margin-right: 6px; vertical-align: middle; }
-#project-admin-table td > *:last-child { margin-right: 0; }
+#project-browser-table td > * { margin-right: 6px; vertical-align: middle; }
+#project-browser-table td > *:last-child { margin-right: 0; }
 
 .project-admin-input {
     width: 120px;
@@ -1400,23 +1400,105 @@ details[open] > .expander-title::after { transform: rotate(90deg); }
     margin-bottom: 6px;
 }
 
-.recurring-weekboard-day-list {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
+.recurring-weekboard-table {
+    width: 100%;
+    table-layout: fixed;
+    border-collapse: separate;
+    border-spacing: 0 3px;
 }
 
-.recurring-weekboard-chip-wrap {
-    max-width: 100%;
-}
-
-.recurring-weekboard-chip-wrap .calendar-unscheduled-chip {
-    flex: 1 1 auto;
-    min-width: 0;
-    text-align: left;
+.recurring-weekboard-row td {
+    color: #fff;
+    font-size: 11px;
+    line-height: 1.3;
+    padding: 3px 8px;
+    border-radius: 4px;
+    cursor: pointer;
     white-space: nowrap;
     overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 0; /* table-layout: fixed の列幅に収めて text-overflow を効かせる */
 }
+
+.recurring-weekboard-row--selected td {
+    outline: 2px solid #fd7e14;
+    outline-offset: -2px;
+}
+
+/* ===== 繰り返しタスク：タスク一覧（左）の実行/編集タブ・親子分割 ===== */
+.recurring-tasklist-tabs .taskorg-view-btn {
+    padding: 4px 14px;
+    font-size: 12px;
+}
+
+.recurring-tasklist-split {
+    display: flex;
+    gap: 14px;
+    align-items: flex-start;
+}
+
+.recurring-tasklist-split > .table-wrapper {
+    flex: 1 1 0;
+    min-width: 0;
+}
+
+.recurring-child-col {
+    flex: 1 1 0;
+    min-width: 0;
+}
+
+/* ===== 繰り返しタスク：タスク一覧・子タスク一覧（タイトルのみの表） ===== */
+.recurring-list-table {
+    width: 100%;
+    table-layout: fixed;
+    border-collapse: separate;
+    border-spacing: 0 3px;
+}
+
+.recurring-list-title {
+    color: #fff;
+    font-size: 12px;
+    line-height: 1.3;
+    padding: 4px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 0; /* table-layout: fixed の列幅に収めて text-overflow を効かせる */
+}
+
+/* 実行タブの2列表示: 1列目=タイトル（幅可変）、2列目=操作ボタン（幅固定） */
+.recurring-list-table--2col .recurring-list-title { width: auto; }
+.recurring-list-action {
+    width: 108px;
+    padding: 4px 0 4px 6px;
+    white-space: nowrap;
+}
+
+.recurring-list-row--selected .recurring-list-title {
+    outline: 2px solid #fd7e14;
+    outline-offset: -2px;
+}
+
+.recurring-table-btn {
+    border: 1px solid transparent;
+    border-radius: 4px;
+    padding: 3px 8px;
+    margin-right: 4px;
+    font-size: 11px;
+    font-weight: 700;
+    cursor: pointer;
+    color: #fff;
+    background: rgba(0, 0, 0, 0.35);
+}
+.recurring-table-btn:last-child { margin-right: 0; }
+.recurring-table-btn:hover:not(:disabled) { background: rgba(0, 0, 0, 0.5); }
+.recurring-table-btn:disabled { cursor: default; opacity: 0.4; }
+.recurring-table-btn--add { background: #28a745; font-size: 13px; }
+.recurring-table-btn--add:hover { background: #1e7e34; }
+.recurring-table-btn--done { background: #28a745; }
+.recurring-table-btn--done:hover { background: #1e7e34; }
 
 .calendar-danger-btn { background: #d73a49 !important; }
 .calendar-danger-btn:hover { background: #b0202f !important; }

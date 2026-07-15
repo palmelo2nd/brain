@@ -5,7 +5,7 @@ import { mergeMainData } from './modules/merge.js';
 import { exportToExcel, importFromExcel } from './modules/excel.js';
 import {
     generateChildManually, matchesSchedule,
-    formatRecurringFrequencyLabel, buildChildChartData,
+    buildChildChartData,
     parseChildTemplates, stringifyChildTemplates
 } from './modules/recurring.js';
 import { parseExceptions, stringifyExceptions, computeMonthCalendar, computeMonthStats, getDefaultType } from './modules/workCalendar.js';
@@ -874,13 +874,17 @@ function getFilteredProjectNamesForAdmin() {
     return names.filter(n => inCategory.has(n));
 }
 
-/** プロジェクト一覧（カテゴリフィルタ適用・有効プロジェクトのみ）をクリックで選択できるテーブルとして描画する。 */
+/**
+ * プロジェクト一覧テーブルを描画する（カテゴリフィルタ適用、有効/無効を問わず表示）。
+ * 使用件数・状態・名前変更・統合・削除の管理機能を統合している。プロジェクト名セルのクリックで選択でき、
+ * 選択すると下に紐づくタスク一覧が表示される（操作ボタン・入力欄のクリックは選択に影響しない）。
+ */
 function renderProjectBrowserList() {
     const table = document.getElementById('project-browser-table');
     if (!table) return;
     table.className = 'data-table';
 
-    const projectNames = getFilteredProjects();
+    const projectNames = getFilteredProjectNamesForAdmin();
 
     if (projectNames.length === 0) {
         const tbody = document.createElement('tbody');
@@ -896,7 +900,7 @@ function renderProjectBrowserList() {
 
     const thead = document.createElement('thead');
     const hRow  = document.createElement('tr');
-    ['プロジェクト名', 'タスク数'].forEach(col => {
+    ['プロジェクト名', 'タスク数', '状態', '名前変更', '統合', '削除'].forEach(col => {
         const th = document.createElement('th');
         th.textContent = col;
         hRow.appendChild(th);
@@ -905,22 +909,157 @@ function renderProjectBrowserList() {
 
     const tbody = document.createElement('tbody');
     projectNames.forEach(name => {
+        const count = countProjectUsage(name);
+        const otherNames = projectNames.filter(n => n !== name);
+
         const tr = document.createElement('tr');
         tr.className = 'recurring-parent-row';
         if (name === selectedProjectAdminName) tr.classList.add('selected-row');
 
-        [name, String(countProjectUsage(name))].forEach(text => {
-            const td = document.createElement('td');
-            td.textContent = text;
-            tr.appendChild(td);
-        });
-        tr.addEventListener('click', () => {
+        // プロジェクト名（クリックで選択、下にタスク一覧を表示）
+        const nameTd = document.createElement('td');
+        nameTd.textContent = name;
+        nameTd.style.cursor = 'pointer';
+        nameTd.addEventListener('click', () => {
             if (selectedProjectAdminName !== name) selectedProjectTaskId = null; // 別プロジェクトへ切替時は選択中タスクをクリア
             selectedProjectAdminName = name;
             renderProjectBrowserList();
             renderProjectBrowserTasks();
             renderProjectTaskEdit();
         });
+        tr.appendChild(nameTd);
+
+        // タスク数
+        const countTd = document.createElement('td');
+        countTd.textContent = String(count);
+        tr.appendChild(countTd);
+
+        // 状態（表示/非表示の切り替え）
+        const statusTd = document.createElement('td');
+        const active = currentMasterData.some(r => r['(M)プロジェクト_子'] === name && isProjectActive(r));
+        const statusBtn = document.createElement('button');
+        statusBtn.textContent = active ? '表示中' : '非表示中';
+        statusBtn.className = active ? 'project-admin-status-btn project-admin-status-btn--on' : 'project-admin-status-btn project-admin-status-btn--off';
+        statusBtn.addEventListener('click', () => {
+            toggleProjectStatus(name);
+            renderProjectAdmin();
+            renderCalendar();
+        });
+        statusTd.appendChild(statusBtn);
+        tr.appendChild(statusTd);
+
+        // 名前変更
+        const renameTd = document.createElement('td');
+        const renameInput = document.createElement('input');
+        renameInput.type = 'text';
+        renameInput.placeholder = '新しい名前';
+        renameInput.className = 'project-admin-input';
+        const renameBtn = document.createElement('button');
+        renameBtn.textContent = '変更';
+        renameBtn.addEventListener('click', () => {
+            const newName = renameInput.value.trim();
+            if (!newName || newName === name) return;
+            renameProjectMaster(name, newName);
+            projectAdminDeletePending = null;
+            if (selectedProjectAdminName === name) selectedProjectAdminName = newName;
+            renderProjectAdmin();
+            renderCalendar();
+        });
+        renameTd.append(renameInput, renameBtn);
+        tr.appendChild(renameTd);
+
+        // 統合
+        const mergeTd = document.createElement('td');
+        if (otherNames.length > 0) {
+            const mergeSelect = document.createElement('select');
+            otherNames.forEach(n => {
+                const opt = document.createElement('option');
+                opt.value = n;
+                opt.textContent = n;
+                mergeSelect.appendChild(opt);
+            });
+            const mergeBtn = document.createElement('button');
+            mergeBtn.textContent = 'このプロジェクトへ統合';
+            mergeBtn.addEventListener('click', () => {
+                if (!confirm(`「${name}」を「${mergeSelect.value}」に統合します。「${name}」を使用中の全タスク／ナレッジが「${mergeSelect.value}」に書き換わります。よろしいですか？`)) return;
+                mergeProjectInto(name, mergeSelect.value);
+                projectAdminDeletePending = null;
+                if (selectedProjectAdminName === name) selectedProjectAdminName = mergeSelect.value;
+                renderProjectAdmin();
+                renderCalendar();
+            });
+            mergeTd.append(mergeSelect, mergeBtn);
+        } else {
+            mergeTd.textContent = '（統合先なし）';
+        }
+        tr.appendChild(mergeTd);
+
+        // 削除
+        const deleteTd = document.createElement('td');
+        if (projectAdminDeletePending === name) {
+            const p = document.createElement('p');
+            p.className = 'warning-text';
+            p.textContent = `「${name}」は${count}件のタスク／ナレッジに割り当てられています。`;
+            deleteTd.appendChild(p);
+
+            if (otherNames.length > 0) {
+                const reassignSelect = document.createElement('select');
+                otherNames.forEach(n => {
+                    const opt = document.createElement('option');
+                    opt.value = n;
+                    opt.textContent = n;
+                    reassignSelect.appendChild(opt);
+                });
+                const reassignBtn = document.createElement('button');
+                reassignBtn.textContent = '再割り当てして削除';
+                reassignBtn.addEventListener('click', () => {
+                    deleteProject(name, reassignSelect.value);
+                    projectAdminDeletePending = null;
+                    if (selectedProjectAdminName === name) selectedProjectAdminName = reassignSelect.value;
+                    renderProjectAdmin();
+                    renderCalendar();
+                });
+                deleteTd.append(reassignSelect, reassignBtn);
+            }
+
+            const unassignBtn = document.createElement('button');
+            unassignBtn.className = 'calendar-danger-btn';
+            unassignBtn.textContent = '割り当てずに削除';
+            unassignBtn.addEventListener('click', () => {
+                if (!confirm(`「${name}」を削除し、割り当てられていた${count}件のプロジェクトを空欄にします。よろしいですか？`)) return;
+                deleteProject(name, null);
+                projectAdminDeletePending = null;
+                if (selectedProjectAdminName === name) selectedProjectAdminName = null;
+                renderProjectAdmin();
+                renderCalendar();
+            });
+            const cancelBtn = document.createElement('button');
+            cancelBtn.textContent = 'キャンセル';
+            cancelBtn.addEventListener('click', () => {
+                projectAdminDeletePending = null;
+                renderProjectAdmin();
+            });
+            deleteTd.append(unassignBtn, cancelBtn);
+        } else {
+            const deleteBtn = document.createElement('button');
+            deleteBtn.className = 'calendar-danger-btn';
+            deleteBtn.textContent = '削除';
+            deleteBtn.addEventListener('click', () => {
+                if (count === 0) {
+                    if (!confirm(`「${name}」を削除します。よろしいですか？`)) return;
+                    deleteProject(name, null);
+                    if (selectedProjectAdminName === name) selectedProjectAdminName = null;
+                    renderProjectAdmin();
+                    renderCalendar();
+                } else {
+                    projectAdminDeletePending = name;
+                    renderProjectAdmin();
+                }
+            });
+            deleteTd.appendChild(deleteBtn);
+        }
+        tr.appendChild(deleteTd);
+
         tbody.appendChild(tr);
     });
 
@@ -1221,174 +1360,6 @@ function renderProjectAdmin() {
     renderProjectBrowserTasks();
     renderProjectTaskEdit();
     updateProjectAdminNewCategoryVisibility();
-
-    const table = document.getElementById('project-admin-table');
-    if (!table) return;
-
-    const projectNames = getFilteredProjectNamesForAdmin();
-    table.className = 'data-table';
-
-    if (projectNames.length === 0) {
-        const tbody = document.createElement('tbody');
-        const tr = document.createElement('tr');
-        const td = document.createElement('td');
-        td.className = 'empty-cell';
-        td.textContent = '登録済みのプロジェクトがありません';
-        tr.appendChild(td);
-        tbody.appendChild(tr);
-        table.replaceChildren(tbody);
-        return;
-    }
-
-    const thead = document.createElement('thead');
-    const hRow  = document.createElement('tr');
-    ['プロジェクト名', '使用件数', '状態', '名前変更', '統合', '削除'].forEach(col => {
-        const th = document.createElement('th');
-        th.textContent = col;
-        hRow.appendChild(th);
-    });
-    thead.appendChild(hRow);
-
-    const tbody = document.createElement('tbody');
-    projectNames.forEach(name => {
-        const count = countProjectUsage(name);
-        const otherNames = projectNames.filter(n => n !== name);
-
-        const tr = document.createElement('tr');
-
-        const nameTd = document.createElement('td');
-        nameTd.textContent = name;
-        tr.appendChild(nameTd);
-
-        const countTd = document.createElement('td');
-        countTd.textContent = String(count);
-        tr.appendChild(countTd);
-
-        // 状態（表示/非表示の切り替え）
-        const statusTd = document.createElement('td');
-        const active = currentMasterData.some(r => r['(M)プロジェクト_子'] === name && isProjectActive(r));
-        const statusBtn = document.createElement('button');
-        statusBtn.textContent = active ? '表示中' : '非表示中';
-        statusBtn.className = active ? 'project-admin-status-btn project-admin-status-btn--on' : 'project-admin-status-btn project-admin-status-btn--off';
-        statusBtn.addEventListener('click', () => {
-            toggleProjectStatus(name);
-            renderProjectAdmin();
-            renderCalendar();
-        });
-        statusTd.appendChild(statusBtn);
-        tr.appendChild(statusTd);
-
-        // 名前変更
-        const renameTd = document.createElement('td');
-        const renameInput = document.createElement('input');
-        renameInput.type = 'text';
-        renameInput.placeholder = '新しい名前';
-        renameInput.className = 'project-admin-input';
-        const renameBtn = document.createElement('button');
-        renameBtn.textContent = '変更';
-        renameBtn.addEventListener('click', () => {
-            const newName = renameInput.value.trim();
-            if (!newName || newName === name) return;
-            renameProjectMaster(name, newName);
-            projectAdminDeletePending = null;
-            renderProjectAdmin();
-            renderCalendar();
-        });
-        renameTd.append(renameInput, renameBtn);
-        tr.appendChild(renameTd);
-
-        // 統合
-        const mergeTd = document.createElement('td');
-        if (otherNames.length > 0) {
-            const mergeSelect = document.createElement('select');
-            otherNames.forEach(n => {
-                const opt = document.createElement('option');
-                opt.value = n;
-                opt.textContent = n;
-                mergeSelect.appendChild(opt);
-            });
-            const mergeBtn = document.createElement('button');
-            mergeBtn.textContent = 'このプロジェクトへ統合';
-            mergeBtn.addEventListener('click', () => {
-                if (!confirm(`「${name}」を「${mergeSelect.value}」に統合します。「${name}」を使用中の全タスク／ナレッジが「${mergeSelect.value}」に書き換わります。よろしいですか？`)) return;
-                mergeProjectInto(name, mergeSelect.value);
-                projectAdminDeletePending = null;
-                renderProjectAdmin();
-                renderCalendar();
-            });
-            mergeTd.append(mergeSelect, mergeBtn);
-        } else {
-            mergeTd.textContent = '（統合先なし）';
-        }
-        tr.appendChild(mergeTd);
-
-        // 削除
-        const deleteTd = document.createElement('td');
-        if (projectAdminDeletePending === name) {
-            const p = document.createElement('p');
-            p.className = 'warning-text';
-            p.textContent = `「${name}」は${count}件のタスク／ナレッジに割り当てられています。`;
-            deleteTd.appendChild(p);
-
-            if (otherNames.length > 0) {
-                const reassignSelect = document.createElement('select');
-                otherNames.forEach(n => {
-                    const opt = document.createElement('option');
-                    opt.value = n;
-                    opt.textContent = n;
-                    reassignSelect.appendChild(opt);
-                });
-                const reassignBtn = document.createElement('button');
-                reassignBtn.textContent = '再割り当てして削除';
-                reassignBtn.addEventListener('click', () => {
-                    deleteProject(name, reassignSelect.value);
-                    projectAdminDeletePending = null;
-                    renderProjectAdmin();
-                    renderCalendar();
-                });
-                deleteTd.append(reassignSelect, reassignBtn);
-            }
-
-            const unassignBtn = document.createElement('button');
-            unassignBtn.className = 'calendar-danger-btn';
-            unassignBtn.textContent = '割り当てずに削除';
-            unassignBtn.addEventListener('click', () => {
-                if (!confirm(`「${name}」を削除し、割り当てられていた${count}件のプロジェクトを空欄にします。よろしいですか？`)) return;
-                deleteProject(name, null);
-                projectAdminDeletePending = null;
-                renderProjectAdmin();
-                renderCalendar();
-            });
-            const cancelBtn = document.createElement('button');
-            cancelBtn.textContent = 'キャンセル';
-            cancelBtn.addEventListener('click', () => {
-                projectAdminDeletePending = null;
-                renderProjectAdmin();
-            });
-            deleteTd.append(unassignBtn, cancelBtn);
-        } else {
-            const deleteBtn = document.createElement('button');
-            deleteBtn.className = 'calendar-danger-btn';
-            deleteBtn.textContent = '削除';
-            deleteBtn.addEventListener('click', () => {
-                if (count === 0) {
-                    if (!confirm(`「${name}」を削除します。よろしいですか？`)) return;
-                    deleteProject(name, null);
-                    renderProjectAdmin();
-                    renderCalendar();
-                } else {
-                    projectAdminDeletePending = name;
-                    renderProjectAdmin();
-                }
-            });
-            deleteTd.appendChild(deleteBtn);
-        }
-        tr.appendChild(deleteTd);
-
-        tbody.appendChild(tr);
-    });
-
-    table.replaceChildren(thead, tbody);
 }
 
 /** 空のメインデータ行を1件追加し、メインデータ一覧テーブルを再描画する。 */
@@ -2347,64 +2318,6 @@ function renderRecurringFilters() {
 
 const RECURRING_WEEKBOARD_DAY_LABELS = ['月', '火', '水', '木', '金', '土', '日']; // 週間ボードの列順（月始まり）
 
-/** 親タスクのチップ（＋ボタン付き）を1件分組み立てる。＋を押すとその日を基準日として子タスクを生成する。 */
-function buildRecurringWeekBoardParentChip(parent, date) {
-    const wrap = document.createElement('span');
-    wrap.className = 'calendar-unscheduled-chip-wrap recurring-weekboard-chip-wrap';
-
-    const parentId = String(parent['ID']);
-    const chip = document.createElement('button');
-    chip.type = 'button';
-    chip.className = 'calendar-unscheduled-chip calendar-time-block--todo';
-    if (parentId === selectedRecurringParentId) chip.classList.add('calendar-unscheduled-chip--selected');
-    chip.textContent = parent['タイトル'] || '（無題）';
-    chip.addEventListener('click', () => {
-        selectedRecurringParentId = parentId;
-        selectedRecurringEditId   = parentId;
-        renderRecurringSection();
-    });
-    wrap.appendChild(chip);
-
-    const addBtn = document.createElement('button');
-    addBtn.type = 'button';
-    addBtn.className = 'calendar-unscheduled-chip-add';
-    addBtn.title = 'この日を基準に子タスクを生成';
-    addBtn.textContent = '+';
-    addBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const children = generateChildManually(parent, currentMainData, date);
-        if (children.length === 0) { alert('この日の分は既に生成済みです'); return; }
-        currentMainData.push(...children);
-        persistLocalCache();
-        renderRecurringSection();
-        renderEditTable();
-    });
-    wrap.appendChild(addBtn);
-
-    return wrap;
-}
-
-/** 生成済み子タスクのチップを1件分組み立てる（ステータス別の色分けで実行状況が分かるようにする）。 */
-function buildRecurringWeekBoardChildChip(child) {
-    const wrap = document.createElement('span');
-    wrap.className = 'calendar-unscheduled-chip-wrap recurring-weekboard-chip-wrap';
-
-    const childId = String(child['ID']);
-    const chip = document.createElement('button');
-    chip.type = 'button';
-    chip.className = `calendar-unscheduled-chip ${getCalendarStatusClass(child['ステータス'])}`;
-    if (childId === selectedRecurringEditId) chip.classList.add('calendar-unscheduled-chip--selected');
-    chip.textContent = child['タイトル'] || '（無題）';
-    chip.addEventListener('click', () => {
-        selectedRecurringParentId = child['繰返し親ID'];
-        selectedRecurringEditId   = childId;
-        renderRecurringSection();
-    });
-    wrap.appendChild(chip);
-
-    return wrap;
-}
-
 /** 「開始予定」欄の時刻部分（HH:mm）を分単位に変換する。時刻未入力ならnull。 */
 function extractRecurringStartMinutes(row) {
     // 日付付き（"2026/07/14 09:00"）・時刻のみ（"09:00"）のどちらでも拾えるよう、文字列中のHH:mmを直接探す
@@ -2412,21 +2325,33 @@ function extractRecurringStartMinutes(row) {
     return m ? parseInt(m[1], 10) * 60 + parseInt(m[2], 10) : null;
 }
 
-/** 週間ボードの1つのボタン（チップ）内のテキストが2行に折り返さないよう、収まるまでフォントサイズを縮める。 */
-function fitWeekBoardChipsToOneLine(container) {
-    if (!container || container.offsetParent === null) return; // 非表示中（Expander折りたたみ時）は幅が測れないためスキップ
-    container.querySelectorAll('.calendar-unscheduled-chip').forEach(el => {
-        let fontSize = 12;
-        const minFontSize = 8;
-        el.style.fontSize = fontSize + 'px';
-        while (el.scrollWidth > el.clientWidth && fontSize > minFontSize) {
-            fontSize -= 0.5;
-            el.style.fontSize = fontSize + 'px';
-        }
+/**
+ * 週間ボードの1行分（親タスクまたは生成済み子タスク）を組み立てる。クリックで選択し、下の編集エリアに読み込む。
+ * ステータス別の配色で実行状況が分かるようにする（親タスクは常に灰色）。
+ */
+function buildRecurringWeekBoardRow(item, isParent) {
+    const id = String(item['ID']);
+    const tr = document.createElement('tr');
+    tr.className = 'recurring-weekboard-row';
+
+    const selectedId = isParent ? selectedRecurringParentId : selectedRecurringEditId;
+    if (id === selectedId) tr.classList.add('recurring-weekboard-row--selected');
+
+    const td = document.createElement('td');
+    td.className = isParent ? 'calendar-time-block--todo' : getCalendarStatusClass(item['ステータス']);
+    td.textContent = item['タイトル'] || '（無題）';
+    tr.appendChild(td);
+
+    tr.addEventListener('click', () => {
+        selectedRecurringParentId = isParent ? id : item['繰返し親ID'];
+        selectedRecurringEditId   = id;
+        renderRecurringSection();
     });
+
+    return tr;
 }
 
-/** 週間ボードの1週間分（7列）を container に描画する。weekStart はその週の月曜日。 */
+/** 週間ボードの1週間分（7列）を container に描画する。weekStart はその週の月曜日。各日は1タスク1行の表形式。 */
 function buildRecurringWeekBoardWeek(container, weekStart) {
     if (!container) return;
     container.innerHTML = '';
@@ -2447,25 +2372,19 @@ function buildRecurringWeekBoardWeek(container, weekStart) {
         header.textContent = `${label} ${date.getMonth() + 1}/${date.getDate()}`;
         col.appendChild(header);
 
-        const list = document.createElement('div');
-        list.className = 'recurring-weekboard-day-list';
-
         // 開始予定に時刻が入力されている親タスクは早い順に並べる（時刻未入力は後ろ）
-        const matchingParents = parents.filter(p => matchesSchedule(p, date)).sort((a, b) => {
-            const ta = extractRecurringStartMinutes(a);
-            const tb = extractRecurringStartMinutes(b);
-            if (ta === null && tb === null) return 0;
-            if (ta === null) return 1;
-            if (tb === null) return -1;
-            return ta - tb;
-        });
+        const matchingParents = sortRecurringParentsByStart(parents.filter(p => matchesSchedule(p, date)));
 
         if (matchingParents.length === 0) {
             const empty = document.createElement('p');
             empty.className = 'calendar-empty-text';
             empty.textContent = '-';
-            list.appendChild(empty);
+            col.appendChild(empty);
         } else {
+            const table = document.createElement('table');
+            table.className = 'recurring-weekboard-table';
+            const tbody = document.createElement('tbody');
+
             matchingParents.forEach(parent => {
                 const parentId = String(parent['ID']);
                 // この日（基準日）を起点に既に生成済みの子タスクがあれば、親の代わりにそれらを表示する
@@ -2474,39 +2393,284 @@ function buildRecurringWeekBoardWeek(container, weekStart) {
                 );
 
                 if (generatedChildren.length > 0) {
-                    generatedChildren.forEach(child => list.appendChild(buildRecurringWeekBoardChildChip(child)));
+                    generatedChildren.forEach(child => tbody.appendChild(buildRecurringWeekBoardRow(child, false)));
                 } else {
-                    list.appendChild(buildRecurringWeekBoardParentChip(parent, date));
+                    tbody.appendChild(buildRecurringWeekBoardRow(parent, true));
                 }
             });
+
+            table.appendChild(tbody);
+            col.appendChild(table);
         }
 
-        col.appendChild(list);
         container.appendChild(col);
     });
-
-    fitWeekBoardChipsToOneLine(container);
 }
 
+let recurringWeekBoardOffset = 0; // 表示中の週（今週からの相対週数。‹›で前後の週へ移動、「今週」ボタンで0に戻す）
+
 /**
- * 週間ボード（今週・来週の2週間分）を描画する。今日を基準に毎回計算するため、
- * 日付が進んで週が変わればウィンドウも自動的に先へ進む（ページ内に週送りボタンは無い）。
+ * 週間ボードを描画する。recurringWeekBoardOffset 週分ずらした週を表示する（0=今週、-1=先週、+1=来週…）。
+ * ‹›ボタンで前後の週（過去の履歴を含む）を自由に閲覧できる。
  */
 function renderRecurringWeekBoard() {
     const today = new Date();
     const mondayOffset = (today.getDay() + 6) % 7; // 日曜=0を6扱いにして月曜起点に変換
     const thisMonday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - mondayOffset);
-    const nextMonday = new Date(thisMonday.getFullYear(), thisMonday.getMonth(), thisMonday.getDate() + 7);
+    const targetMonday = new Date(thisMonday.getFullYear(), thisMonday.getMonth(), thisMonday.getDate() + recurringWeekBoardOffset * 7);
+    const targetSunday = new Date(targetMonday.getFullYear(), targetMonday.getMonth(), targetMonday.getDate() + 6);
 
-    buildRecurringWeekBoardWeek(document.getElementById('recurring-weekboard-current'), thisMonday);
-    buildRecurringWeekBoardWeek(document.getElementById('recurring-weekboard-next'),    nextMonday);
+    const label = document.getElementById('recurring-weekboard-week-label');
+    if (label) {
+        const fmt = d => `${d.getMonth() + 1}/${d.getDate()}`;
+        label.textContent = recurringWeekBoardOffset === 0
+            ? `今週（${fmt(targetMonday)}〜${fmt(targetSunday)}）`
+            : `${fmt(targetMonday)}〜${fmt(targetSunday)}`;
+    }
+
+    buildRecurringWeekBoardWeek(document.getElementById('recurring-weekboard-current'), targetMonday);
 }
 
-// Expanderを開いた瞬間に、その時点で初めて実寸で測れるようになるチップ幅に合わせてフォントサイズを再調整する
-document.getElementById('recurring-weekboard-current-details')
-    ?.addEventListener('toggle', function () { if (this.open) fitWeekBoardChipsToOneLine(document.getElementById('recurring-weekboard-current')); });
-document.getElementById('recurring-weekboard-next-details')
-    ?.addEventListener('toggle', function () { if (this.open) fitWeekBoardChipsToOneLine(document.getElementById('recurring-weekboard-next')); });
+document.getElementById('recurring-weekboard-prev-btn')?.addEventListener('click', () => {
+    recurringWeekBoardOffset--;
+    renderRecurringWeekBoard();
+});
+document.getElementById('recurring-weekboard-next-btn')?.addEventListener('click', () => {
+    recurringWeekBoardOffset++;
+    renderRecurringWeekBoard();
+});
+document.getElementById('recurring-weekboard-today-btn')?.addEventListener('click', () => {
+    recurringWeekBoardOffset = 0;
+    renderRecurringWeekBoard();
+});
+
+// ===== タスク一覧（実行／編集を切替） =====
+// 実行: 当日の頻度に一致する親タスク・生成済み子タスクを開始予定の昇順でボタン表示し、＋での子タスク生成やタイマー・ステータス遷移を行う。
+// 編集: フィルタ適用済みの全親タスクを開始予定の昇順でボタン表示するのみ（＋・タイマーは無し）。選択すると下に子タスク一覧が表示され、
+//       親タスクの新規追加・編集パネルで編集できる。
+
+let recurringExecView = 'exec'; // タスク一覧の表示切り替え（'exec' | 'edit'）
+
+document.querySelectorAll('#recurring-exec-tab-today, #recurring-exec-tab-all').forEach(btn => {
+    btn.addEventListener('click', () => {
+        recurringExecView = btn.dataset.view;
+        document.querySelectorAll('#recurring-exec-tab-today, #recurring-exec-tab-all').forEach(b =>
+            b.classList.toggle('taskorg-view-btn--active', b === btn)
+        );
+        renderRecurringExecArea();
+    });
+});
+
+/** タスク一覧テーブルに「該当なし」の1行を追加する。 */
+function appendRecurringListEmptyRow(tbody, text) {
+    const tr = document.createElement('tr');
+    const td = document.createElement('td');
+    td.className = 'empty-cell';
+    td.textContent = text;
+    tr.appendChild(td);
+    tbody.appendChild(tr);
+}
+
+/**
+ * タスク一覧・子タスク一覧共通のタイトルセルを組み立てる（ステータス配色・選択中ハイライト・クリックで選択）。
+ * onSelect は行クリック時に呼ぶコールバック。
+ */
+function buildRecurringListTitleCell(item, statusClass, isSelected, onSelect) {
+    const td = document.createElement('td');
+    td.className = `recurring-list-title ${statusClass}`;
+    td.textContent = item['タイトル'] || '（無題）';
+    td.addEventListener('click', onSelect);
+
+    const tr = document.createElement('tr');
+    if (isSelected) tr.classList.add('recurring-list-row--selected');
+    tr.appendChild(td);
+    return tr;
+}
+
+/**
+ * タスク一覧（親タスク）の行を組み立てる。withAddButton が true（実行タブ）の場合は2列目に＋ボタンを配置し、
+ * 押すと今日を基準日として子タスクを「進行中」で生成する。false（編集タブ）の場合はタイトルのみの1列。
+ */
+function buildRecurringParentRow(parent, withAddButton) {
+    const parentId = String(parent['ID']);
+    const tr = buildRecurringListTitleCell(parent, 'calendar-time-block--todo', parentId === selectedRecurringParentId, () => {
+        selectedRecurringParentId = parentId;
+        selectedRecurringEditId   = parentId;
+        renderRecurringSection();
+    });
+
+    if (withAddButton) {
+        const actionTd = document.createElement('td');
+        actionTd.className = 'recurring-list-action';
+        const addBtn = document.createElement('button');
+        addBtn.type = 'button';
+        addBtn.className = 'recurring-table-btn recurring-table-btn--add';
+        addBtn.title = '今日を基準に子タスクを「進行中」で生成';
+        addBtn.textContent = '+';
+        addBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const children = generateChildManually(parent, currentMainData, new Date());
+            if (children.length === 0) { alert('今日の分は既に生成済みです'); return; }
+            const ts = formatJpDatetime(new Date());
+            children.forEach(child => { child['ステータス'] = '進行中'; child['更新日時'] = ts; });
+            currentMainData.push(...children);
+            persistLocalCache();
+            renderRecurringSection();
+            renderTaskRunner();
+            renderEditTable();
+        });
+        actionTd.appendChild(addBtn);
+        tr.appendChild(actionTd);
+    }
+
+    return tr;
+}
+
+/**
+ * タスク一覧（実行タブ）の生成済み子タスクの行を組み立てる。2列目に▷/□（タイマー開始・停止）と「完了」ボタンを配置する。
+ * 完了後は▷/□を非表示にし、「完了」ボタンを緑色にする。ステータス配色（灰→青→緑）はタイトルセルの背景で表現する。
+ */
+function buildRecurringChildExecRow(child) {
+    const childId = String(child['ID']);
+    const isDone  = child['ステータス'] === '完了';
+    const running = isLogRunning(child['タイムスタンプログ']);
+
+    const tr = buildRecurringListTitleCell(child, getCalendarStatusClass(child['ステータス']), childId === selectedRecurringEditId, () => {
+        selectedRecurringParentId = child['繰返し親ID'];
+        selectedRecurringEditId   = childId;
+        renderRecurringSection();
+    });
+
+    const actionTd = document.createElement('td');
+    actionTd.className = 'recurring-list-action';
+
+    if (!isDone) {
+        const startBtn = document.createElement('button');
+        startBtn.type = 'button';
+        startBtn.className = 'recurring-table-btn';
+        startBtn.title = 'タイマー開始';
+        startBtn.textContent = '▷';
+        startBtn.disabled = running;
+        startBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const ts = formatJpDatetime(new Date());
+            child['タイムスタンプログ'] = (child['タイムスタンプログ'] || '') + `${ts}-`;
+            persistLocalCache();
+            renderRecurringSection();
+            renderTaskRunner();
+        });
+        actionTd.appendChild(startBtn);
+
+        const stopBtn = document.createElement('button');
+        stopBtn.type = 'button';
+        stopBtn.className = 'recurring-table-btn';
+        stopBtn.title = 'タイマー停止';
+        stopBtn.textContent = '□';
+        stopBtn.disabled = !running;
+        stopBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const ts = formatJpDatetime(new Date());
+            child['タイムスタンプログ'] = (child['タイムスタンプログ'] || '') + `${ts}, `;
+            persistLocalCache();
+            renderRecurringSection();
+            renderTaskRunner();
+        });
+        actionTd.appendChild(stopBtn);
+    }
+
+    const doneBtn = document.createElement('button');
+    doneBtn.type = 'button';
+    doneBtn.className = 'recurring-table-btn' + (isDone ? ' recurring-table-btn--done' : '');
+    doneBtn.title = '完了にする';
+    doneBtn.textContent = '完了';
+    doneBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (isLogRunning(child['タイムスタンプログ'])) {
+            const ts = formatJpDatetime(new Date());
+            child['タイムスタンプログ'] = (child['タイムスタンプログ'] || '') + `${ts}, `;
+        }
+        const now = formatJpDatetime(new Date());
+        child['ステータス'] = '完了';
+        child['完了日']     = child['完了日'] || jpDateOnly(now);
+        child['更新日時']   = now;
+        persistLocalCache();
+        renderRecurringSection();
+        renderTaskRunner();
+        renderEditTable();
+        renderCalendar();
+    });
+    actionTd.appendChild(doneBtn);
+
+    tr.appendChild(actionTd);
+    return tr;
+}
+
+/** 親タスク配列を開始予定の昇順（時刻未入力は後ろ）に並べ替えた配列を返す。 */
+function sortRecurringParentsByStart(parents) {
+    return [...parents].sort((a, b) => {
+        const ta = extractRecurringStartMinutes(a);
+        const tb = extractRecurringStartMinutes(b);
+        if (ta === null && tb === null) return 0;
+        if (ta === null) return 1;
+        if (tb === null) return -1;
+        return ta - tb;
+    });
+}
+
+/**
+ * タスク一覧を描画する（タイトルのみの表）。
+ * 実行タブ: 2列表示。今日の頻度に一致する親タスクを開始予定の昇順で表示し、未生成なら＋ボタンで子タスクを生成、
+ * 既に今日分が生成済みならその子タスクをタイマー・完了操作つきで表示する。
+ * 編集タブ: 1列表示。フィルタ適用済みの全親タスクを開始予定の昇順で表示するのみ（＋・タイマーは無し）。
+ */
+function renderRecurringExecArea() {
+    const table = document.getElementById('recurring-exec-area');
+    if (!table) return;
+
+    const isExec = recurringExecView !== 'edit';
+    table.className = 'recurring-list-table' + (isExec ? ' recurring-list-table--2col' : '');
+
+    const tbody = document.createElement('tbody');
+
+    if (!isExec) {
+        const parents = sortRecurringParentsByStart(getFilteredRecurringParents());
+        if (parents.length === 0) {
+            appendRecurringListEmptyRow(tbody, '登録済みの繰り返しタスクがありません');
+        } else {
+            parents.forEach(parent => tbody.appendChild(buildRecurringParentRow(parent, false)));
+        }
+        table.replaceChildren(tbody);
+        return;
+    }
+
+    const today   = new Date();
+    const todayJP = jpDateOnly(formatJpDatetime(today));
+
+    const parents = sortRecurringParentsByStart(
+        getFilteredRecurringParents().filter(p => matchesSchedule(p, today))
+    );
+
+    if (parents.length === 0) {
+        appendRecurringListEmptyRow(tbody, '該当する繰り返しタスクがありません');
+        table.replaceChildren(tbody);
+        return;
+    }
+
+    parents.forEach(parent => {
+        const parentId = String(parent['ID']);
+        const generatedChildren = currentMainData.filter(r =>
+            r['繰返し親ID'] === parentId && r['繰返し基準日'] === todayJP
+        );
+
+        if (generatedChildren.length > 0) {
+            generatedChildren.forEach(child => tbody.appendChild(buildRecurringChildExecRow(child)));
+        } else {
+            tbody.appendChild(buildRecurringParentRow(parent, true));
+        }
+    });
+
+    table.replaceChildren(tbody);
+}
 
 /**
  * タグ／プロジェクト／ステータスでフィルタ中のタスク一覧（日付を問わず全件）を返す。
@@ -3255,7 +3419,7 @@ function renderCalendarTaskEdit() {
     document.getElementById('dayedit-project').value      = row['プロジェクト']       ?? '';
 
     writeTaskDateTimeFieldsToForm('dayedit', row);
-    writeTaskEstimateActualToForm('dayedit', row);
+    writeTaskEstimateActualToForm('dayedit', row, 'minutes');
 
     const recurringCheckbox = document.getElementById('dayedit-recurring-parent');
     if (recurringCheckbox) recurringCheckbox.checked = row['繰返し識別子'] === '1' && !row['繰返し親ID'];
@@ -3380,12 +3544,20 @@ function readTaskDateTimeFieldsFromForm(prefix) {
     };
 }
 
-/** row の見積時間・実績時間（実績は編集不可）をフォームへ反映する。 */
-function writeTaskEstimateActualToForm(prefix, row) {
+/** 実績時間（h）を分単位に丸めて返す。 */
+function computeActualMinutes(row) {
+    return Math.round(computeActualHours(row) * 60);
+}
+
+/**
+ * row の見積時間・実績時間（実績は編集不可）をフォームへ反映する。
+ * unit が 'minutes' の場合、実績時間は分単位で表示する（タスク整理・繰り返し編集用）。省略時は時間単位（プロジェクト編集用）。
+ */
+function writeTaskEstimateActualToForm(prefix, row, unit = 'hours') {
     const estimateEl = document.getElementById(`${prefix}-estimate`);
     if (estimateEl) estimateEl.value = row['見積時間'] ?? '';
     const actualEl = document.getElementById(`${prefix}-actual`);
-    if (actualEl) actualEl.value = String(computeActualHours(row));
+    if (actualEl) actualEl.value = String(unit === 'minutes' ? computeActualMinutes(row) : computeActualHours(row));
 }
 
 /** prefix-freq-month/day/weekday の頻度チップを freqState に基づいて描画する（選択変更時は自身を再描画）。各項目に全て選択／全て解除ボタンを併設する。 */
@@ -3771,17 +3943,6 @@ let selectedRecurringParentId = null; // 親タスク一覧・子タスク一覧
 let selectedRecurringEditId   = null; // 編集パネルに読み込み中のタスクID（親または子。nullなら新規登録モード）
 const recurEditFreq = { month: new Set(), day: new Set(), weekday: new Set() }; // 親タスク編集パネルの頻度チップの選択状態
 let recurEditTemplates = []; // 親タスク編集パネルの子タスクテンプレート編集状態（Array<{offsetDays, titleSuffix, content}>）
-let recurringListView = 'today'; // 親タスク一覧の表示切り替え（'all' | 'today'）
-
-document.querySelectorAll('#recurring-tab-all, #recurring-tab-today').forEach(btn => {
-    btn.addEventListener('click', () => {
-        recurringListView = btn.dataset.view;
-        document.querySelectorAll('#recurring-tab-all, #recurring-tab-today').forEach(b =>
-            b.classList.toggle('taskorg-view-btn--active', b === btn)
-        );
-        renderRecurringParentTable();
-    });
-});
 
 /** カテゴリ・タグ／プロジェクト／ステータスのフィルタを適用した「親タスク」一覧を返す（繰返しページの母集団）。 */
 function getFilteredRecurringParents() {
@@ -3793,124 +3954,39 @@ function getFilteredRecurringParents() {
     );
 }
 
-/** 親タスク一覧テーブル（プロジェクト・親タスク名・子タスク数・ステータス・頻度）を描画する。行クリックで編集パネルに読み込む。 */
-function renderRecurringParentTable() {
-    const container = document.getElementById('recurring-section');
-    if (!container) return;
-    container.innerHTML = '';
-
-    const today = new Date();
-    const parents = getFilteredRecurringParents().filter(r =>
-        recurringListView !== 'today' || matchesSchedule(r, today)
-    );
-
-    if (parents.length === 0) {
-        const p = document.createElement('p');
-        p.className    = 'placeholder-text';
-        p.style.margin = '8px 0';
-        p.textContent  = '繰り返しタスクがありません';
-        container.appendChild(p);
-        return;
-    }
-
-    const table = document.createElement('table');
-    table.className = 'data-table recurring-parent-table';
-    const thead = document.createElement('thead');
-    const hRow  = document.createElement('tr');
-    ['プロジェクト', '親タスク名', '子タスク数', 'ステータス', '頻度'].forEach(col => {
-        const th = document.createElement('th');
-        th.textContent = col;
-        hRow.appendChild(th);
-    });
-    thead.appendChild(hRow);
-
-    const tbody = document.createElement('tbody');
-    parents.forEach(parent => {
-        const parentId = String(parent['ID']);
-        const childCount = currentMainData.filter(r => r['繰返し親ID'] === parentId).length;
-
-        const tr = document.createElement('tr');
-        tr.className = 'recurring-parent-row';
-        if (parentId === selectedRecurringParentId) tr.classList.add('selected-row');
-
-        const cells = [
-            parent['プロジェクト'] || '',
-            parent['タイトル'] || '（無題）',
-            String(childCount),
-            parent['ステータス'] || '未設定',
-            formatRecurringFrequencyLabel(parent),
-        ];
-        cells.forEach(text => {
-            const td = document.createElement('td');
-            td.textContent = text;
-            tr.appendChild(td);
-        });
-        tr.addEventListener('click', () => {
-            selectedRecurringParentId = parentId;
-            selectedRecurringEditId   = parentId;
-            renderRecurringSection();
-        });
-        tbody.appendChild(tr);
-    });
-    table.append(thead, tbody);
-    const wrap = document.createElement('div');
-    wrap.className = 'table-wrapper table-wrapper--limited';
-    wrap.appendChild(table);
-    container.appendChild(wrap);
-}
-
-/** 選択中の親タスクに属する子タスク一覧を描画する（未選択なら非表示）。行クリックで編集パネルにその子タスクを読み込む。 */
+/** 選択中の親タスクに属する子タスク一覧を描画する（左右2列の分割は常時表示、未選択時は案内文を表示）。行クリックで編集パネルにその子タスクを読み込む。 */
 function renderRecurringChildTable() {
-    const section = document.getElementById('recurring-child-section');
-    const table   = document.getElementById('recurring-child-table');
-    if (!section || !table) return;
+    const table = document.getElementById('recurring-child-table');
+    if (!table) return;
 
     if (!selectedRecurringParentId) {
-        section.style.display = 'none';
-        table.innerHTML = '';
+        table.className = 'recurring-list-table';
+        const tbody = document.createElement('tbody');
+        appendRecurringListEmptyRow(tbody, '親タスクを選択してください');
+        table.replaceChildren(tbody);
         return;
     }
-    section.style.display = '';
 
-    const children = getFilteredMainData().filter(r => r['繰返し親ID'] === selectedRecurringParentId);
+    // 新しいものが上に来るよう、IDの降順（生成順の逆）で並べる
+    const children = getFilteredMainData()
+        .filter(r => r['繰返し親ID'] === selectedRecurringParentId)
+        .sort((a, b) => parseInt(b['ID'], 10) - parseInt(a['ID'], 10));
 
-    table.className = 'data-table';
-    const thead = document.createElement('thead');
-    const hRow  = document.createElement('tr');
-    ['ID', 'タイトル', 'ステータス', '開始予定', '終了予定', '完了日'].forEach(col => {
-        const th = document.createElement('th');
-        th.textContent = col;
-        hRow.appendChild(th);
-    });
-    thead.appendChild(hRow);
-
+    table.className = 'recurring-list-table';
     const tbody = document.createElement('tbody');
+
     if (children.length === 0) {
-        const tr = document.createElement('tr');
-        const td = document.createElement('td');
-        td.className = 'empty-cell';
-        td.colSpan = 6;
-        td.textContent = '子タスクがありません';
-        tr.appendChild(td);
-        tbody.appendChild(tr);
+        appendRecurringListEmptyRow(tbody, '子タスクがありません');
     } else {
         children.forEach(row => {
-            const tr = document.createElement('tr');
-            tr.className = 'recurring-parent-row';
-            if (String(row['ID']) === selectedRecurringEditId) tr.classList.add('selected-row');
-            ['ID', 'タイトル', 'ステータス', '開始予定', '終了予定', '完了日'].forEach(col => {
-                const td = document.createElement('td');
-                td.textContent = row[col] ?? '';
-                tr.appendChild(td);
-            });
-            tr.addEventListener('click', () => {
-                selectedRecurringEditId = String(row['ID']);
+            const rowId = String(row['ID']);
+            tbody.appendChild(buildRecurringListTitleCell(row, getCalendarStatusClass(row['ステータス']), rowId === selectedRecurringEditId, () => {
+                selectedRecurringEditId = rowId;
                 renderRecurringSection();
-            });
-            tbody.appendChild(tr);
+            }));
         });
     }
-    table.replaceChildren(thead, tbody);
+    table.replaceChildren(tbody);
 }
 
 /** 選択中の親タスクの実績グラフを描画する（未選択・子タスク無しなら案内文を表示）。「グラフ」ボタンで表示中のときのみ描画する。 */
@@ -4118,7 +4194,7 @@ function renderRecurringEditPanel() {
     document.getElementById('recuredit-project').value      = row['プロジェクト']       ?? '';
 
     writeTaskDateTimeFieldsToForm('recuredit', row);
-    writeTaskEstimateActualToForm('recuredit', row);
+    writeTaskEstimateActualToForm('recuredit', row, 'minutes');
 
     loadFreqStateFromRow(recurEditFreq, row);
     renderRecurEditFreqChips();
@@ -4138,7 +4214,7 @@ function ensureRecurringManualDateDefault() {
 function renderRecurringSection() {
     renderRecurringFilters();
     renderRecurringWeekBoard();
-    renderRecurringParentTable();
+    renderRecurringExecArea();
     renderRecurringChildTable();
     renderRecurringEditPanel();
     ensureRecurringManualDateDefault();

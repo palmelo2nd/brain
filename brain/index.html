@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Second Brain タスク管理</title>
-    <link rel="stylesheet" href="css/style.css?v=2">
+    <link rel="stylesheet" href="css/style.css?v=4">
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
@@ -201,7 +201,7 @@
                                 <input type="number" id="dayedit-estimate" min="0" step="1" placeholder="（省略可）">
                             </div>
                             <div class="calendar-edit-row">
-                                <label>実績時間（h）</label>
+                                <label>実績時間（分）</label>
                                 <input type="text" id="dayedit-actual" readonly>
                             </div>
                             <div class="calendar-edit-row">
@@ -263,50 +263,57 @@
                     <div id="recurring-filter-area" class="triage-filter-area"></div>
                 </details>
 
-                <!-- 週間ボード（今週・来週。頻度が一致する日に親タスク／生成済み子タスクのボタンを縦に配置） -->
-                <details id="recurring-weekboard-current-details" class="expander calendar-sub-expander">
-                    <summary class="expander-title">週間ボード（今週）</summary>
+                <!-- 週間ボード（‹›で前後の週へ移動、頻度が一致する日に親タスク／生成済み子タスクを表形式で配置） -->
+                <details id="recurring-weekboard-current-details" class="expander calendar-sub-expander" open>
+                    <summary class="expander-title">週間ボード</summary>
+                    <div class="calendar-header">
+                        <button id="recurring-weekboard-prev-btn" class="calendar-nav-btn">‹</button>
+                        <span id="recurring-weekboard-week-label" class="calendar-month-label"></span>
+                        <button id="recurring-weekboard-next-btn" class="calendar-nav-btn">›</button>
+                        <button id="recurring-weekboard-today-btn" class="calendar-nav-btn" style="margin-left:8px">今週</button>
+                    </div>
                     <div id="recurring-weekboard-current" class="recurring-weekboard"></div>
                 </details>
-                <details id="recurring-weekboard-next-details" class="expander calendar-sub-expander">
-                    <summary class="expander-title">週間ボード（来週）</summary>
-                    <div id="recurring-weekboard-next" class="recurring-weekboard"></div>
-                </details>
 
-                <div class="taskorg-view-toggle">
-                    <button type="button" id="recurring-tab-today" class="taskorg-view-btn taskorg-view-btn--active" data-view="today">当日</button>
-                    <button type="button" id="recurring-tab-all"   class="taskorg-view-btn" data-view="all">全件表示</button>
-                </div>
-
-                <div id="recurring-section"></div>
-
-                <!-- 選択中の親タスクに属する子タスク一覧（最大10行程度、スクロール表示） -->
-                <div id="recurring-child-section" style="display:none">
-                    <p class="calendar-section-label">子タスク一覧</p>
-                    <div class="table-wrapper table-wrapper--limited">
-                        <table id="recurring-child-table" class="data-table"></table>
-                    </div>
-                </div>
-
-                <div class="calendar-edit-toolbar">
-                    <button id="recurring-add-new-btn" class="calendar-add-btn">新規追加</button>
-                    <input type="date" id="recurring-manual-date" class="recurring-manual-date">
-                    <button id="recurring-edit-manual-btn" class="triage-btn recurring-manual-btn">実行タスク生成</button>
-                </div>
-
-                <!-- 選択中の親タスクの実績グラフ（左）＋ 属性編集（右） -->
+                <!-- タスク一覧（左）＋ 編集（右）。タスク一覧で親タスクを選択すると左側がさらに二分割され、右半分に子タスク一覧が表示される -->
                 <div class="calendar-day-section">
                     <div class="calendar-timeline-col">
+                        <details id="recurring-exec-area-details" class="expander calendar-sub-expander" open>
+                            <summary class="expander-title">タスク一覧</summary>
+                            <div class="taskorg-view-toggle recurring-tasklist-tabs">
+                                <button type="button" id="recurring-exec-tab-today" class="taskorg-view-btn taskorg-view-btn--active" data-view="exec">実行</button>
+                                <button type="button" id="recurring-exec-tab-all"   class="taskorg-view-btn" data-view="edit">編集</button>
+                            </div>
+                            <div class="recurring-tasklist-split">
+                                <div class="table-wrapper table-wrapper--limited">
+                                    <table id="recurring-exec-area" class="recurring-list-table"></table>
+                                </div>
+
+                                <!-- 選択中の親タスクに属する子タスク一覧（タイトルのみ、新しいものが上、最大10件程度でスクロール表示） -->
+                                <div id="recurring-child-section" class="recurring-child-col">
+                                    <div class="table-wrapper table-wrapper--limited">
+                                        <table id="recurring-child-table" class="recurring-list-table"></table>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="calendar-edit-toolbar">
+                                <button id="recurring-add-new-btn" class="calendar-add-btn">新規追加</button>
+                                <input type="date" id="recurring-manual-date" class="recurring-manual-date">
+                                <button id="recurring-edit-manual-btn" class="triage-btn recurring-manual-btn">実行タスク生成</button>
+                            </div>
+                        </details>
+                    </div>
+
+                    <div class="calendar-edit-col">
                         <div class="recurring-chart-header">
                             <p class="calendar-section-label">実績グラフ</p>
                             <button type="button" id="recurring-chart-toggle-btn" class="calendar-filter-bulk-btn">グラフ</button>
                         </div>
                         <div id="recurring-edit-chart-wrap" class="recurring-chart-wrap" style="display:none"></div>
-                    </div>
 
-                    <div class="calendar-edit-col">
                         <div id="recurring-task-edit" class="calendar-task-edit">
-                            <p class="calendar-section-label">親タスクの新規追加・編集</p>
+                            <p class="calendar-section-label">編集</p>
                             <div class="calendar-edit-row">
                                 <label>ID</label>
                                 <input type="text" id="recuredit-id" readonly placeholder="（新規登録時は未採番）">
@@ -357,7 +364,7 @@
                                 <input type="number" id="recuredit-estimate" min="0" step="1" placeholder="（省略可）">
                             </div>
                             <div class="calendar-edit-row">
-                                <label>実績時間（h）</label>
+                                <label>実績時間（分）</label>
                                 <input type="text" id="recuredit-actual" readonly>
                             </div>
                             <div class="calendar-edit-row">
@@ -667,8 +674,18 @@
                 <details class="expander" open>
                     <summary class="expander-title" id="summary-project-admin">プロジェクト管理</summary>
 
-                    <!-- プロジェクト一覧→選択したプロジェクトのタスク一覧（カテゴリフィルタ適用） -->
-                    <p class="calendar-section-label">プロジェクト一覧</p>
+                    <!-- 新規追加 -->
+                    <p class="calendar-section-label">プロジェクトの新規追加</p>
+                    <div class="calendar-edit-row">
+                        <label>新規追加</label>
+                        <input type="text" id="project-admin-new-name" placeholder="新しいプロジェクト名">
+                        <select id="project-admin-new-category" style="display:none"></select>
+                        <button id="project-admin-new-btn" class="triage-btn">追加</button>
+                    </div>
+
+                    <!-- プロジェクト一覧（使用件数・状態・名前変更・統合・削除を統合、選択したプロジェクトのタスク一覧を下に表示） -->
+                    <p class="calendar-section-label calendar-section-label--sub">プロジェクト一覧</p>
+                    <p class="calendar-dayplan-hint">名前変更・統合は既存タスク／ナレッジの「プロジェクト」を一括で書き換えます。削除は使用中の場合、別のプロジェクトへの再割り当て、または未割り当てにしてから削除できます。</p>
                     <div class="table-wrapper table-wrapper--limited">
                         <table id="project-browser-table"></table>
                     </div>
@@ -749,21 +766,6 @@
                         </div>
                     </div>
 
-                    <!-- 新規追加 -->
-                    <p class="calendar-section-label calendar-section-label--sub">プロジェクトの新規追加</p>
-                    <div class="calendar-edit-row">
-                        <label>新規追加</label>
-                        <input type="text" id="project-admin-new-name" placeholder="新しいプロジェクト名">
-                        <select id="project-admin-new-category" style="display:none"></select>
-                        <button id="project-admin-new-btn" class="triage-btn">追加</button>
-                    </div>
-
-                    <!-- 名前変更・統合・削除 -->
-                    <p class="calendar-section-label calendar-section-label--sub">名前変更・統合・削除</p>
-                    <p class="calendar-dayplan-hint">名前変更・統合は既存タスク／ナレッジの「プロジェクト」を一括で書き換えます。削除は使用中の場合、別のプロジェクトへの再割り当て、または未割り当てにしてから削除できます。</p>
-                    <div class="table-wrapper table-wrapper--limited">
-                        <table id="project-admin-table"></table>
-                    </div>
                 </details>
             </div>
         </div>
@@ -772,6 +774,6 @@
 
 </div>
 
-<script type="module" src="js/app.js?v=5"></script>
+<script type="module" src="js/app.js?v=7"></script>
 </body>
 </html>
