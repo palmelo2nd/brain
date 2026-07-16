@@ -1,6 +1,6 @@
 // (1) インポート
 import { MAIN_DATA_COLUMNS } from './dataModel.js';
-import { parseTimestampLog } from './task.js';
+import { computeActualHours } from './task.js';
 
 // 曜日名（JS の getDay() と対応: 0=日）
 const WEEKDAY_NAMES = ['日', '月', '火', '水', '木', '金', '土'];
@@ -58,12 +58,7 @@ export function buildChildChartData(children) {
         });
 
     const labels = sorted.map(r => (r['完了日'] || r['作成日時']).slice(0, 10));
-    const data   = sorted.map(r => {
-        const manual = parseFloat(r['実績時間'] || '');
-        if (!isNaN(manual) && manual > 0) return manual;
-        const ms = parseTimestampLog(r['タイムスタンプログ'] || '');
-        return ms > 0 ? Math.round(ms / 360000) / 10 : 0;
-    });
+    const data   = sorted.map(r => computeActualHours(r));
 
     return { labels, data };
 }

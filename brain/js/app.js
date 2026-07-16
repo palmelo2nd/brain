@@ -130,7 +130,7 @@ function mountSection(elId, anchorId) {
 
 // --- ページレンダラー ---
 
-const SUMMARY_VIEWS = ['taskorg', 'recurring', 'runner', 'top', 'edit', 'project', 'data', 'work'];
+const SUMMARY_VIEWS = ['taskorg', 'recurring', 'runner', 'top', 'edit', 'knowledge', 'project', 'data', 'work'];
 
 /** Summary ページ（INBOX／タスク整理／繰返し／タスク実行／編集／プロジェクト／データの表示切り替え。PW・Load〜Import・カテゴリは常時表示バーで共通）を描画する */
 function renderSummary() {
@@ -148,6 +148,7 @@ function renderSummary() {
     if (summaryView === 'taskorg')   renderCalendar();
     if (summaryView === 'recurring') renderRecurringSection();
     if (summaryView === 'edit')      renderEdit();
+    if (summaryView === 'knowledge') renderKnowledgeList();
     if (summaryView === 'data') {
         renderDataTable('table-main',   'summary-main',   getFilteredMainData(),   MAIN_DATA_COLUMNS,   'メインデータ',   { editable: true, idColumn: 'ID' });
         renderDataTable('table-master', 'summary-master', currentMasterData, MASTER_DATA_COLUMNS, 'マスタデータ', { editable: true, onEdit: () => { renderWarnings(computeMasterWarnings()); renderProjectAdmin(); } });
@@ -300,7 +301,7 @@ function createFilterSelect(options, placeholder, currentValue, onChange) {
     return sel;
 }
 
-// ===== 編集（INBOX／タスク／ナレッジ／アイデア／アーカイブ 統合） =====
+// ===== 編集（INBOX／タスク／ナレッジ 統合） =====
 //
 // editKubun + editFilters = 上部タブ（一覧の絞り込み用フィルタ）
 // フォーム内の edit-kubun（移動先データ区分）= 新規登録・データ区分変更の対象
@@ -1735,6 +1736,56 @@ function getFilteredMainData() {
     return filterMainDataByCategory(currentMainData, currentCategory);
 }
 
+/** 「ナレッジ」タブ: データ区分=ナレッジの行を更新日時の新しい順に一覧表示する（一覧表示のみ、行クリックは無反応）。 */
+function renderKnowledgeList() {
+    const container = document.getElementById('knowledge-list-summary');
+    if (!container) return;
+    container.innerHTML = '';
+
+    const rows = getFilteredMainData()
+        .filter(r => r['データ区分'] === 'ナレッジ')
+        .sort((a, b) => (b['更新日時'] || '').localeCompare(a['更新日時'] || ''));
+
+    const wrap  = document.createElement('div');
+    wrap.className = 'table-wrapper';
+    const table = document.createElement('table');
+    table.className = 'data-table';
+
+    const thead = document.createElement('thead');
+    const hRow  = document.createElement('tr');
+    ['タイトル', 'ステータス', 'カテゴリ', 'タグ', '更新日時'].forEach(col => {
+        const th = document.createElement('th');
+        th.textContent = col;
+        hRow.appendChild(th);
+    });
+    thead.appendChild(hRow);
+
+    const tbody = document.createElement('tbody');
+    if (rows.length === 0) {
+        const tr = document.createElement('tr');
+        const td = document.createElement('td');
+        td.colSpan = 5;
+        td.className = 'empty-cell';
+        td.textContent = '該当するナレッジがありません';
+        tr.appendChild(td);
+        tbody.appendChild(tr);
+    } else {
+        rows.forEach(row => {
+            const tr = document.createElement('tr');
+            [row['タイトル'] || '（無題）', row['ステータス'] || '', row['カテゴリ'] || '', row['タグ'] || '', row['更新日時'] || '']
+                .forEach(val => {
+                    const td = document.createElement('td');
+                    td.textContent = val;
+                    tr.appendChild(td);
+                });
+            tbody.appendChild(tr);
+        });
+    }
+    table.append(thead, tbody);
+    wrap.appendChild(table);
+    container.appendChild(wrap);
+}
+
 /**
  * 選択中のカテゴリに属するタグ名一覧を返す。
  * 「すべて」選択時は (M)タグ_子 の全値を返す。
@@ -1779,16 +1830,24 @@ function renderTaskRunner() {
     document.querySelectorAll('.task-runner-container').forEach(container => buildTaskRunnerUI(container));
 }
 
-/** 単一コンテナにタスク実行UIを構築 */
-function buildTaskRunnerUI(container) {
-    container.innerHTML = '';
+/** 進行中タスクのうち、タイムスタンプログが計測中(末尾が"-")の行を返す */
+function findRunningTaskRow(inProgress) {
+    return inProgress.find(r => isLogRunning(r['タイムスタンプログ'])) || null;
+}
 
-    const inProgress = getFilteredMainData().filter(r =>
-        r['データ区分'] === 'タスク' && r['ステータス'] === '進行中'
-        && !(r['繰返し識別子'] === '1' && !r['繰返し親ID']) // 繰返しタスクの親は対象外
-    );
+/** タスク一覧テーブルの見出し(h4)を作って親要素へ追加する */
+function appendRunnerListHeading(parent, text) {
+    const h = document.createElement('h4');
+    h.className = 'runner-list-heading';
+    h.textContent = text;
+    parent.appendChild(h);
+}
 
-    // --- 進行中タスク一覧 ---
+/**
+ * 進行中タスク用の一覧テーブル（タイトル/見積時間/累計時間/▷開始・■停止・完了）を構築して親要素へ追加する。
+ * rid === selectedRunTaskId の行は選択状態、runningRow の行の累計時間セルはライブ更新対象にする。
+ */
+function appendRunnerProgressTable(parent, rows, runningRow) {
     const wrap  = document.createElement('div');
     wrap.className = 'table-wrapper';
     const table = document.createElement('table');
@@ -1796,7 +1855,7 @@ function buildTaskRunnerUI(container) {
 
     const thead = document.createElement('thead');
     const hRow  = document.createElement('tr');
-    ['タイトル', '優先度', '期限', '累計時間'].forEach(col => {
+    ['タイトル', '見積時間（分）', '累計時間', '操作'].forEach(col => {
         const th = document.createElement('th');
         th.textContent = col;
         hRow.appendChild(th);
@@ -1804,53 +1863,213 @@ function buildTaskRunnerUI(container) {
     thead.appendChild(hRow);
 
     const tbody = document.createElement('tbody');
-    if (inProgress.length === 0) {
+    if (rows.length === 0) {
         const tr = document.createElement('tr');
         const td = document.createElement('td');
         td.colSpan = 4;
         td.className = 'empty-cell';
-        td.textContent = '進行中のタスクがありません';
+        td.textContent = '該当タスクがありません';
         tr.appendChild(td);
         tbody.appendChild(tr);
     } else {
-        inProgress.forEach(row => {
-            const tr  = document.createElement('tr');
+        rows.forEach(row => {
             const rid = String(row['ID']);
+            const tr  = document.createElement('tr');
             if (rid === String(selectedRunTaskId)) tr.classList.add('selected-row');
-            tr.style.cursor = 'pointer';
-            [row['タイトル'] || '（無題）', row['優先度'] || '', row['期限'] || '',
-             formatDuration(computeTotalDuration(rid))
-            ].forEach(val => {
-                const td = document.createElement('td');
-                td.textContent = val;
-                tr.appendChild(td);
-            });
-            tr.addEventListener('click', () => {
-                if (String(selectedRunTaskId) !== rid) {
-                    if (timerIsRunning) {
-                        const now = formatJpDatetime(new Date());
-                        const prev = currentMainData.find(r => String(r['ID']) === String(selectedRunTaskId));
-                        if (prev) prev['タイムスタンプログ'] = (prev['タイムスタンプログ'] || '') + `${now}, `;
-                        timerIsRunning = false;
-                        if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
-                    }
-                    selectedRunTaskId = rid;
-                }
+
+            const titleTd = document.createElement('td');
+            titleTd.textContent = row['タイトル'] || '（無題）';
+            titleTd.style.cursor = 'pointer';
+            titleTd.addEventListener('click', () => {
+                selectedRunTaskId = rid;
                 renderTaskRunner();
             });
+            tr.appendChild(titleTd);
+
+            const estimateTd = document.createElement('td');
+            estimateTd.textContent = row['見積時間'] || '';
+            tr.appendChild(estimateTd);
+
+            const timeTd = document.createElement('td');
+            timeTd.textContent = formatDuration(computeTotalDuration(rid));
+            if (runningRow && rid === String(runningRow['ID'])) {
+                timeTd.className = 'runner-elapsed-display';
+                timeTd.dataset.taskId = rid;
+            }
+            tr.appendChild(timeTd);
+
+            const actionTd = document.createElement('td');
+            actionTd.className = 'recurring-list-action';
+            const running = isLogRunning(row['タイムスタンプログ']);
+
+            const startBtn = document.createElement('button');
+            startBtn.type = 'button';
+            startBtn.className = 'recurring-table-btn';
+            startBtn.title = 'タイマー開始';
+            startBtn.textContent = '▷';
+            startBtn.disabled = running;
+            startBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (runningRow && String(runningRow['ID']) !== rid) {
+                    const now = formatJpDatetime(new Date());
+                    runningRow['タイムスタンプログ'] = (runningRow['タイムスタンプログ'] || '') + `${now}, `;
+                }
+                const ts = formatJpDatetime(new Date());
+                row['タイムスタンプログ'] = (row['タイムスタンプログ'] || '') + `${ts}-`;
+                persistLocalCache();
+                renderTaskRunner();
+            });
+            actionTd.appendChild(startBtn);
+
+            const stopBtn = document.createElement('button');
+            stopBtn.type = 'button';
+            stopBtn.className = 'recurring-table-btn';
+            stopBtn.title = 'タイマー停止';
+            stopBtn.textContent = '■';
+            stopBtn.disabled = !running;
+            stopBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const ts = formatJpDatetime(new Date());
+                row['タイムスタンプログ'] = (row['タイムスタンプログ'] || '') + `${ts}, `;
+                persistLocalCache();
+                renderTaskRunner();
+            });
+            actionTd.appendChild(stopBtn);
+
+            const doneBtn = document.createElement('button');
+            doneBtn.type = 'button';
+            doneBtn.className = 'recurring-table-btn recurring-table-btn--done';
+            doneBtn.title = '完了にする';
+            doneBtn.textContent = '完了';
+            doneBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (isLogRunning(row['タイムスタンプログ'])) {
+                    const ts = formatJpDatetime(new Date());
+                    row['タイムスタンプログ'] = (row['タイムスタンプログ'] || '') + `${ts}, `;
+                }
+                const now = formatJpDatetime(new Date());
+                row['ステータス'] = '完了';
+                row['完了日']     = row['完了日'] || jpDateOnly(now);
+                row['更新日時']   = now;
+                if (String(selectedRunTaskId) === rid) selectedRunTaskId = null;
+                persistLocalCache();
+                renderTaskRunner();
+                renderEditTable();
+            });
+            actionTd.appendChild(doneBtn);
+
+            tr.appendChild(actionTd);
             tbody.appendChild(tr);
         });
     }
     table.append(thead, tbody);
     wrap.appendChild(table);
-    container.appendChild(wrap);
+    parent.appendChild(wrap);
+}
 
-    const selectedRow = selectedRunTaskId
-        ? currentMainData.find(r => String(r['ID']) === String(selectedRunTaskId) && r['ステータス'] === '進行中')
-        : null;
+/**
+ * 進行中以外の「今日の1日タスク」一覧テーブル（タイトル/ステータス/見積時間/進行中にするボタン）を
+ * 構築して親要素へ追加する。
+ */
+function appendRunnerOtherTodayTable(parent, rows) {
+    const wrap  = document.createElement('div');
+    wrap.className = 'table-wrapper';
+    const table = document.createElement('table');
+    table.className = 'data-table';
 
-    // タイムスタンプログの内容から計測中かどうかを判定し直す（ページ再表示・タスク切替時も正しい状態に復元するため）
-    timerIsRunning = selectedRow ? isLogRunning(selectedRow['タイムスタンプログ']) : false;
+    const thead = document.createElement('thead');
+    const hRow  = document.createElement('tr');
+    ['タイトル', 'ステータス', '見積時間（分）', '操作'].forEach(col => {
+        const th = document.createElement('th');
+        th.textContent = col;
+        hRow.appendChild(th);
+    });
+    thead.appendChild(hRow);
+
+    const tbody = document.createElement('tbody');
+    if (rows.length === 0) {
+        const tr = document.createElement('tr');
+        const td = document.createElement('td');
+        td.colSpan = 4;
+        td.className = 'empty-cell';
+        td.textContent = '該当タスクがありません';
+        tr.appendChild(td);
+        tbody.appendChild(tr);
+    } else {
+        rows.forEach(row => {
+            const rid = String(row['ID']);
+            const tr  = document.createElement('tr');
+            if (rid === String(selectedRunTaskId)) tr.classList.add('selected-row');
+
+            const titleTd = document.createElement('td');
+            titleTd.textContent = row['タイトル'] || '（無題）';
+            titleTd.style.cursor = 'pointer';
+            titleTd.addEventListener('click', () => {
+                selectedRunTaskId = rid;
+                renderTaskRunner();
+            });
+            tr.appendChild(titleTd);
+
+            [row['ステータス'] || '', row['見積時間'] || ''].forEach(val => {
+                const td = document.createElement('td');
+                td.textContent = val;
+                tr.appendChild(td);
+            });
+
+            const actionTd = document.createElement('td');
+            actionTd.className = 'recurring-list-action';
+            const startBtn = document.createElement('button');
+            startBtn.type = 'button';
+            startBtn.className = 'recurring-table-btn';
+            startBtn.title = '進行中にする';
+            startBtn.textContent = '進行中にする';
+            startBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                row['ステータス'] = '進行中';
+                row['更新日時']   = formatJpDatetime(new Date());
+                persistLocalCache();
+                renderTaskRunner();
+                renderEditTable();
+            });
+            actionTd.appendChild(startBtn);
+            tr.appendChild(actionTd);
+
+            tbody.appendChild(tr);
+        });
+    }
+    table.append(thead, tbody);
+    wrap.appendChild(table);
+    parent.appendChild(wrap);
+}
+
+/** 単一コンテナにタスク実行UIを構築（左＝3表の一覧+操作ボタン、右＝選択タスクの編集エリア） */
+function buildTaskRunnerUI(container) {
+    container.innerHTML = '';
+
+    const todayJP = jpDateOnly(formatJpDatetime(new Date()));
+    // 「今日のタスク」＝タスク整理の「設定済みタスク」と同じ集合（今日の1日タスクの内容欄に#IDで明示的に組み込まれたタスク）。
+    // matchesMultiFilter は空Setを「絞り込みなし」ではなく「空欄の値だけ通す」と解釈するため、
+    // タグ／プロジェクト／ステータスの絞り込みを経由せず、1日タスクの内容欄を直接パースして対象を求める。
+    const todayDayPlan = getDayPlanTaskM(currentMainData, todayJP);
+    const todayDayPlanBlocks = todayDayPlan ? parseDayPlanContent(todayDayPlan['内容']) : [];
+    const todayReferencedIds = new Set(todayDayPlanBlocks.map(b => b.refId).filter(Boolean));
+    const todaysDayPlanTasks = currentMainData.filter(r =>
+        r['データ区分'] === 'タスク' && r['プロジェクト'] !== DAYPLAN_PROJECT
+        && todayReferencedIds.has(String(r['ID']))
+        && (currentCategory === 'すべて' || r['カテゴリ'] === currentCategory)
+    );
+    const todaysDayPlanIds = new Set(todaysDayPlanTasks.map(r => r['ID']));
+
+    const inProgress = getFilteredMainData().filter(r =>
+        r['データ区分'] === 'タスク' && r['ステータス'] === '進行中'
+        && !(r['繰返し識別子'] === '1' && !r['繰返し親ID']) // 繰返しタスクの親は対象外
+    );
+    const inProgressToday    = inProgress.filter(r => todaysDayPlanIds.has(r['ID']));
+    const inProgressNotToday = inProgress.filter(r => !todaysDayPlanIds.has(r['ID']));
+    const todaysOther        = todaysDayPlanTasks.filter(r => r['ステータス'] !== '進行中');
+
+    const runningRow = findRunningTaskRow(inProgress);
+    timerIsRunning = !!runningRow;
     if (timerIsRunning) {
         if (!timerInterval) timerInterval = setInterval(updateRunnerTimerDisplay, 1000);
     } else if (timerInterval) {
@@ -1858,16 +2077,48 @@ function buildTaskRunnerUI(container) {
         timerInterval = null;
     }
 
+    const section = document.createElement('div');
+    section.className = 'calendar-day-section';
+
+    // ===== 左カラム: 3表のタスク一覧 + 操作ボタン =====
+    const listCol = document.createElement('div');
+    listCol.className = 'calendar-timeline-col';
+
+    appendRunnerListHeading(listCol, '進行中（今日）');
+    appendRunnerProgressTable(listCol, inProgressToday, runningRow);
+
+    appendRunnerListHeading(listCol, '進行中（今日以外）');
+    appendRunnerProgressTable(listCol, inProgressNotToday, runningRow);
+
+    appendRunnerListHeading(listCol, 'その他（今日）');
+    appendRunnerOtherTodayTable(listCol, todaysOther);
+
+    section.appendChild(listCol);
+
+    // ===== 右カラム: 選択タスクの編集エリア（未選択時は先頭タスクを自動選択） =====
+    const editCol = document.createElement('div');
+    editCol.className = 'calendar-edit-col';
+
+    let selectedRow = selectedRunTaskId
+        ? currentMainData.find(r => String(r['ID']) === String(selectedRunTaskId))
+        : null;
+    if (!selectedRow) {
+        selectedRow = inProgressToday[0] || inProgressNotToday[0] || todaysOther[0] || null;
+        if (selectedRow) selectedRunTaskId = String(selectedRow['ID']);
+    }
+
     if (!selectedRow) {
         const hint = document.createElement('p');
         hint.className = 'placeholder-text';
         hint.style.margin = '8px 0 0';
-        hint.textContent = inProgress.length > 0 ? 'タスクをクリックして選択してください' : '';
-        container.appendChild(hint);
+        hint.textContent = '対象タスクがありません';
+        editCol.appendChild(hint);
+        section.appendChild(editCol);
+        container.appendChild(section);
         return;
     }
 
-    // --- 操作パネル ---
+    const selectedRid = String(selectedRow['ID']);
     const panel = document.createElement('div');
     panel.className = 'runner-panel';
 
@@ -1887,7 +2138,8 @@ function buildTaskRunnerUI(container) {
 
     const elapsedSpan = document.createElement('span');
     elapsedSpan.className = 'runner-elapsed-display runner-elapsed-big';
-    elapsedSpan.textContent = formatDuration(computeTotalDuration(String(selectedRow['ID'])));
+    elapsedSpan.dataset.taskId = selectedRid;
+    elapsedSpan.textContent = formatDuration(computeTotalDuration(selectedRid));
 
     const adjWrap  = document.createElement('span');
     adjWrap.className = 'runner-adj-wrap';
@@ -1912,43 +2164,12 @@ function buildTaskRunnerUI(container) {
     timeRow.append(timeLabel, timeInfo);
     panel.appendChild(timeRow);
 
-    // 開始/停止ボタン行
-    const btnRow = document.createElement('div');
-    btnRow.className = 'triage-toolbar';
-
-    const statusLabel = document.createElement('span');
-    statusLabel.className = 'triage-info runner-status-label';
-    statusLabel.textContent = timerIsRunning ? '⏱ 計測中...' : '';
-
-    const startBtn = document.createElement('button');
-    startBtn.className   = 'triage-btn runner-start-btn';
-    startBtn.textContent = '▶ 開始';
-    startBtn.disabled    = timerIsRunning;
-    startBtn.addEventListener('click', () => {
-        const ts = formatJpDatetime(new Date());
-        selectedRow['タイムスタンプログ'] = (selectedRow['タイムスタンプログ'] || '') + `${ts}-`;
-        timerIsRunning = true;
-        if (timerInterval) clearInterval(timerInterval);
-        timerInterval = setInterval(updateRunnerTimerDisplay, 1000);
-        persistLocalCache();
-        renderTaskRunner();
-    });
-
-    const stopBtn = document.createElement('button');
-    stopBtn.className   = 'triage-btn runner-stop-btn';
-    stopBtn.textContent = '■ 停止';
-    stopBtn.disabled    = !timerIsRunning;
-    stopBtn.addEventListener('click', () => {
-        const ts = formatJpDatetime(new Date());
-        selectedRow['タイムスタンプログ'] = (selectedRow['タイムスタンプログ'] || '') + `${ts}, `;
-        timerIsRunning = false;
-        if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
-        persistLocalCache();
-        renderTaskRunner();
-    });
-
-    btnRow.append(statusLabel, startBtn, stopBtn);
-    panel.appendChild(btnRow);
+    if (runningRow && String(runningRow['ID']) === selectedRid) {
+        const statusLabel = document.createElement('p');
+        statusLabel.className = 'triage-info runner-status-label';
+        statusLabel.textContent = '⏱ 計測中...';
+        panel.appendChild(statusLabel);
+    }
 
     // タイムスタンプログ
     const logRow   = document.createElement('div');
@@ -1969,7 +2190,7 @@ function buildTaskRunnerUI(container) {
 
     panel.appendChild(buildRunnerAttributeEditor(selectedRow));
 
-    // ステータス遷移
+    // ステータス遷移（開始/停止/完了は左カラムのボタンで操作するため、それ以外への変更用）
     const taskStatuses = [...new Set(
         currentMasterData
             .filter(r => r['(M)ステータス_親'] === 'タスク')
@@ -1995,7 +2216,7 @@ function buildTaskRunnerUI(container) {
             radio.name  = rName;
             radio.value = st;
             if (i === 0) radio.checked = true;
-            lbl.append(radio, document.createTextNode(' ' + st));
+            lbl.append(radio, document.createTextNode(' ' + st));
             radioGroup.appendChild(lbl);
         });
         statusSec.appendChild(radioGroup);
@@ -2009,11 +2230,9 @@ function buildTaskRunnerUI(container) {
             const chosen = radioGroup.querySelector(`input[name="${rName}"]:checked`);
             if (!chosen) return;
             const newStatus = chosen.value;
-            if (newStatus !== '進行中' && timerIsRunning) {
+            if (newStatus !== '進行中' && isLogRunning(selectedRow['タイムスタンプログ'])) {
                 const ts = formatJpDatetime(new Date());
                 selectedRow['タイムスタンプログ'] = (selectedRow['タイムスタンプログ'] || '') + `${ts}, `;
-                timerIsRunning = false;
-                if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
             }
             selectedRow['ステータス'] = newStatus;
             selectedRow['更新日時']   = formatJpDatetime(new Date());
@@ -2029,7 +2248,9 @@ function buildTaskRunnerUI(container) {
         panel.appendChild(statusSec);
     }
 
-    container.appendChild(panel);
+    editCol.appendChild(panel);
+    section.appendChild(editCol);
+    container.appendChild(section);
 }
 
 /**
@@ -3544,9 +3765,16 @@ function readTaskDateTimeFieldsFromForm(prefix) {
     };
 }
 
-/** 実績時間（h）を分単位に丸めて返す。 */
+/**
+ * 実績時間を分単位で返す。「実績時間」列に手入力値（h）があればそれを分に換算し、
+ * 無ければタイムスタンプログ＋補正時間（タスク実行タブで入力する分単位の調整値）から直接分単位で算出する
+ * （computeActualHoursの0.1h＝6分刻みの丸めを経由すると短時間の実績が0分に潰れてしまうため、分表示専用に独立して計算する）。
+ */
 function computeActualMinutes(row) {
-    return Math.round(computeActualHours(row) * 60);
+    const manual = parseFloat(row['実績時間'] || '');
+    if (!isNaN(manual) && manual > 0) return Math.round(manual * 60);
+    const ms = parseTimestampLog(row['タイムスタンプログ'] || '') + parseFloat(row['補正時間'] || '0') * 60000;
+    return ms > 0 ? Math.round(ms / 60000) : 0;
 }
 
 /**

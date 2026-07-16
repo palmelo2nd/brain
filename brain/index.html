@@ -461,6 +461,7 @@
                 <button type="button" id="summary-tab-runner" class="taskorg-view-btn" data-view="runner">タスク実行</button>
                 <button type="button" id="summary-tab-top" class="taskorg-view-btn" data-view="top">INBOX</button>
                 <button type="button" id="summary-tab-edit" class="taskorg-view-btn" data-view="edit">編集</button>
+                <button type="button" id="summary-tab-knowledge" class="taskorg-view-btn" data-view="knowledge">ナレッジ</button>
                 <button type="button" id="summary-tab-project" class="taskorg-view-btn" data-view="project">プロジェクト</button>
                 <button type="button" id="summary-tab-data" class="taskorg-view-btn" data-view="data">データ</button>
                 <button type="button" id="summary-tab-work" class="taskorg-view-btn" data-view="work">勤務</button>
@@ -496,6 +497,11 @@
             <!-- 編集（表示切り替え時に本体を移動して表示） -->
             <div id="summary-view-edit" class="summary-view-panel" style="display:none">
                 <div id="edit-anchor-summary"></div>
+            </div>
+
+            <!-- ナレッジ一覧 -->
+            <div id="summary-view-knowledge" class="summary-view-panel" style="display:none">
+                <div id="knowledge-list-summary"></div>
             </div>
 
             <!-- プロジェクト（表示切り替え時に本体を移動して表示） -->
@@ -545,7 +551,7 @@
             </div>
         </div>
 
-        <!-- 編集（INBOX／タスク／ナレッジ／アイデア／アーカイブ 統合編集・新規登録、Summaryページ「編集」タブに表示） -->
+        <!-- 編集（INBOX／タスク／ナレッジ 統合編集・新規登録、Summaryページ「編集」タブに表示） -->
         <div id="edit-anchor-home" style="display:none">
             <details id="edit-details" class="expander" open>
                 <summary class="expander-title" id="summary-edit">編集</summary>

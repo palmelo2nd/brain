@@ -76,6 +76,7 @@ function filterCalendarTasks(mainData, category, calendarFilters) {
         if (category !== 'すべて' && r['カテゴリ'] !== category) return false;
         if (r['データ区分'] !== 'タスク') return false;
         if (r['プロジェクト'] === DAYPLAN_PROJECT) return false;
+        if (r['繰返し識別子'] === '1' && !r['繰返し親ID']) return false; // 繰返しタスクの親は対象外
         if (!matchesMultiFilter(calendarFilters.tag, r['タグ'])) return false;
         if (!matchesMultiFilter(calendarFilters.project, r['プロジェクト'])) return false;
         if (!matchesMultiFilter(calendarFilters.status, r['ステータス'])) return false;

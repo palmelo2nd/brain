@@ -59,13 +59,14 @@ export function computeTotalDuration(mainData, taskId) {
 }
 
 /**
- * 行の実績時間（h）を返す。「実績時間」列に手入力値があればそれを優先し、無ければタイムスタンプログから算出する
+ * 行の実績時間（h）を返す。「実績時間」列に手入力値があればそれを優先し、無ければ
+ * タイムスタンプログ＋補正時間（タスク実行タブで入力する分単位の調整値）から算出する
  * （小数第1位まで、例: 2.5）。
  */
 export function computeActualHours(row) {
     const manual = parseFloat(row['実績時間'] || '');
     if (!isNaN(manual) && manual > 0) return manual;
-    const ms = parseTimestampLog(row['タイムスタンプログ'] || '');
+    const ms = parseTimestampLog(row['タイムスタンプログ'] || '') + parseFloat(row['補正時間'] || '0') * 60000;
     return ms > 0 ? Math.round(ms / 360000) / 10 : 0;
 }
 
