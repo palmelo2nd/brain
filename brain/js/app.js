@@ -310,7 +310,7 @@ function createFilterSelect(options, placeholder, currentValue, onChange) {
 /** editKubun に応じたテーブル列定義を返す（タスク／ナレッジは専用列、それ以外は共通列） */
 function getEditCols(kubun) {
     if (kubun === 'タスク')   return ['タイトル', 'ステータス', '優先度', '開始予定', '終了予定', '見積時間', 'カテゴリ', 'タグ', 'プロジェクト'];
-    if (kubun === 'ナレッジ') return ['タイトル', 'ステータス', 'Input', 'カテゴリ', 'タグ', 'プロジェクト', '更新日時'];
+    if (kubun === 'ナレッジ') return ['タイトル', 'ステータス', 'Input', 'PARA区分', 'カテゴリ', 'タグ', 'プロジェクト', '更新日時'];
     return ['カテゴリ', 'タイトル', '内容', 'タグ', 'プロジェクト', '作成日時', '更新日時'];
 }
 
@@ -339,6 +339,7 @@ function getFilteredEditItems() {
     // ナレッジ専用フィルタ
     if (editKubun === 'ナレッジ') {
         if (editFilters.input)  rows = rows.filter(r => r['Input']      === editFilters.input);
+        if (editFilters.para)   rows = rows.filter(r => r['PARA区分']   === editFilters.para);
         if (editFilters.status) rows = rows.filter(r => r['ステータス'] === editFilters.status);
     }
 
@@ -448,6 +449,8 @@ function renderEditFilters() {
     if (editKubun === 'ナレッジ') {
         const inputs = [...new Set(currentMasterData.map(r => r['(M)Input']).filter(Boolean))];
         makeRow('Input', makeSelect(inputs, 'すべて', 'input'));
+        const paraOptions = [...new Set(currentMasterData.map(r => r['(M)PARA区分']).filter(Boolean))];
+        makeRow('PARA区分', makeSelect(paraOptions, 'すべて', 'para'));
         const knowledgeStatuses = [...new Set(
             currentMasterData.filter(r => r['(M)ステータス_親'] === 'ナレッジ')
                 .map(r => r['(M)ステータス_子']).filter(Boolean)
@@ -596,6 +599,7 @@ function updateEditConditionalFields(kubun) {
     show('edit-estimate-row', isTask);
     show('edit-input-row',    isKnowledge);
     show('edit-output-row',   isKnowledge);
+    show('edit-para-row',     isKnowledge);
 
     if (isTask || isKnowledge) {
         const parent   = isTask ? 'タスク' : 'ナレッジ';
@@ -611,6 +615,7 @@ function updateEditConditionalFields(kubun) {
     if (isKnowledge) {
         rebuildSelectById('edit-input',  [...new Set(currentMasterData.map(r => r['(M)Input']).filter(Boolean))]);
         rebuildSelectById('edit-output', [...new Set(currentMasterData.map(r => r['(M)Output']).filter(Boolean))]);
+        rebuildSelectById('edit-para',   [...new Set(currentMasterData.map(r => r['(M)PARA区分']).filter(Boolean))]);
     }
 }
 
@@ -661,12 +666,14 @@ function prefillEditForm() {
     if (inputEl) inputEl.value = row['Input'] ?? '';
     const outputEl = document.getElementById('edit-output');
     if (outputEl) outputEl.value = row['Output'] ?? '';
+    const paraEl = document.getElementById('edit-para');
+    if (paraEl) paraEl.value = row['PARA区分'] ?? '';
 }
 
 /** フォームをクリアし、移動先データ区分を現在の表示タブに戻す。 */
 function clearEditForm() {
     ['edit-title', 'edit-content', 'edit-biko', 'edit-status', 'edit-priority',
-     'edit-start', 'edit-end', 'edit-estimate', 'edit-input', 'edit-output',
+     'edit-start', 'edit-end', 'edit-estimate', 'edit-input', 'edit-output', 'edit-para',
      'edit-category', 'edit-tag', 'edit-project'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.value = '';
@@ -696,6 +703,7 @@ document.getElementById('edit-new-btn')?.addEventListener('click', () => {
     const estimate = document.getElementById('edit-estimate')?.value || '';
     const input    = document.getElementById('edit-input')?.value    || '';
     const output   = document.getElementById('edit-output')?.value   || '';
+    const para     = document.getElementById('edit-para')?.value     || '';
 
     const maxId = currentMainData.reduce((max, row) => {
         const id = parseInt(row['ID'], 10);
@@ -728,6 +736,7 @@ document.getElementById('edit-new-btn')?.addEventListener('click', () => {
     if (kubun === 'ナレッジ') {
         if (input)  entry['Input']  = input;
         if (output) entry['Output'] = output;
+        if (para)   entry['PARA区分'] = para;
     }
 
     currentMainData.push(entry);
@@ -767,6 +776,7 @@ document.getElementById('edit-apply-btn')?.addEventListener('click', () => {
     const estimate = document.getElementById('edit-estimate')?.value || '';
     const input    = document.getElementById('edit-input')?.value    || '';
     const output   = document.getElementById('edit-output')?.value   || '';
+    const para     = document.getElementById('edit-para')?.value     || '';
 
     const now = new Date();
     const pad = n => String(n).padStart(2, '0');
@@ -798,6 +808,7 @@ document.getElementById('edit-apply-btn')?.addEventListener('click', () => {
         if (kubun === 'ナレッジ') {
             if (input)  row['Input']  = input;
             if (output) row['Output'] = output;
+            if (para)   row['PARA区分'] = para;
         }
     });
 

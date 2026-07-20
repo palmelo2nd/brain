@@ -5,7 +5,7 @@ export const MAIN_DATA_COLUMNS = [
     'カテゴリ', 'タグ', 'プロジェクト', 'ステータス', '優先度',
     '開始予定', '終了予定', '完了日', '見積時間', '実績時間', 'タイムスタンプログ', '補正時間',
     '繰返し識別子', '繰返し親ID', '繰返し基準日', '繰返し頻度_月', '繰返し頻度_日', '繰返し頻度_曜日',
-    'Input', 'Output'
+    'Input', 'Output', 'PARA区分'
 ];
 
 export const MASTER_DATA_COLUMNS = [
