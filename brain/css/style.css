@@ -349,9 +349,6 @@ details[open] > .expander-title::after { transform: rotate(90deg); }
 .data-table tbody tr:nth-child(even) td { background: #f9fafb; }
 .data-table tbody tr:hover td           { background: #eef5ff; }
 
-.calendar-task-list-new-row td   { color: #8b949e; font-style: italic; cursor: pointer; }
-.calendar-task-list-new-row:hover td { background: #eef5ff; color: #1e2a38; }
-
 .data-table .empty-cell {
     text-align: center;
     color: #8b949e;

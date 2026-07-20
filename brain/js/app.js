@@ -62,7 +62,7 @@ let calendarFilters = { tag: new Set(), project: new Set(), status: new Set() };
 // 一度でも選択肢として現れたことがある値（タグ／プロジェクト／ステータス）。
 // 初出の選択肢はデフォルトでチェック済みにするために使い、ユーザーが手動で外した選択は再チェックしない。
 const calendarFilterKnownOptions = { tag: new Set(), project: new Set(), status: new Set() };
-let calendarQuickNewMode = false;      // true時: タスク一覧の「（新規作成）」行から起動した新規登録モード（日付は空欄のまま）
+let calendarQuickNewMode = false;      // true時: 「新規登録」ボタンから起動した新規登録モード（日付は空欄のまま）
 let taskOrgView = 'calendar';          // 「タスク整理」の表示ビュー（'calendar' | 'gantt'）。年月・タグ/プロジェクト/ステータスフィルタ・選択中タスクは両ビューで共有する
 let ganttViewUnit = 'day';             // ガントチャートの列の単位（'day' | 'week'）
 let summaryView          = 'taskorg';   // Summary ページの表示ビュー（'top' | 'runner' | 'taskorg' | 'recurring' | 'edit' | 'data' | 'project' | 'work'）
@@ -2946,18 +2946,6 @@ function renderCalendarTaskList(tableId = 'calendar-task-list-table') {
         tbody.appendChild(tr);
     });
 
-    // 末尾に新規作成用の行を追加（日付遷移なしで空欄のタスク登録モードを開く）
-    const newTr = document.createElement('tr');
-    newTr.className = 'calendar-task-list-new-row';
-    if (calendarQuickNewMode) newTr.classList.add('selected-row');
-    cols.forEach(col => {
-        const td = document.createElement('td');
-        td.textContent = col === 'タイトル' ? '（新規作成）' : '';
-        newTr.appendChild(td);
-    });
-    newTr.addEventListener('click', startCalendarQuickNewTask);
-    tbody.appendChild(newTr);
-
     table.replaceChildren(thead, tbody);
 }
 
@@ -2978,12 +2966,13 @@ function selectCalendarTaskFromList(row) {
     renderCalendar();
 }
 
-/** タスク一覧末尾の「（新規作成）」行をクリックした際、日付を空欄にした新規登録モードで編集パネルを開く。 */
+/** 「新規登録」ボタンをクリックした際、日付を空欄にした新規登録モードで編集パネルを開く。 */
 function startCalendarQuickNewTask() {
     selectedCalendarTaskId = null;
     calendarQuickNewMode   = true;
     renderCalendarDetail();
 }
+document.getElementById('calendar-quick-new-btn')?.addEventListener('click', startCalendarQuickNewTask);
 
 /** 「タスク整理」のビュー切り替えボタン（カレンダー／ガントチャート）の表示状態を反映する。 */
 function renderTaskOrgViewToggle() {
