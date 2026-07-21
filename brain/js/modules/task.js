@@ -153,10 +153,37 @@ export function wouldCreateCycle(mainData, childId, newParentId) {
 }
 
 /**
+ * id から親IDを辿り、最も高い階層の祖先（親IDが空、または参照先が存在しない行）のIDを返す。
+ * 循環がある場合は検出した時点で辿るのを止め、その時点のIDを返す（無限ループ防止）。
+ * 親IDが無い行（自分自身がルート）の場合は id 自身を文字列で返す。
+ */
+export function getRootParentId(mainData, id) {
+    const idMap = new Map(mainData.map(r => [String(r['ID']), r]));
+    let currentId = String(id);
+    const visited = new Set([currentId]);
+    let current = idMap.get(currentId);
+    while (current && current['親ID']) {
+        const pid = String(current['親ID']);
+        if (visited.has(pid) || !idMap.has(pid)) break;
+        visited.add(pid);
+        currentId = pid;
+        current = idMap.get(pid);
+    }
+    return currentId;
+}
+
+/** 行が親（プロジェクト）になれるデータ区分かどうかを判定する。進捗管理の必要上、親になれるのはタスクのみ（ナレッジは親にはなれず、子にはなれる）。 */
+export function isEligibleParentRow(row) {
+    return row && row['データ区分'] === 'タスク';
+}
+
+/**
  * 親ID選択UI（datalist）用の候補一覧を返す。excludeId を指定すると、その行自身と
  * その子孫（excludeId を親として辿れる全行）を候補から除外する（自分自身や自分の子孫を親にできないようにする）。
+ * existingParentsOnly を true にすると、既に他の行から親IDとして参照されている行（＝既存プロジェクト）のみに絞り込む。
+ * 候補は親になれるデータ区分（タスク）の行のみを対象にする。
  */
-export function getAllParentCandidates(mainData, excludeId) {
+export function getAllParentCandidates(mainData, excludeId, existingParentsOnly = false) {
     let excludedIds = new Set();
     if (excludeId) {
         excludedIds.add(String(excludeId));
@@ -172,6 +199,8 @@ export function getAllParentCandidates(mainData, excludeId) {
     }
     return mainData
         .filter(r => !excludedIds.has(String(r['ID'])))
+        .filter(isEligibleParentRow)
+        .filter(r => !existingParentsOnly || isParentRow(mainData, r['ID']))
         .map(r => ({ id: r['ID'], title: r['タイトル'] || '', kubun: r['データ区分'] || '' }));
 }
 

@@ -11,10 +11,11 @@ import {
 import { parseExceptions, stringifyExceptions, computeMonthCalendar, computeMonthStats, getDefaultType } from './modules/workCalendar.js';
 import {
     parseJpDatetime, formatJpDatetime, parseTimestampLog, formatDuration, isLogRunning,
-    computeTotalDuration as computeTotalDurationM, isProjectActive as isProjectActiveM,
+    computeTotalDuration as computeTotalDurationM,
     filterMainDataByCategory, filterTagsByCategory, filterProjectsByCategory, computeActualHours,
     getChildren as getChildrenM, isParentRow as isParentRowM, getParentRow as getParentRowM,
-    wouldCreateCycle as wouldCreateCycleM, getAllParentCandidates as getAllParentCandidatesM
+    wouldCreateCycle as wouldCreateCycleM, getAllParentCandidates as getAllParentCandidatesM,
+    getRootParentId as getRootParentIdM, isEligibleParentRow as isEligibleParentRowM
 } from './modules/task.js';
 import {
     DAYPLAN_PROJECT, matchesMultiFilter, isTaskDoneForCalendar, getCalendarMarkDate,
@@ -28,11 +29,6 @@ import {
     getSuspendedTasks as getSuspendedTasksM, taskOrganizeStatusRank,
     sortDayPlanBlocks, stringifyDayPlanBlocks, updateDayPlanBlockTime
 } from './modules/calendar.js';
-import {
-    getAllProjectNamesForAdmin as getAllProjectNamesForAdminM, countProjectUsage as countProjectUsageM,
-    renameProjectMaster as renameProjectMasterM, mergeProjectInto as mergeProjectIntoM,
-    deleteProject as deleteProjectM, toggleProjectStatus as toggleProjectStatusM
-} from './modules/project.js';
 import {
     getAllKnownColumns as getAllKnownColumnsM, computeMasterWarnings as computeMasterWarningsM,
     createEmptyMasterRow as createEmptyMasterRowM
@@ -72,14 +68,17 @@ let workCalendarYear  = new Date().getFullYear();
 let workCalendarMonth = new Date().getMonth();
 
 // ===== 新方式（親ID）タブ用の状態 =====
-let taskorg2Filters = { tag: new Set(), status: new Set() }; // 新タスク整理の絞り込み（タグ／ステータスのみ、プロジェクト概念は無い）
-const taskorg2FilterKnownOptions = { tag: new Set(), status: new Set() };
+let taskorg2Filters = { tag: new Set(), status: new Set(), project: new Set() }; // 新タスク整理の絞り込み（プロジェクトは最上位の親IDで代表）
+const taskorg2FilterKnownOptions = { tag: new Set(), status: new Set(), project: new Set() };
 let selectedTaskorg2Id = null;      // 新タスク整理で選択中の行ID
 let selectedEdit2Ids = new Set();   // 新編集で選択中の行ID
 let edit2Filters = {};              // 新編集のフィルタ値
 let edit2Kubun   = 'INBOX';         // 新編集の対象データ区分
-let selectedProject2ParentId = null; // 新プロジェクトで選択中の親行ID
-let selectedProject2ChildId  = null; // 新プロジェクトで選択中の子行ID
+let project2EditPath = [];           // 「プロジェクト編集」の階層プルダウンで選択中のID列（ルート→現在選択中の行の順）
+let project2Level0Mode = '';         // 階層1で何も選択されていない時の表示モード（'' = 通常, 'standalone' = 単独タスク一覧を階層2に表示）
+let project2SiblingSelectedIds = new Set(); // 「プロジェクト編集」の兄弟移動欄でチェック選択中の行ID
+let project2SiblingSelectionForId = null;   // 上記チェック状態がどの選択行に対するものかを覚えておき、選択行が変わったら自動でクリアする
+let project2AdminDeletePending = null;      // プロジェクト管理表で「削除」を押して再割り当て/未割り当ての選択待ちになっている行ID
 
 // ===== 初期化 =====
 window.addEventListener('DOMContentLoaded', () => {
@@ -142,7 +141,7 @@ function mountSection(elId, anchorId) {
 
 // --- ページレンダラー ---
 
-const SUMMARY_VIEWS = ['taskorg', 'taskorg2', 'recurring', 'runner', 'top', 'edit', 'edit2', 'knowledge', 'project', 'project2', 'data', 'work'];
+const SUMMARY_VIEWS = ['taskorg', 'taskorg2', 'recurring', 'runner', 'top', 'edit', 'edit2', 'knowledge', 'project2', 'data', 'work'];
 
 /** Summary ページ（INBOX／タスク整理／繰返し／タスク実行／編集／プロジェクト／データの表示切り替え。PW・Load〜Import・カテゴリは常時表示バーで共通）を描画する */
 function renderSummary() {
@@ -153,7 +152,6 @@ function renderSummary() {
     if (summaryView === 'edit')      mountSection('edit-details',      'edit-anchor-summary');
     if (summaryView === 'edit2')     mountSection('edit2-details',     'edit2-anchor-summary');
     if (summaryView === 'data')      mountSection('data-group',        'data-anchor-summary');
-    if (summaryView === 'project')       mountSection('project-group',         'project-anchor-summary');
     if (summaryView === 'project2')      mountSection('project2-group',        'project2-anchor-summary');
 
     renderCategoryFilter(); // 常時表示バーのカテゴリ選択を最新化
@@ -168,9 +166,8 @@ function renderSummary() {
     if (summaryView === 'knowledge') renderKnowledgeList();
     if (summaryView === 'data') {
         renderDataTable('table-main',   'summary-main',   getFilteredMainData(),   MAIN_DATA_COLUMNS,   'メインデータ',   { editable: true, idColumn: 'ID' });
-        renderDataTable('table-master', 'summary-master', currentMasterData, MASTER_DATA_COLUMNS, 'マスタデータ', { editable: true, onEdit: () => { renderWarnings(computeMasterWarnings()); renderProjectAdmin(); } });
+        renderDataTable('table-master', 'summary-master', currentMasterData, MASTER_DATA_COLUMNS, 'マスタデータ', { editable: true, onEdit: () => { renderWarnings(computeMasterWarnings()); renderProjectAdmin2(); } });
     }
-    if (summaryView === 'project')  renderProjectAdmin();
     if (summaryView === 'project2') renderProjectAdmin2();
     if (summaryView === 'work') renderWorkCalendar();
 
@@ -883,514 +880,10 @@ function addMasterRow() {
 
 document.getElementById('add-master-data-row-btn')?.addEventListener('click', addMasterRow);
 
-// ===== プロジェクト管理（プロジェクト一覧・紐づくタスク一覧／名前変更・削除・統合） =====
+// ===== [削除済み: 旧プロジェクト管理] =====
+// 旧プロジェクトタブ（プロジェクト一覧・紐づくタスク一覧／名前変更・削除・統合）は
+// 新プロジェクトタブ（親ID方式、renderProjectAdmin2 系）へ置き換え、削除した。
 
-let projectAdminDeletePending = null; // 削除確認中のプロジェクト名（使用中の場合、再割り当てUIを表示するため）
-let selectedProjectAdminName  = null; // プロジェクト一覧で選択中のプロジェクト名（下にそのタスク一覧を表示する）
-let selectedProjectTaskId     = null; // プロジェクトのタスク一覧で選択中のタスクID（編集パネルに読み込み中。nullなら新規登録モード）
-
-/** マスタに登録済みの全プロジェクト名（重複除去、有効/無効を問わない）を返す。1日タスク用の予約プロジェクトは対象外。 */
-function getAllProjectNamesForAdmin() {
-    return getAllProjectNamesForAdminM(currentMasterData);
-}
-
-/** カテゴリでフィルタした全プロジェクト名（有効/無効を問わない）を返す（「名前変更」テーブル用）。 */
-function getFilteredProjectNamesForAdmin() {
-    const names = getAllProjectNamesForAdmin();
-    if (currentCategory === 'すべて') return names;
-    const inCategory = new Set(
-        currentMasterData.filter(r => r['(M)プロジェクト_親'] === currentCategory).map(r => r['(M)プロジェクト_子'])
-    );
-    return names.filter(n => inCategory.has(n));
-}
-
-/**
- * プロジェクト一覧テーブルを描画する（カテゴリフィルタ適用、有効/無効を問わず表示）。
- * 使用件数・状態・名前変更・統合・削除の管理機能を統合している。プロジェクト名セルのクリックで選択でき、
- * 選択すると下に紐づくタスク一覧が表示される（操作ボタン・入力欄のクリックは選択に影響しない）。
- */
-function renderProjectBrowserList() {
-    const table = document.getElementById('project-browser-table');
-    if (!table) return;
-    table.className = 'data-table';
-
-    const projectNames = getFilteredProjectNamesForAdmin();
-
-    if (projectNames.length === 0) {
-        const tbody = document.createElement('tbody');
-        const tr = document.createElement('tr');
-        const td = document.createElement('td');
-        td.className = 'empty-cell';
-        td.textContent = '登録済みのプロジェクトがありません';
-        tr.appendChild(td);
-        tbody.appendChild(tr);
-        table.replaceChildren(tbody);
-        return;
-    }
-
-    const thead = document.createElement('thead');
-    const hRow  = document.createElement('tr');
-    ['プロジェクト名', 'タスク数', '状態', '名前変更', '統合', '削除'].forEach(col => {
-        const th = document.createElement('th');
-        th.textContent = col;
-        hRow.appendChild(th);
-    });
-    thead.appendChild(hRow);
-
-    const tbody = document.createElement('tbody');
-    projectNames.forEach(name => {
-        const count = countProjectUsage(name);
-        const otherNames = projectNames.filter(n => n !== name);
-
-        const tr = document.createElement('tr');
-        tr.className = 'recurring-parent-row';
-        if (name === selectedProjectAdminName) tr.classList.add('selected-row');
-
-        // プロジェクト名（クリックで選択、下にタスク一覧を表示）
-        const nameTd = document.createElement('td');
-        nameTd.textContent = name;
-        nameTd.style.cursor = 'pointer';
-        nameTd.addEventListener('click', () => {
-            if (selectedProjectAdminName !== name) selectedProjectTaskId = null; // 別プロジェクトへ切替時は選択中タスクをクリア
-            selectedProjectAdminName = name;
-            renderProjectBrowserList();
-            renderProjectBrowserTasks();
-            renderProjectTaskEdit();
-        });
-        tr.appendChild(nameTd);
-
-        // タスク数
-        const countTd = document.createElement('td');
-        countTd.textContent = String(count);
-        tr.appendChild(countTd);
-
-        // 状態（表示/非表示の切り替え）
-        const statusTd = document.createElement('td');
-        const active = currentMasterData.some(r => r['(M)プロジェクト_子'] === name && isProjectActive(r));
-        const statusBtn = document.createElement('button');
-        statusBtn.textContent = active ? '表示中' : '非表示中';
-        statusBtn.className = active ? 'project-admin-status-btn project-admin-status-btn--on' : 'project-admin-status-btn project-admin-status-btn--off';
-        statusBtn.addEventListener('click', () => {
-            toggleProjectStatus(name);
-            renderProjectAdmin();
-            renderCalendar();
-        });
-        statusTd.appendChild(statusBtn);
-        tr.appendChild(statusTd);
-
-        // 名前変更
-        const renameTd = document.createElement('td');
-        const renameInput = document.createElement('input');
-        renameInput.type = 'text';
-        renameInput.placeholder = '新しい名前';
-        renameInput.className = 'project-admin-input';
-        const renameBtn = document.createElement('button');
-        renameBtn.textContent = '変更';
-        renameBtn.addEventListener('click', () => {
-            const newName = renameInput.value.trim();
-            if (!newName || newName === name) return;
-            renameProjectMaster(name, newName);
-            projectAdminDeletePending = null;
-            if (selectedProjectAdminName === name) selectedProjectAdminName = newName;
-            renderProjectAdmin();
-            renderCalendar();
-        });
-        renameTd.append(renameInput, renameBtn);
-        tr.appendChild(renameTd);
-
-        // 統合
-        const mergeTd = document.createElement('td');
-        if (otherNames.length > 0) {
-            const mergeSelect = document.createElement('select');
-            otherNames.forEach(n => {
-                const opt = document.createElement('option');
-                opt.value = n;
-                opt.textContent = n;
-                mergeSelect.appendChild(opt);
-            });
-            const mergeBtn = document.createElement('button');
-            mergeBtn.textContent = 'このプロジェクトへ統合';
-            mergeBtn.addEventListener('click', () => {
-                if (!confirm(`「${name}」を「${mergeSelect.value}」に統合します。「${name}」を使用中の全タスク／ナレッジが「${mergeSelect.value}」に書き換わります。よろしいですか？`)) return;
-                mergeProjectInto(name, mergeSelect.value);
-                projectAdminDeletePending = null;
-                if (selectedProjectAdminName === name) selectedProjectAdminName = mergeSelect.value;
-                renderProjectAdmin();
-                renderCalendar();
-            });
-            mergeTd.append(mergeSelect, mergeBtn);
-        } else {
-            mergeTd.textContent = '（統合先なし）';
-        }
-        tr.appendChild(mergeTd);
-
-        // 削除
-        const deleteTd = document.createElement('td');
-        if (projectAdminDeletePending === name) {
-            const p = document.createElement('p');
-            p.className = 'warning-text';
-            p.textContent = `「${name}」は${count}件のタスク／ナレッジに割り当てられています。`;
-            deleteTd.appendChild(p);
-
-            if (otherNames.length > 0) {
-                const reassignSelect = document.createElement('select');
-                otherNames.forEach(n => {
-                    const opt = document.createElement('option');
-                    opt.value = n;
-                    opt.textContent = n;
-                    reassignSelect.appendChild(opt);
-                });
-                const reassignBtn = document.createElement('button');
-                reassignBtn.textContent = '再割り当てして削除';
-                reassignBtn.addEventListener('click', () => {
-                    deleteProject(name, reassignSelect.value);
-                    projectAdminDeletePending = null;
-                    if (selectedProjectAdminName === name) selectedProjectAdminName = reassignSelect.value;
-                    renderProjectAdmin();
-                    renderCalendar();
-                });
-                deleteTd.append(reassignSelect, reassignBtn);
-            }
-
-            const unassignBtn = document.createElement('button');
-            unassignBtn.className = 'calendar-danger-btn';
-            unassignBtn.textContent = '割り当てずに削除';
-            unassignBtn.addEventListener('click', () => {
-                if (!confirm(`「${name}」を削除し、割り当てられていた${count}件のプロジェクトを空欄にします。よろしいですか？`)) return;
-                deleteProject(name, null);
-                projectAdminDeletePending = null;
-                if (selectedProjectAdminName === name) selectedProjectAdminName = null;
-                renderProjectAdmin();
-                renderCalendar();
-            });
-            const cancelBtn = document.createElement('button');
-            cancelBtn.textContent = 'キャンセル';
-            cancelBtn.addEventListener('click', () => {
-                projectAdminDeletePending = null;
-                renderProjectAdmin();
-            });
-            deleteTd.append(unassignBtn, cancelBtn);
-        } else {
-            const deleteBtn = document.createElement('button');
-            deleteBtn.className = 'calendar-danger-btn';
-            deleteBtn.textContent = '削除';
-            deleteBtn.addEventListener('click', () => {
-                if (count === 0) {
-                    if (!confirm(`「${name}」を削除します。よろしいですか？`)) return;
-                    deleteProject(name, null);
-                    if (selectedProjectAdminName === name) selectedProjectAdminName = null;
-                    renderProjectAdmin();
-                    renderCalendar();
-                } else {
-                    projectAdminDeletePending = name;
-                    renderProjectAdmin();
-                }
-            });
-            deleteTd.appendChild(deleteBtn);
-        }
-        tr.appendChild(deleteTd);
-
-        tbody.appendChild(tr);
-    });
-
-    table.replaceChildren(thead, tbody);
-}
-
-/** 選択中のプロジェクトに紐づくタスク一覧（カテゴリフィルタ適用）を描画する。未選択なら案内文を表示。 */
-function renderProjectBrowserTasks() {
-    const table = document.getElementById('project-browser-task-table');
-    if (!table) return;
-    table.className = 'data-table';
-
-    if (!selectedProjectAdminName) {
-        const tbody = document.createElement('tbody');
-        const tr = document.createElement('tr');
-        const td = document.createElement('td');
-        td.className = 'empty-cell';
-        td.textContent = 'プロジェクトを選択してください';
-        tr.appendChild(td);
-        tbody.appendChild(tr);
-        table.replaceChildren(tbody);
-        return;
-    }
-
-    const tasks = getFilteredMainData().filter(r => r['プロジェクト'] === selectedProjectAdminName);
-
-    if (tasks.length === 0) {
-        const tbody = document.createElement('tbody');
-        const tr = document.createElement('tr');
-        const td = document.createElement('td');
-        td.className = 'empty-cell';
-        td.textContent = 'このプロジェクトに紐づくタスクがありません';
-        tr.appendChild(td);
-        tbody.appendChild(tr);
-        table.replaceChildren(tbody);
-        return;
-    }
-
-    const thead = document.createElement('thead');
-    const hRow  = document.createElement('tr');
-    ['ID', 'タイトル', 'ステータス', '開始予定', '終了予定', '完了日'].forEach(col => {
-        const th = document.createElement('th');
-        th.textContent = col;
-        hRow.appendChild(th);
-    });
-    thead.appendChild(hRow);
-
-    const tbody = document.createElement('tbody');
-    tasks.forEach(row => {
-        const taskId = String(row['ID']);
-        const tr = document.createElement('tr');
-        tr.className = 'recurring-parent-row';
-        if (taskId === selectedProjectTaskId) tr.classList.add('selected-row');
-
-        [row['ID'], row['タイトル'] || '（無題）', row['ステータス'] || '未設定', row['開始予定'] || '', row['終了予定'] || '', row['完了日'] || ''].forEach(text => {
-            const td = document.createElement('td');
-            td.textContent = text;
-            tr.appendChild(td);
-        });
-        tr.addEventListener('click', () => {
-            selectedProjectTaskId = taskId;
-            renderProjectBrowserTasks();
-            renderProjectTaskEdit();
-        });
-        tbody.appendChild(tr);
-    });
-
-    table.replaceChildren(thead, tbody);
-}
-
-/** プロジェクト管理のタスク編集パネルを新規登録モードにリセットする（タスク整理ページの編集パネルと同じデフォルト方針）。 */
-function clearProjectTaskEditForm() {
-    ['projtask-id', 'projtask-title', 'projtask-content', 'projtask-biko', 'projtask-tag',
-     'projtask-estimate', 'projtask-actual',
-     'projtask-start-date', 'projtask-start-hour', 'projtask-start-minute',
-     'projtask-end-date', 'projtask-end-hour', 'projtask-end-minute',
-     'projtask-complete-date'].forEach(id => {
-        const el = document.getElementById(id);
-        if (el) el.value = '';
-    });
-
-    const statusEl = document.getElementById('projtask-status');
-    if (statusEl) statusEl.value = '未着手';
-    const priorityEl = document.getElementById('projtask-priority');
-    if (priorityEl) priorityEl.value = '中';
-    const categoryEl = document.getElementById('projtask-category');
-    if (categoryEl && currentCategory !== 'すべて') categoryEl.value = currentCategory;
-    const projectEl = document.getElementById('projtask-project');
-    if (projectEl) projectEl.value = selectedProjectAdminName || '';
-}
-
-/** プロジェクト管理のタスク編集パネルを描画する。選択中のタスクがあれば編集モード、無ければ新規登録モード。 */
-function renderProjectTaskEdit() {
-    const panel = document.getElementById('project-task-edit');
-    if (!panel) return;
-
-    populateTaskEditSelects('projtask');
-
-    const row = selectedProjectTaskId
-        ? currentMainData.find(r => String(r['ID']) === selectedProjectTaskId)
-        : null;
-
-    if (!row) {
-        selectedProjectTaskId = null;
-        clearProjectTaskEditForm();
-        return;
-    }
-
-    document.getElementById('projtask-id').value       = row['ID']         ?? '';
-    document.getElementById('projtask-title').value    = row['タイトル']   ?? '';
-    document.getElementById('projtask-content').value  = row['内容']       ?? '';
-    document.getElementById('projtask-biko').value     = row['備考']       ?? '';
-    document.getElementById('projtask-status').value   = row['ステータス'] ?? '';
-    document.getElementById('projtask-priority').value = row['優先度']     ?? '';
-    document.getElementById('projtask-category').value = row['カテゴリ']   ?? '';
-    document.getElementById('projtask-tag').value      = row['タグ']       ?? '';
-    document.getElementById('projtask-project').value  = row['プロジェクト'] ?? '';
-
-    writeTaskDateTimeFieldsToForm('projtask', row);
-    writeTaskEstimateActualToForm('projtask', row);
-}
-
-/** 「適用」ボタン: プロジェクト管理のタスク編集パネルの内容を選択中のタスクへ書き戻す。 */
-document.getElementById('projtask-apply-btn')?.addEventListener('click', () => {
-    if (!selectedProjectTaskId) return;
-    const row = currentMainData.find(r => String(r['ID']) === selectedProjectTaskId);
-    if (!row) return;
-
-    row['タイトル']     = document.getElementById('projtask-title').value.trim();
-    row['内容']         = document.getElementById('projtask-content').value.trim();
-    row['備考']         = document.getElementById('projtask-biko').value.trim();
-    row['ステータス']   = document.getElementById('projtask-status').value;
-    row['優先度']       = document.getElementById('projtask-priority').value;
-    row['見積時間']     = document.getElementById('projtask-estimate').value;
-    row['カテゴリ']     = document.getElementById('projtask-category').value;
-    row['タグ']         = document.getElementById('projtask-tag').value;
-    row['プロジェクト'] = document.getElementById('projtask-project').value;
-    Object.assign(row, readTaskDateTimeFieldsFromForm('projtask'));
-    row['更新日時'] = formatJpDatetime(new Date());
-
-    // プロジェクトを変更した場合、選択中プロジェクトのタスク一覧から外れるため表示中のプロジェクトも追従させる
-    selectedProjectAdminName = row['プロジェクト'] || null;
-
-    persistLocalCache();
-    renderProjectAdmin();
-    renderCalendar();
-    renderTaskRunner();
-    renderEditTable();
-});
-
-/** 「削除」ボタン: プロジェクト管理で選択中のタスクをメインデータから削除する。 */
-document.getElementById('projtask-delete-btn')?.addEventListener('click', () => {
-    if (!selectedProjectTaskId) return;
-    if (!confirm('このタスクを削除します。よろしいですか？（この操作は取り消せません）')) return;
-
-    currentMainData = currentMainData.filter(r => String(r['ID']) !== selectedProjectTaskId);
-    selectedProjectTaskId = null;
-
-    persistLocalCache();
-    renderProjectAdmin();
-    renderCalendar();
-    renderTaskRunner();
-    renderEditTable();
-});
-
-/** 「新規」ボタン: プロジェクト管理の編集パネルの現在値で新規タスクを追加する（プロジェクトは選択中のものがデフォルト）。 */
-document.getElementById('projtask-new-btn')?.addEventListener('click', () => {
-    const title = document.getElementById('projtask-title').value.trim();
-    if (!title) { alert('タイトルを入力してください'); return; }
-
-    const maxId = currentMainData.reduce((max, row) => {
-        const id = parseInt(row['ID'], 10);
-        return isNaN(id) ? max : Math.max(max, id);
-    }, 0);
-    const ts = formatJpDatetime(new Date());
-
-    const entry = Object.fromEntries(MAIN_DATA_COLUMNS.map(col => [col, '']));
-    entry['ID']          = String(maxId + 1);
-    entry['データ区分']   = 'タスク';
-    entry['タイトル']     = title;
-    entry['内容']         = document.getElementById('projtask-content').value.trim();
-    entry['備考']         = document.getElementById('projtask-biko').value.trim();
-    entry['ステータス']   = document.getElementById('projtask-status').value;
-    entry['優先度']       = document.getElementById('projtask-priority').value;
-    entry['見積時間']     = document.getElementById('projtask-estimate').value;
-    entry['カテゴリ']     = document.getElementById('projtask-category').value || (currentCategory === 'すべて' ? '' : currentCategory);
-    entry['タグ']         = document.getElementById('projtask-tag').value;
-    entry['プロジェクト'] = document.getElementById('projtask-project').value || selectedProjectAdminName || '';
-    Object.assign(entry, readTaskDateTimeFieldsFromForm('projtask'));
-    entry['作成日時']     = ts;
-    entry['更新日時']     = ts;
-
-    currentMainData.push(entry);
-    persistLocalCache();
-
-    selectedProjectAdminName = entry['プロジェクト'] || null;
-    selectedProjectTaskId    = entry['ID'];
-    renderProjectAdmin();
-    renderCalendar();
-    renderTaskRunner();
-    renderEditTable();
-});
-
-/** 指定プロジェクト名がメインデータ（タスク／ナレッジ等）で使用されている件数を返す。 */
-function countProjectUsage(name) {
-    return countProjectUsageM(currentMainData, name);
-}
-
-/**
- * プロジェクト名を旧名から新名へ変更する。メインデータの参照とマスタの(M)プロジェクト_子を書き換える。
- * newName が既存の別プロジェクト名と一致する場合は実質的に統合（mergeProjectInto）と同じ結果になる。
- */
-function renameProjectMaster(oldName, newName) {
-    const result = renameProjectMasterM(currentMainData, currentMasterData, oldName, newName);
-    currentMainData   = result.mainData;
-    currentMasterData = result.masterData;
-    persistLocalCache();
-}
-
-/** sourceName のプロジェクトを targetName に統合する。メインデータの参照を付け替え、source側のマスタ行のプロジェクト関連列だけを消す。 */
-function mergeProjectInto(sourceName, targetName) {
-    const result = mergeProjectIntoM(currentMainData, currentMasterData, sourceName, targetName);
-    currentMainData   = result.mainData;
-    currentMasterData = result.masterData;
-    persistLocalCache();
-}
-
-/** プロジェクトを削除する。reassignTo を指定すればそのプロジェクトへ再割り当てしてから削除、未指定なら参照を空欄にして削除する。 */
-function deleteProject(name, reassignTo) {
-    const result = deleteProjectM(currentMainData, currentMasterData, name, reassignTo);
-    currentMainData   = result.mainData;
-    currentMasterData = result.masterData;
-    persistLocalCache();
-}
-
-/** 指定プロジェクト名の (M)プロジェクト_ステータス を切り替える（同名の全マスタ行に反映）。 */
-function toggleProjectStatus(name) {
-    currentMasterData = toggleProjectStatusM(currentMasterData, name);
-    persistLocalCache();
-}
-
-/**
- * 「名前変更」の新規追加フォームのカテゴリ選択欄を、カテゴリ「すべて」選択時のみ表示する。
- * 「すべて」以外を選んでいる場合は、そのカテゴリへ直接追加するため選択欄は不要。
- */
-function updateProjectAdminNewCategoryVisibility() {
-    const select = document.getElementById('project-admin-new-category');
-    if (!select) return;
-
-    if (currentCategory !== 'すべて') {
-        select.style.display = 'none';
-        return;
-    }
-
-    const categories = [...new Set(currentMasterData.map(r => r['(M)カテゴリ']).filter(Boolean))];
-    select.innerHTML = '';
-    categories.forEach(cat => {
-        const opt = document.createElement('option');
-        opt.value = cat;
-        opt.textContent = cat;
-        select.appendChild(opt);
-    });
-    select.style.display = categories.length > 0 ? '' : 'none';
-}
-
-document.getElementById('project-admin-new-btn')?.addEventListener('click', () => {
-    const nameInput = document.getElementById('project-admin-new-name');
-    const name = nameInput.value.trim();
-    if (!name) { alert('プロジェクト名を入力してください'); return; }
-    if (getAllProjectNamesForAdmin().includes(name)) { alert('同じ名前のプロジェクトが既に存在します'); return; }
-
-    let category = currentCategory;
-    if (currentCategory === 'すべて') {
-        const select = document.getElementById('project-admin-new-category');
-        category = select?.value || '';
-        if (!category) { alert('登録済みのカテゴリがありません。先にカテゴリを登録してください'); return; }
-    }
-
-    const newRow = createEmptyMasterRow();
-    newRow['(M)プロジェクト_親'] = category;
-    newRow['(M)プロジェクト_子'] = name;
-    currentMasterData.push(newRow);
-    persistLocalCache();
-
-    nameInput.value = '';
-    selectedProjectAdminName = name;
-    renderProjectAdmin();
-    renderCalendar();
-});
-
-/**
- * プロジェクトページ全体（プロジェクト一覧・紐づくタスク一覧、名前変更・統合・削除テーブル）を描画する。
- * 名前変更・統合・削除の操作はいずれもこの関数を通じて再描画されるため、
- * 上部のプロジェクト一覧・タスク一覧もここで一緒に最新化する。
- */
-function renderProjectAdmin() {
-    renderProjectBrowserList();
-    renderProjectBrowserTasks();
-    renderProjectTaskEdit();
-    updateProjectAdminNewCategoryVisibility();
-}
 
 /** 空のメインデータ行を1件追加し、メインデータ一覧テーブルを再描画する。 */
 document.getElementById('add-main-row-btn')?.addEventListener('click', () => {
@@ -1825,11 +1318,6 @@ export function getFilteredTags() {
     return filterTagsByCategory(currentMasterData, currentCategory);
 }
 
-/** (M)プロジェクト_ステータスが '0'（無効）でない行かどうかを判定する。未入力は有効扱いにする。 */
-function isProjectActive(row) {
-    return isProjectActiveM(row);
-}
-
 /**
  * 選択中のカテゴリに属する、有効な（(M)プロジェクト_ステータスが0でない）プロジェクト名一覧を返す。
  * 「すべて」選択時は (M)プロジェクト_子 の全値を返す。
@@ -2093,8 +1581,11 @@ function buildTaskRunnerUI(container) {
         r['データ区分'] === 'タスク' && r['ステータス'] === '進行中'
         && !(r['繰返し識別子'] === '1' && !r['繰返し親ID']) // 繰返しタスクの親は対象外
     );
-    const inProgressToday    = inProgress.filter(r => todaysDayPlanIds.has(r['ID']));
-    const inProgressNotToday = inProgress.filter(r => !todaysDayPlanIds.has(r['ID']));
+    // 1階層でも2階層でも誰かの親（プロジェクト）になっているタスクは、通常の進行中一覧とは分けて「（親タスク）」表に表示する。
+    const inProgressParents    = inProgress.filter(r => isParentRowM(currentMainData, r['ID']));
+    const inProgressNonParents = inProgress.filter(r => !isParentRowM(currentMainData, r['ID']));
+    const inProgressToday    = inProgressNonParents.filter(r => todaysDayPlanIds.has(r['ID']));
+    const inProgressNotToday = inProgressNonParents.filter(r => !todaysDayPlanIds.has(r['ID']));
     const todaysOther        = todaysDayPlanTasks.filter(r => r['ステータス'] !== '進行中');
 
     const runningRow = findRunningTaskRow(inProgress);
@@ -2122,6 +1613,9 @@ function buildTaskRunnerUI(container) {
     appendRunnerListHeading(listCol, 'その他（今日）');
     appendRunnerOtherTodayTable(listCol, todaysOther);
 
+    appendRunnerListHeading(listCol, '（親タスク）');
+    appendRunnerProgressTable(listCol, inProgressParents, runningRow);
+
     section.appendChild(listCol);
 
     // ===== 右カラム: 選択タスクの編集エリア（未選択時は先頭タスクを自動選択） =====
@@ -2132,7 +1626,7 @@ function buildTaskRunnerUI(container) {
         ? currentMainData.find(r => String(r['ID']) === String(selectedRunTaskId))
         : null;
     if (!selectedRow) {
-        selectedRow = inProgressToday[0] || inProgressNotToday[0] || todaysOther[0] || null;
+        selectedRow = inProgressToday[0] || inProgressNotToday[0] || todaysOther[0] || inProgressParents[0] || null;
         if (selectedRow) selectedRunTaskId = String(selectedRow['ID']);
     }
 
@@ -4894,12 +4388,15 @@ function populateTaskEditSelects2(prefix) {
     rebuildSelectById(`${prefix}-tag`,      getFilteredTags());
 }
 
-/** prefix-parent-list（datalist）を、excludeId自身とその子孫を除いた全行の候補で再構築する。 */
-function renderParentDatalist(prefix, excludeId) {
+/**
+ * prefix-parent-list（datalist）を、excludeId自身とその子孫を除いた候補で再構築する。
+ * existingParentsOnly（既定true）の場合、既に他行から親IDとして参照されている行（＝既存プロジェクト）のみに絞る。
+ */
+function renderParentDatalist(prefix, excludeId, existingParentsOnly = true) {
     const dl = document.getElementById(`${prefix}-parent-list`);
     if (!dl) return;
     dl.innerHTML = '';
-    getAllParentCandidatesM(currentMainData, excludeId).forEach(c => {
+    getAllParentCandidatesM(currentMainData, excludeId, existingParentsOnly).forEach(c => {
         const opt = document.createElement('option');
         opt.value = `#${c.id} ${c.title}`;
         dl.appendChild(opt);
@@ -4934,6 +4431,11 @@ function wireParentSearchInput(prefix) {
 /** 指定行の親IDに newParentId を設定しようとした際に循環参照になる場合、確認アラートを出して false を返す。 */
 function checkParentCycleOrAlert(childId, newParentId) {
     if (!newParentId) return true;
+    const parentRow = currentMainData.find(r => String(r['ID']) === String(newParentId));
+    if (!isEligibleParentRowM(parentRow)) {
+        alert('親（プロジェクト）に設定できるのはタスクのみです。ナレッジは親にできません。');
+        return false;
+    }
     if (wouldCreateCycleM(currentMainData, childId, newParentId)) {
         alert('この親を設定すると循環参照になるため、保存できません。');
         return false;
@@ -4941,20 +4443,46 @@ function checkParentCycleOrAlert(childId, newParentId) {
     return true;
 }
 
-/** 選択中カテゴリ・タグ／ステータスフィルタで絞り込んだメインデータ一覧を返す（プロジェクト概念は無いため対象外）。 */
-function getTaskorg2FilteredList() {
-    const match = (set, value) => !value || set.has(value);
-    return filterMainDataByCategory(currentMainData, currentCategory)
-        .filter(r => match(taskorg2Filters.tag, r['タグ']) && match(taskorg2Filters.status, r['ステータス']));
+/** 選択中カテゴリのメインデータのうち、実際にプロジェクト（子を持つ最上位の親行）に属するものを対象に、最上位の親行一覧を返す。 */
+function getTaskorg2ProjectRootRows() {
+    const rootIds = new Set();
+    filterMainDataByCategory(currentMainData, currentCategory).forEach(r => {
+        const rootId = getRootParentIdM(currentMainData, r['ID']);
+        if (isParentRowM(currentMainData, rootId)) rootIds.add(rootId);
+    });
+    return [...rootIds].map(id => currentMainData.find(r => String(r['ID']) === id)).filter(Boolean);
 }
 
-/** 新タスク整理のタグ／ステータス絞り込みチップを描画する。 */
+/** rootId を最上位の親に持つデータ区分「タスク」の件数（activeOnly指定時は完了・中断を除く）を、選択中カテゴリで絞り込んで返す。 */
+function countTaskorg2ProjectTasks(rootId, activeOnly) {
+    return filterMainDataByCategory(currentMainData, currentCategory).filter(r => {
+        if (r['データ区分'] !== 'タスク') return false;
+        if (getRootParentIdM(currentMainData, r['ID']) !== rootId) return false;
+        if (activeOnly && (r['ステータス'] === '完了' || r['ステータス'] === '中断')) return false;
+        return true;
+    }).length;
+}
+
+/** 選択中カテゴリ・タグ／ステータス／プロジェクト（最上位の親ID）フィルタで絞り込んだメインデータ一覧を返す。 */
+function getTaskorg2FilteredList() {
+    const match = (set, value) => !value || set.has(value);
+    return filterMainDataByCategory(currentMainData, currentCategory).filter(r => {
+        if (!match(taskorg2Filters.tag, r['タグ']))       return false;
+        if (!match(taskorg2Filters.status, r['ステータス'])) return false;
+        const rootId = getRootParentIdM(currentMainData, r['ID']);
+        // 実際にプロジェクトに属する行のみプロジェクトフィルタの対象にする（単独行は素通しする）
+        if (isParentRowM(currentMainData, rootId) && !match(taskorg2Filters.project, rootId)) return false;
+        return true;
+    });
+}
+
+/** 新タスク整理のタグ／ステータス／プロジェクト絞り込みチップを描画する。 */
 function renderTaskorg2Filters() {
     const area = document.getElementById('calendar2-filter-area');
     if (!area) return;
     area.innerHTML = '';
 
-    function makeRow(labelText, options, selectedSet) {
+    function makeRow(labelText, options, selectedSet, buildLabel) {
         const row = document.createElement('div');
         row.className = 'triage-filter-row';
         const lbl = document.createElement('span');
@@ -4973,18 +4501,29 @@ function renderTaskorg2Filters() {
         deselectAllBtn.textContent = '全解除';
         deselectAllBtn.addEventListener('click', () => { selectedSet.clear(); renderCalendar2(); });
 
-        const ctrl = createCalendarMultiFilter(options, selectedSet, v => v, () => renderCalendar2());
+        const ctrl = createCalendarMultiFilter(options, selectedSet, buildLabel || (v => v), () => renderCalendar2());
         row.append(lbl, selectAllBtn, deselectAllBtn, ctrl);
         area.appendChild(row);
     }
 
+    // タグ→プロジェクト→ステータスの順、いずれも件数（N）の多い順、(n/N)併記（旧タスク整理と同一仕様）
     const tagOptions = sortByTotalCountDesc(getFilteredTags(), 'タグ');
     seedFilterOptionSet(tagOptions, taskorg2Filters.tag, taskorg2FilterKnownOptions.tag);
-    makeRow('タグ', tagOptions, taskorg2Filters.tag);
+    makeRow('タグ', tagOptions, taskorg2Filters.tag, v => `${v} (${countActiveTasksByField('タグ', v)}/${countTasksByField('タグ', v)})`);
+
+    // プロジェクト＝最上位の親IDのタイトルをボタンとして表示（中間階層の親IDは束ねてカウントする）
+    const projectRows = getTaskorg2ProjectRootRows()
+        .sort((a, b) => countTaskorg2ProjectTasks(String(b['ID']), false) - countTaskorg2ProjectTasks(String(a['ID']), false));
+    const projectIds  = projectRows.map(r => String(r['ID']));
+    seedFilterOptionSet(projectIds, taskorg2Filters.project, taskorg2FilterKnownOptions.project);
+    makeRow('プロジェクト', projectIds, taskorg2Filters.project, id => {
+        const row = projectRows.find(r => String(r['ID']) === id);
+        return `${row ? (row['タイトル'] || `#${id}`) : `#${id}`} (${countTaskorg2ProjectTasks(id, true)}/${countTaskorg2ProjectTasks(id, false)})`;
+    });
 
     const statusOptions = sortByTotalCountDesc(getFilteredTaskStatuses(), 'ステータス');
     seedFilterOptionSet(statusOptions, taskorg2Filters.status, taskorg2FilterKnownOptions.status);
-    makeRow('ステータス', statusOptions, taskorg2Filters.status);
+    makeRow('ステータス', statusOptions, taskorg2Filters.status, v => `${v} (${countActiveTasksByField('ステータス', v)}/${countTasksByField('ステータス', v)})`);
 }
 
 /** 新タスク整理のタスク一覧テーブルを描画する。行クリックで編集対象を切り替える。 */
@@ -5699,9 +5238,30 @@ document.getElementById('edit2-delete-btn')?.addEventListener('click', () => {
 // 一覧表示し、選択すると配下の子タスク／ナレッジを表示・編集できる。
 // ===========================================================================
 
-/** 他行から親IDとして参照されている行（＝実質プロジェクト）を、カテゴリで絞り込んで返す。 */
+const PROJECT2_HIDDEN_STATUS = '非表示'; // プロジェクトの「非表示」を表すステータス値（ステータス列を表示制御に共用する）
+
+/** 他行から親IDとして参照されている「最上位（ルート）」の行を、非表示のものを除きカテゴリで絞り込んで返す（自身に親IDを持たない行に限る）。 */
 function getProject2ParentRows() {
-    let rows = currentMainData.filter(r => isParentRowM(currentMainData, r['ID']));
+    let rows = currentMainData.filter(r =>
+        !r['親ID'] && isParentRowM(currentMainData, r['ID']) && r['ステータス'] !== PROJECT2_HIDDEN_STATUS
+    );
+    if (currentCategory !== 'すべて') rows = rows.filter(r => r['カテゴリ'] === currentCategory);
+    return rows;
+}
+
+/** プロジェクト管理表用：他行から親IDとして参照されている「最上位（ルート）」の行を、非表示のものも含めて全件返す。 */
+function getProject2AllParentRowsForAdmin() {
+    let rows = currentMainData.filter(r => !r['親ID'] && isParentRowM(currentMainData, r['ID']));
+    if (currentCategory !== 'すべて') rows = rows.filter(r => r['カテゴリ'] === currentCategory);
+    return rows;
+}
+
+/**
+ * まだどのプロジェクトにも属していない単独タスク（親ID空欄・自身も親でない・データ区分がタスク）を返す。
+ * 「プロジェクト編集」の階層1で「（単独タスク）」を選んだ際の階層2候補として使う。
+ */
+function getProject2StandaloneTaskRows() {
+    let rows = currentMainData.filter(r => !r['親ID'] && r['データ区分'] === 'タスク' && !isParentRowM(currentMainData, r['ID']));
     if (currentCategory !== 'すべて') rows = rows.filter(r => r['カテゴリ'] === currentCategory);
     return rows;
 }
@@ -5716,14 +5276,52 @@ function summarizeChildStatuses(children) {
     return Object.entries(counts).map(([k, v]) => `${k}:${v}`).join(' ');
 }
 
-/** プロジェクト（子を持つ行）一覧テーブルを描画する。行クリックで配下一覧を切り替える。 */
-function renderProject2BrowserList() {
-    const table = document.getElementById('project2-browser-table');
+/** rootId 配下の全階層の子孫を { row, depth } の配列（深さ優先、親の直後にその子が続く順）で返す。「新規プロジェクトの追加」の付け替え候補一覧に使用する。 */
+function collectProject2Descendants(rootId, depth = 1, out = [], visited = new Set()) {
+    if (visited.has(String(rootId))) return out; // 循環データ保護
+    visited.add(String(rootId));
+    getChildrenM(currentMainData, rootId).forEach(child => {
+        out.push({ row: child, depth });
+        collectProject2Descendants(child['ID'], depth + 1, out, visited);
+    });
+    return out;
+}
+
+/** id からその行自身までの親ID系列を、ルート→id自身の順で返す（循環データ保護つき）。プルダウン選択・行選択のたびに現在の実データを基準に再構築する。 */
+function buildProject2PathFromId(id) {
+    if (!id) return [];
+    const idMap = new Map(currentMainData.map(r => [String(r['ID']), r]));
+    const chain = [];
+    const visited = new Set();
+    let currentId = String(id);
+    let current = idMap.get(currentId);
+    while (current && !visited.has(currentId)) {
+        chain.unshift(currentId);
+        visited.add(currentId);
+        const pid = current['親ID'] ? String(current['親ID']) : null;
+        if (!pid || !idMap.has(pid)) break;
+        currentId = pid;
+        current = idMap.get(pid);
+    }
+    return chain;
+}
+
+// ---- プロジェクト管理表（表示/非表示・名前変更・統合・削除） ----
+
+/** 指定プロジェクトが表示中かどうかを判定する（ステータスが「非表示」でなければ表示中）。 */
+function isProject2Visible(row) {
+    return row['ステータス'] !== PROJECT2_HIDDEN_STATUS;
+}
+
+/** 「プロジェクト管理」表を描画する。列: プロジェクト名／タスク数／状態／名前変更／統合／削除。 */
+function renderProject2AdminTable() {
+    const table = document.getElementById('project2-admin-table');
     if (!table) return;
 
-    const parents = getProject2ParentRows();
+    const projects = getProject2AllParentRowsForAdmin()
+        .sort((a, b) => collectProject2Descendants(String(b['ID'])).length - collectProject2Descendants(String(a['ID'])).length);
     table.className = 'data-table';
-    const cols = ['ID', 'タイトル', 'データ区分', '子の件数', '子のステータス内訳'];
+    const cols = ['プロジェクト名', 'タスク数', '状態', '名前変更', '統合', '削除'];
 
     const thead = document.createElement('thead');
     const hRow  = document.createElement('tr');
@@ -5731,32 +5329,291 @@ function renderProject2BrowserList() {
     thead.appendChild(hRow);
 
     const tbody = document.createElement('tbody');
-    parents.forEach(row => {
-        const children = getChildrenM(currentMainData, row['ID']);
+    projects.forEach(row => {
+        const id = String(row['ID']);
         const tr = document.createElement('tr');
-        if (String(row['ID']) === selectedProject2ParentId) tr.classList.add('selected-row');
-        [row['ID'], row['タイトル'] || '', row['データ区分'] || '', String(children.length), summarizeChildStatuses(children)]
-            .forEach(v => { const td = document.createElement('td'); td.textContent = v; tr.appendChild(td); });
-        tr.addEventListener('click', () => {
-            selectedProject2ParentId = String(row['ID']);
-            selectedProject2ChildId  = null;
+
+        // プロジェクト名
+        const tdName = document.createElement('td');
+        tdName.textContent = row['タイトル'] || '';
+        tr.appendChild(tdName);
+
+        // タスク数（全階層合計）
+        const tdCount = document.createElement('td');
+        tdCount.textContent = String(collectProject2Descendants(id).length);
+        tr.appendChild(tdCount);
+
+        // 状態（表示/非表示切り替え）
+        const tdStatus = document.createElement('td');
+        const visible = isProject2Visible(row);
+        const statusBtn = document.createElement('button');
+        statusBtn.type = 'button';
+        statusBtn.className = 'calendar-add-btn';
+        statusBtn.textContent = visible ? '表示中' : '非表示中';
+        statusBtn.addEventListener('click', () => {
+            row['ステータス']  = visible ? PROJECT2_HIDDEN_STATUS : '';
+            row['更新日時']    = formatJpDatetime(new Date());
+            persistLocalCache();
             renderProjectAdmin2();
         });
+        tdStatus.appendChild(statusBtn);
+        tr.appendChild(tdStatus);
+
+        // 名前変更
+        const tdRename = document.createElement('td');
+        const renameInput = document.createElement('input');
+        renameInput.type  = 'text';
+        renameInput.value = row['タイトル'] || '';
+        renameInput.style.width = '10em';
+        const renameBtn = document.createElement('button');
+        renameBtn.type = 'button';
+        renameBtn.className = 'calendar-add-btn';
+        renameBtn.textContent = '変更';
+        renameBtn.addEventListener('click', () => {
+            const newName = renameInput.value.trim();
+            if (!newName) { alert('プロジェクト名を入力してください'); return; }
+            row['タイトル']   = newName;
+            row['更新日時']   = formatJpDatetime(new Date());
+            persistLocalCache();
+            renderProjectAdmin2();
+        });
+        tdRename.append(renameInput, renameBtn);
+        tr.appendChild(tdRename);
+
+        // 統合（このプロジェクトを他のプロジェクトへ統合し、自身は統合先の子に降格する）
+        const tdMerge = document.createElement('td');
+        const mergeSelect = document.createElement('select');
+        const blankOpt = document.createElement('option');
+        blankOpt.value = '';
+        blankOpt.textContent = '（統合先を選択）';
+        mergeSelect.appendChild(blankOpt);
+        projects.filter(p => String(p['ID']) !== id).forEach(p => {
+            const opt = document.createElement('option');
+            opt.value = String(p['ID']);
+            opt.textContent = p['タイトル'] || '';
+            mergeSelect.appendChild(opt);
+        });
+        const mergeBtn = document.createElement('button');
+        mergeBtn.type = 'button';
+        mergeBtn.className = 'calendar-add-btn';
+        mergeBtn.textContent = '統合';
+        mergeBtn.addEventListener('click', () => {
+            const targetId = mergeSelect.value;
+            if (!targetId) { alert('統合先のプロジェクトを選択してください'); return; }
+            if (!confirm(`「${row['タイトル']}」を「${mergeSelect.options[mergeSelect.selectedIndex].textContent}」へ統合します。よろしいですか？`)) return;
+            mergeProject2Into(id, targetId);
+        });
+        tdMerge.append(mergeSelect, mergeBtn);
+        tr.appendChild(tdMerge);
+
+        // 削除
+        const tdDelete = document.createElement('td');
+        if (project2AdminDeletePending === id) {
+            const childCount = getChildrenM(currentMainData, id).length;
+            if (childCount > 0) {
+                const reassignSelect = document.createElement('select');
+                const unassignOpt = document.createElement('option');
+                unassignOpt.value = '';
+                unassignOpt.textContent = '（未割り当てにする）';
+                reassignSelect.appendChild(unassignOpt);
+                projects.filter(p => String(p['ID']) !== id).forEach(p => {
+                    const opt = document.createElement('option');
+                    opt.value = String(p['ID']);
+                    opt.textContent = p['タイトル'] || '';
+                    reassignSelect.appendChild(opt);
+                });
+                const execBtn = document.createElement('button');
+                execBtn.type = 'button';
+                execBtn.className = 'calendar-danger-btn';
+                execBtn.textContent = '削除実行';
+                execBtn.addEventListener('click', () => {
+                    deleteProject2(id, reassignSelect.value || null);
+                });
+                const cancelBtn = document.createElement('button');
+                cancelBtn.type = 'button';
+                cancelBtn.className = 'calendar-add-btn';
+                cancelBtn.textContent = 'キャンセル';
+                cancelBtn.addEventListener('click', () => {
+                    project2AdminDeletePending = null;
+                    renderProjectAdmin2();
+                });
+                tdDelete.append(reassignSelect, execBtn, cancelBtn);
+            } else {
+                const execBtn = document.createElement('button');
+                execBtn.type = 'button';
+                execBtn.className = 'calendar-danger-btn';
+                execBtn.textContent = '削除実行';
+                execBtn.addEventListener('click', () => deleteProject2(id, null));
+                const cancelBtn = document.createElement('button');
+                cancelBtn.type = 'button';
+                cancelBtn.className = 'calendar-add-btn';
+                cancelBtn.textContent = 'キャンセル';
+                cancelBtn.addEventListener('click', () => {
+                    project2AdminDeletePending = null;
+                    renderProjectAdmin2();
+                });
+                tdDelete.append(execBtn, cancelBtn);
+            }
+        } else {
+            const deleteBtn = document.createElement('button');
+            deleteBtn.type = 'button';
+            deleteBtn.className = 'calendar-danger-btn';
+            deleteBtn.textContent = '削除';
+            deleteBtn.addEventListener('click', () => {
+                project2AdminDeletePending = id;
+                renderProjectAdmin2();
+            });
+            tdDelete.appendChild(deleteBtn);
+        }
+        tr.appendChild(tdDelete);
+
         tbody.appendChild(tr);
     });
 
     table.replaceChildren(thead, tbody);
 }
 
-/** 選択中プロジェクトの配下（子）タスク／ナレッジ一覧を描画する。行クリックで編集対象を切り替える。 */
-function renderProject2BrowserChildTable() {
+/** sourceId のプロジェクトを targetId へ統合する。sourceの直接の子は全てtargetの子へ付け替え、source自身もtargetの子（通常タスク）に降格する。 */
+function mergeProject2Into(sourceId, targetId) {
+    if (wouldCreateCycleM(currentMainData, sourceId, targetId)) {
+        alert('この統合は循環参照になるため実行できません。');
+        return;
+    }
+    const ts = formatJpDatetime(new Date());
+    getChildrenM(currentMainData, sourceId).forEach(child => {
+        child['親ID']   = targetId;
+        child['更新日時'] = ts;
+    });
+    const sourceRow = currentMainData.find(r => String(r['ID']) === sourceId);
+    if (sourceRow) {
+        sourceRow['親ID']   = targetId;
+        sourceRow['更新日時'] = ts;
+    }
+    persistLocalCache();
+    project2EditPath = [];
+    renderProjectAdmin2();
+}
+
+/** projectId のプロジェクトを削除する。reassignToId指定時は直接の子をそちらへ付け替え、未指定時は子の親IDを空欄化（単独タスク化）してから削除する。 */
+function deleteProject2(projectId, reassignToId) {
+    const ts = formatJpDatetime(new Date());
+    getChildrenM(currentMainData, projectId).forEach(child => {
+        child['親ID']   = reassignToId || '';
+        child['更新日時'] = ts;
+    });
+    currentMainData = currentMainData.filter(r => String(r['ID']) !== projectId);
+    persistLocalCache();
+
+    project2AdminDeletePending = null;
+    project2EditPath = [];
+    renderProjectAdmin2();
+}
+
+const PROJECT2_STANDALONE_MARK = '__standalone__'; // 階層1の「（単独タスク）」選択肢の特殊値
+
+/** 汎用の階層プルダウン1段を container に追加する（ラベル・選択肢・現在値・changeハンドラを指定）。 */
+function appendProject2DropdownRow(container, labelText, options, currentValue, onChange, extraOptionLabel) {
+    const row = document.createElement('div');
+    row.className = 'calendar-edit-row';
+    const label = document.createElement('label');
+    label.textContent = labelText;
+    const select = document.createElement('select');
+    const blankOpt = document.createElement('option');
+    blankOpt.value = '';
+    blankOpt.textContent = '（未選択）';
+    select.appendChild(blankOpt);
+    if (extraOptionLabel) {
+        const extraOpt = document.createElement('option');
+        extraOpt.value = PROJECT2_STANDALONE_MARK;
+        extraOpt.textContent = extraOptionLabel;
+        select.appendChild(extraOpt);
+    }
+    options.forEach(r => {
+        const opt = document.createElement('option');
+        opt.value = String(r['ID']);
+        opt.textContent = r['タイトル'] || '';
+        select.appendChild(opt);
+    });
+    select.value = currentValue || '';
+    select.addEventListener('change', () => onChange(select.value));
+    row.append(label, select);
+    container.appendChild(row);
+}
+
+/** 「プロジェクト編集」左側の階層プルダウン（必要な階層数だけ）を描画する。選択変更のたびにpathを再構築して再描画する。 */
+function renderProject2EditDropdowns() {
+    const container = document.getElementById('project2-edit-dropdowns');
+    if (!container) return;
+    container.innerHTML = '';
+
+    const projectRows = getProject2ParentRows();
+    const projectIds  = new Set(projectRows.map(r => String(r['ID'])));
+    const rootId = project2EditPath[0] || null;
+    const rootIsStandalone = !!rootId && !projectIds.has(rootId);
+
+    // 階層1: 既存プロジェクト一覧 ＋「（単独タスク）」
+    appendProject2DropdownRow(
+        container, '階層1', projectRows,
+        rootIsStandalone ? PROJECT2_STANDALONE_MARK : (rootId || ''),
+        value => {
+            if (value === PROJECT2_STANDALONE_MARK) {
+                project2EditPath = [];
+                project2Level0Mode = 'standalone';
+            } else {
+                project2EditPath = value ? buildProject2PathFromId(value) : [];
+                project2Level0Mode = '';
+            }
+            renderProjectAdmin2();
+        },
+        '（単独タスク）'
+    );
+
+    if (rootIsStandalone || (!rootId && project2Level0Mode === 'standalone')) {
+        // 階層2: 単独タスク一覧
+        appendProject2DropdownRow(
+            container, '階層2', getProject2StandaloneTaskRows(), rootId || '',
+            value => {
+                project2EditPath = value ? buildProject2PathFromId(value) : [];
+                project2Level0Mode = 'standalone';
+                renderProjectAdmin2();
+            }
+        );
+        return; // 単独タスクは子を持たないため、これ以上下の階層は無い
+    }
+
+    if (!rootId) return; // 何も選択されていなければここで終了
+
+    // 階層2以降: 選択中の行の子を辿っていく
+    let level = 1;
+    let options = getChildrenM(currentMainData, rootId);
+    while (options.length > 0) {
+        const currentValue = project2EditPath[level] || '';
+        appendProject2DropdownRow(container, `階層${level + 1}`, options, currentValue, value => {
+            project2EditPath = value ? buildProject2PathFromId(value) : project2EditPath.slice(0, level);
+            renderProjectAdmin2();
+        });
+        if (!project2EditPath[level]) break;
+        options = getChildrenM(currentMainData, project2EditPath[level]);
+        level++;
+    }
+}
+
+/** 「下階層の一覧」を描画する。何も選択されていなければ最上位プロジェクト一覧（単独タスクモード時は単独タスク一覧）、選択中なら現在選択中の行の直接の子一覧を表示する。行クリックでその行を選択する。 */
+function renderProject2EditChildList() {
     const table = document.getElementById('project2-browser-child-table');
     if (!table) return;
 
-    if (!selectedProject2ParentId) { table.replaceChildren(); return; }
-    const children = getChildrenM(currentMainData, selectedProject2ParentId);
+    const selectedId = project2EditPath[project2EditPath.length - 1] || null;
+    let rows;
+    if (selectedId) {
+        rows = getChildrenM(currentMainData, selectedId);
+    } else if (project2Level0Mode === 'standalone') {
+        rows = getProject2StandaloneTaskRows();
+    } else {
+        rows = getProject2ParentRows();
+    }
     table.className = 'data-table';
-    const cols = ['ID', 'データ区分', 'タイトル', 'ステータス', '開始予定', '終了予定', '完了日'];
+    const cols = ['タイトル', 'データ区分', 'ステータス'];
 
     const thead = document.createElement('thead');
     const hRow  = document.createElement('tr');
@@ -5764,13 +5621,26 @@ function renderProject2BrowserChildTable() {
     thead.appendChild(hRow);
 
     const tbody = document.createElement('tbody');
-    children.forEach(row => {
+    if (rows.length === 0) {
         const tr = document.createElement('tr');
-        if (String(row['ID']) === selectedProject2ChildId) tr.classList.add('selected-row');
-        cols.forEach(col => { const td = document.createElement('td'); td.textContent = row[col] ?? ''; tr.appendChild(td); });
-        tr.addEventListener('click', () => { selectedProject2ChildId = String(row['ID']); renderProjectAdmin2(); });
+        const td = document.createElement('td');
+        td.colSpan     = cols.length;
+        td.className   = 'empty-cell';
+        td.textContent = '該当するものがありません';
+        tr.appendChild(td);
         tbody.appendChild(tr);
-    });
+    } else {
+        rows.forEach(row => {
+            const tr = document.createElement('tr');
+            if (String(row['ID']) === selectedId) tr.classList.add('selected-row');
+            cols.forEach(col => { const td = document.createElement('td'); td.textContent = row[col] ?? ''; tr.appendChild(td); });
+            tr.addEventListener('click', () => {
+                project2EditPath = buildProject2PathFromId(row['ID']);
+                renderProjectAdmin2();
+            });
+            tbody.appendChild(tr);
+        });
+    }
 
     table.replaceChildren(thead, tbody);
 }
@@ -5785,7 +5655,7 @@ function populateProject2StatusSelect() {
     rebuildSelectById('projtask2-status', statuses);
 }
 
-/** 新規登録モード（未選択）の際、編集フォームを既定値へリセットする。親IDは選択中プロジェクトを自動セットする。 */
+/** 新規登録モード（何も選択されていない）の際、編集フォームを既定値へリセットする。親IDは空欄（最上位）にする。 */
 function clearProject2TaskEditForm() {
     ['projtask2-id', 'projtask2-title', 'projtask2-content', 'projtask2-biko'].forEach(id => {
         const el = document.getElementById(id);
@@ -5804,14 +5674,14 @@ function clearProject2TaskEditForm() {
     });
     document.getElementById('projtask2-estimate').value = '';
     document.getElementById('projtask2-actual').value   = '';
-
-    const parentRow = currentMainData.find(r => String(r['ID']) === selectedProject2ParentId);
-    document.getElementById('projtask2-parent-search').value = parentRow ? `#${parentRow['ID']} ${parentRow['タイトル'] || ''}` : '';
-    document.getElementById('projtask2-parent-id').value     = parentRow ? parentRow['ID'] : '';
+    document.getElementById('projtask2-parent-search').value = '';
+    document.getElementById('projtask2-parent-id').value     = '';
 }
 
-/** 選択中の子行（または新規登録モード）の編集フォームを描画する。 */
+/** 現在選択中の行（左のプルダウン／一覧で選んだ行）の編集フォームを描画する。何も選択されていなければ新規登録モード。 */
 function renderProject2TaskEdit() {
+    const selectedId = project2EditPath[project2EditPath.length - 1] || null;
+
     rebuildSelectById('projtask2-kubun', ['タスク', 'ナレッジ']);
     const kubunEl = document.getElementById('projtask2-kubun');
     if (kubunEl && !kubunEl.dataset.listenerAttached) {
@@ -5821,10 +5691,10 @@ function renderProject2TaskEdit() {
     rebuildSelectById('projtask2-priority', [...new Set(currentMasterData.map(r => r['(M)優先度']).filter(Boolean))]);
     rebuildSelectById('projtask2-category', [...new Set(currentMasterData.map(r => r['(M)カテゴリ']).filter(Boolean))]);
     rebuildSelectById('projtask2-tag',      getFilteredTags());
-    renderParentDatalist('projtask2', selectedProject2ChildId);
+    renderParentDatalist('projtask2', selectedId);
     populateProject2StatusSelect();
 
-    const row = currentMainData.find(r => String(r['ID']) === selectedProject2ChildId);
+    const row = currentMainData.find(r => String(r['ID']) === selectedId);
     if (!row) {
         clearProject2TaskEditForm();
         return;
@@ -5845,22 +5715,137 @@ function renderProject2TaskEdit() {
     writeTaskEstimateActualToForm('projtask2', row);
 }
 
-/** 「新プロジェクト」タブ全体（一覧・子一覧・編集フォーム）を再描画する。 */
+/** 「新プロジェクト」タブ全体（管理表・階層プルダウン・子一覧・編集フォーム）を再描画する。 */
 function renderProjectAdmin2() {
-    renderProject2BrowserList();
-    renderProject2BrowserChildTable();
+    renderProject2AdminTable();
+    renderProject2EditDropdowns();
+    renderProject2EditChildList();
+    renderProject2SiblingMoveSection();
     renderProject2TaskEdit();
 }
 
+/**
+ * 選択中の行と同じ親を持つ他の行（兄弟）を、選択中の行自身を除いて返す。
+ * 選択中の行が最上位プロジェクトなら他の最上位プロジェクトを、単独タスクなら他の単独タスクを兄弟として扱う。
+ */
+function getProject2SiblingRows() {
+    const selectedId = project2EditPath[project2EditPath.length - 1] || null;
+    if (!selectedId) return [];
+    const row = currentMainData.find(r => String(r['ID']) === selectedId);
+    if (!row) return [];
+    const parentId = row['親ID'] || '';
+    let siblings;
+    if (parentId) {
+        siblings = getChildrenM(currentMainData, parentId);
+    } else {
+        siblings = isParentRowM(currentMainData, selectedId) ? getProject2ParentRows() : getProject2StandaloneTaskRows();
+    }
+    return siblings.filter(r => String(r['ID']) !== selectedId);
+}
+
+/** チェックボックス付きの兄弟行一覧テーブルを描画する。何も選択されていなければ空欄で「行を選択してください」を表示する。 */
+function renderProject2SiblingMoveSection() {
+    const table = document.getElementById('project2-sibling-table');
+    if (!table) return;
+
+    const selectedId = project2EditPath[project2EditPath.length - 1] || null;
+    if (selectedId !== project2SiblingSelectionForId) {
+        project2SiblingSelectedIds.clear();
+        project2SiblingSelectionForId = selectedId;
+    }
+    const rows = getProject2SiblingRows();
+    table.className = 'data-table';
+    const cols = ['タイトル', 'データ区分', 'ステータス'];
+
+    const thead   = document.createElement('thead');
+    const hRow    = document.createElement('tr');
+    const thCheck = document.createElement('th');
+    thCheck.style.width = '36px';
+    const checkAll = document.createElement('input');
+    checkAll.type  = 'checkbox';
+    checkAll.title = '表示中を全選択';
+    checkAll.checked = rows.length > 0 && rows.every(r => project2SiblingSelectedIds.has(String(r['ID'])));
+    checkAll.addEventListener('change', e => {
+        rows.forEach(r => {
+            const id = String(r['ID']);
+            if (e.target.checked) project2SiblingSelectedIds.add(id); else project2SiblingSelectedIds.delete(id);
+        });
+        renderProject2SiblingMoveSection();
+    });
+    thCheck.appendChild(checkAll);
+    hRow.appendChild(thCheck);
+    cols.forEach(col => { const th = document.createElement('th'); th.textContent = col; hRow.appendChild(th); });
+    thead.appendChild(hRow);
+
+    const tbody = document.createElement('tbody');
+    if (!selectedId) {
+        // 何も選択されていない場合は空欄のまま（案内文言は表示しない）
+    } else if (rows.length === 0) {
+        const tr = document.createElement('tr');
+        const td = document.createElement('td');
+        td.colSpan     = cols.length + 1;
+        td.className   = 'empty-cell';
+        td.textContent = '兄弟にあたる行がありません';
+        tr.appendChild(td);
+        tbody.appendChild(tr);
+    } else {
+        rows.forEach(row => {
+            const id = String(row['ID']);
+            const tr = document.createElement('tr');
+            if (project2SiblingSelectedIds.has(id)) tr.classList.add('selected-row');
+
+            const tdCheck = document.createElement('td');
+            tdCheck.style.textAlign = 'center';
+            const cb = document.createElement('input');
+            cb.type    = 'checkbox';
+            cb.checked = project2SiblingSelectedIds.has(id);
+            cb.addEventListener('change', () => {
+                if (cb.checked) { project2SiblingSelectedIds.add(id);    tr.classList.add('selected-row'); }
+                else            { project2SiblingSelectedIds.delete(id); tr.classList.remove('selected-row'); }
+            });
+            tdCheck.appendChild(cb);
+            tr.appendChild(tdCheck);
+
+            cols.forEach(col => { const td = document.createElement('td'); td.textContent = row[col] ?? ''; tr.appendChild(td); });
+            tbody.appendChild(tr);
+        });
+    }
+
+    table.replaceChildren(thead, tbody);
+}
+
+/** 「選択した兄弟をこの下へ移動」ボタン: チェック済みの全行の親IDへ、現在選択中の行のIDをまとめて設定する。 */
+document.getElementById('project2-sibling-move-btn')?.addEventListener('click', () => {
+    const selectedId = project2EditPath[project2EditPath.length - 1] || null;
+    if (!selectedId) { alert('先に移動先となる行を選択してください'); return; }
+    if (project2SiblingSelectedIds.size === 0) { alert('移動する行を選択してください'); return; }
+
+    for (const id of project2SiblingSelectedIds) {
+        if (!checkParentCycleOrAlert(id, selectedId)) return;
+    }
+
+    const ts = formatJpDatetime(new Date());
+    project2SiblingSelectedIds.forEach(id => {
+        const row = currentMainData.find(r => String(r['ID']) === id);
+        if (row) { row['親ID'] = selectedId; row['更新日時'] = ts; }
+    });
+    persistLocalCache();
+
+    const count = project2SiblingSelectedIds.size;
+    project2SiblingSelectedIds.clear();
+    renderProjectAdmin2();
+    alert(`${count} 件を選択中の行の子として移動しました。`);
+});
+
 wireParentSearchInput('projtask2');
 
-/** 「新規（選択中の親の子として追加）」ボタン: フォームの現在値で新規行を追加する。 */
+/** 「新規（選択中の行の子として追加）」ボタン: フォームの現在値で、左側で現在選択中の行の子として新規行を追加する。 */
 document.getElementById('projtask2-new-btn')?.addEventListener('click', () => {
     const title = document.getElementById('projtask2-title').value.trim();
     if (!title) { alert('タイトルを入力してください'); return; }
 
     const kubun    = document.getElementById('projtask2-kubun').value || 'タスク';
-    const parentId = document.getElementById('projtask2-parent-id').value || '';
+    const parentId = project2EditPath[project2EditPath.length - 1] || ''; // 左側で現在選択中の行の子として追加する
     if (!checkParentCycleOrAlert(null, parentId)) return;
 
     const maxId = currentMainData.reduce((max, row) => {
@@ -5888,15 +5873,15 @@ document.getElementById('projtask2-new-btn')?.addEventListener('click', () => {
     currentMainData.push(entry);
     persistLocalCache();
 
-    if (parentId) selectedProject2ParentId = parentId;
-    selectedProject2ChildId = entry['ID'];
+    project2EditPath = buildProject2PathFromId(entry['ID']); // 作成した子へドリルダウンし、続けて編集できるようにする
     renderProjectAdmin2();
 });
 
-/** 「適用」ボタン: 選択中の子行へフォーム内容を書き戻す。親IDは循環参照チェックを通過した場合のみ保存する。 */
+/** 「適用」ボタン: 現在選択中の行へフォーム内容を書き戻す。親IDは循環参照チェックを通過した場合のみ保存する。 */
 document.getElementById('projtask2-apply-btn')?.addEventListener('click', () => {
-    if (!selectedProject2ChildId) return;
-    const row = currentMainData.find(r => String(r['ID']) === selectedProject2ChildId);
+    const selectedId = project2EditPath[project2EditPath.length - 1] || null;
+    if (!selectedId) return;
+    const row = currentMainData.find(r => String(r['ID']) === selectedId);
     if (!row) return;
 
     const parentId = document.getElementById('projtask2-parent-id').value || '';
@@ -5916,20 +5901,114 @@ document.getElementById('projtask2-apply-btn')?.addEventListener('click', () => 
     row['更新日時'] = formatJpDatetime(new Date());
 
     persistLocalCache();
-    if (parentId) selectedProject2ParentId = parentId;
+    project2EditPath = buildProject2PathFromId(row['ID']); // 親IDを変更した場合に備え、実データを基準にpathを再構築する
     renderProjectAdmin2();
 });
 
-/** 「削除」ボタン: 選択中の子行を削除する。この行を親IDとして参照していた行は親ID欄を空欄化する。 */
+/** 「削除」ボタン: 現在選択中の行を削除する。この行を親IDとして参照していた行は親ID欄を空欄化する。削除後は1階層上へ戻る。 */
 document.getElementById('projtask2-delete-btn')?.addEventListener('click', () => {
-    if (!selectedProject2ChildId) return;
+    const selectedId = project2EditPath[project2EditPath.length - 1] || null;
+    if (!selectedId) return;
     if (!confirm('この行を削除しますか？')) return;
 
-    currentMainData.forEach(r => { if (String(r['親ID'] || '') === selectedProject2ChildId) r['親ID'] = ''; });
-    currentMainData = currentMainData.filter(r => String(r['ID']) !== selectedProject2ChildId);
+    currentMainData.forEach(r => { if (String(r['親ID'] || '') === selectedId) r['親ID'] = ''; });
+    currentMainData = currentMainData.filter(r => String(r['ID']) !== selectedId);
     persistLocalCache();
 
-    selectedProject2ChildId = null;
+    project2EditPath = project2EditPath.slice(0, -1);
+    renderProjectAdmin2();
+});
+
+/**
+ * 「上階層を挿入」ボタン: 選択中の行の現在の親を引き継いだ新しい行を作成し、
+ * 選択中の行の親をその新しい行へ付け替える（階層を1段挿入する）。
+ * 例: 「1」の子「2」を選択中に実行すると、「1」の子として新規行「2'」ができ、「2」は「2'」の子（実質「3」階層）になる。
+ */
+document.getElementById('projtask2-insert-parent-btn')?.addEventListener('click', () => {
+    const selectedId = project2EditPath[project2EditPath.length - 1] || null;
+    if (!selectedId) { alert('挿入対象の行を選択してください'); return; }
+
+    const name = (prompt('新しい階層のタイトルを入力してください') || '').trim();
+    if (!name) return;
+
+    const selectedRow = currentMainData.find(r => String(r['ID']) === selectedId);
+    if (!selectedRow) return;
+    const originalParentId = selectedRow['親ID'] || '';
+
+    const maxId = currentMainData.reduce((max, row) => {
+        const id = parseInt(row['ID'], 10);
+        return isNaN(id) ? max : Math.max(max, id);
+    }, 0);
+    const ts = formatJpDatetime(new Date());
+
+    const newRow = Object.fromEntries(MAIN_DATA_COLUMNS.map(col => [col, '']));
+    newRow['ID']        = String(maxId + 1);
+    newRow['データ区分'] = 'タスク';
+    newRow['タイトル']   = name;
+    newRow['カテゴリ']   = selectedRow['カテゴリ'] || '';
+    newRow['ステータス'] = '未着手';
+    newRow['優先度']     = '中';
+    newRow['親ID']       = originalParentId;
+    newRow['作成日時']   = ts;
+    newRow['更新日時']   = ts;
+
+    currentMainData.push(newRow);
+    selectedRow['親ID']     = newRow['ID'];
+    selectedRow['更新日時'] = ts;
+    persistLocalCache();
+
+    project2EditPath = buildProject2PathFromId(selectedRow['ID']);
+    renderProjectAdmin2();
+});
+
+/**
+ * 「新規プロジェクト登録」ボタン: 現在フォームに入力されている内容で新規プロジェクト（親ID空欄のタスク）を作成する。
+ * 空のプロジェクトは階層1の一覧に出てこない（子が無いと「プロジェクト」として認識されないため）ので、
+ * 同時に子タスクを1件自動生成して紐づけ、作成直後から一覧に表示・編集できるようにする。
+ */
+document.getElementById('projtask2-new-project-btn')?.addEventListener('click', () => {
+    const title = document.getElementById('projtask2-title').value.trim();
+    if (!title) { alert('タイトルを入力してください'); return; }
+
+    const maxId = currentMainData.reduce((max, row) => {
+        const id = parseInt(row['ID'], 10);
+        return isNaN(id) ? max : Math.max(max, id);
+    }, 0);
+    const ts = formatJpDatetime(new Date());
+
+    const category = document.getElementById('projtask2-category').value;
+
+    const project = Object.fromEntries(MAIN_DATA_COLUMNS.map(col => [col, '']));
+    project['ID']        = String(maxId + 1);
+    project['データ区分'] = 'タスク'; // プロジェクト（親）になれるのはタスクのみ
+    project['タイトル']   = title;
+    project['内容']       = document.getElementById('projtask2-content').value.trim();
+    project['備考']       = document.getElementById('projtask2-biko').value.trim();
+    project['ステータス'] = document.getElementById('projtask2-status').value;
+    project['優先度']     = document.getElementById('projtask2-priority').value;
+    project['見積時間']   = document.getElementById('projtask2-estimate').value;
+    project['カテゴリ']   = category;
+    project['タグ']       = document.getElementById('projtask2-tag').value;
+    project['親ID']       = ''; // 新規プロジェクトは常に最上位（ルート）
+    Object.assign(project, readTaskDateTimeFieldsFromForm('projtask2'));
+    project['作成日時']   = ts;
+    project['更新日時']   = ts;
+
+    const child = Object.fromEntries(MAIN_DATA_COLUMNS.map(col => [col, '']));
+    child['ID']        = String(maxId + 2);
+    child['データ区分'] = 'タスク';
+    child['タイトル']   = '新規タスク';
+    child['ステータス'] = '未着手';
+    child['優先度']     = '中';
+    child['カテゴリ']   = category;
+    child['親ID']       = project['ID'];
+    child['作成日時']   = ts;
+    child['更新日時']   = ts;
+
+    currentMainData.push(project, child);
+    persistLocalCache();
+
+    project2EditPath = buildProject2PathFromId(project['ID']);
     renderProjectAdmin2();
 });
 

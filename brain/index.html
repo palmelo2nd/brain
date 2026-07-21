@@ -571,14 +571,13 @@
             <div class="taskorg-view-toggle summary-main-tabs">
                 <button type="button" id="summary-tab-taskorg" class="taskorg-view-btn taskorg-view-btn--active" data-view="taskorg">旧タスク整理</button>
                 <button type="button" id="summary-tab-taskorg2" class="taskorg-view-btn" data-view="taskorg2">新タスク整理</button>
-                <button type="button" id="summary-tab-recurring" class="taskorg-view-btn" data-view="recurring">繰返し</button>
+                <button type="button" id="summary-tab-recurring" class="taskorg-view-btn" data-view="recurring">旧繰返し</button>
                 <button type="button" id="summary-tab-runner" class="taskorg-view-btn" data-view="runner">タスク実行</button>
                 <button type="button" id="summary-tab-top" class="taskorg-view-btn" data-view="top">INBOX</button>
                 <button type="button" id="summary-tab-edit" class="taskorg-view-btn" data-view="edit">旧編集</button>
                 <button type="button" id="summary-tab-edit2" class="taskorg-view-btn" data-view="edit2">新編集</button>
                 <button type="button" id="summary-tab-knowledge" class="taskorg-view-btn" data-view="knowledge">ナレッジ</button>
-                <button type="button" id="summary-tab-project" class="taskorg-view-btn" data-view="project">旧プロジェクト</button>
-                <button type="button" id="summary-tab-project2" class="taskorg-view-btn" data-view="project2">新プロジェクト</button>
+                <button type="button" id="summary-tab-project2" class="taskorg-view-btn" data-view="project2">プロジェクト</button>
                 <button type="button" id="summary-tab-data" class="taskorg-view-btn" data-view="data">データ</button>
                 <button type="button" id="summary-tab-work" class="taskorg-view-btn" data-view="work">勤務</button>
             </div>
@@ -631,11 +630,6 @@
             </div>
 
             <!-- プロジェクト（表示切り替え時に本体を移動して表示） -->
-            <div id="summary-view-project" class="summary-view-panel" style="display:none">
-                <div id="project-anchor-summary"></div>
-            </div>
-
-            <!-- 新プロジェクト（表示切り替え時に本体を移動して表示） -->
             <div id="summary-view-project2" class="summary-view-panel" style="display:none">
                 <div id="project2-anchor-summary"></div>
             </div>
@@ -910,206 +904,123 @@
             </div>
         </div>
 
-        <!-- プロジェクト管理（プロジェクト一覧→タスク一覧→タスク編集、新規追加、名前変更・削除・統合、Summaryページ「プロジェクト」タブに表示） -->
-        <div id="project-anchor-home" style="display:none">
-            <div id="project-group">
-                <details class="expander" open>
-                    <summary class="expander-title" id="summary-project-admin">プロジェクト管理</summary>
-
-                    <!-- 新規追加 -->
-                    <p class="calendar-section-label">プロジェクトの新規追加</p>
-                    <div class="calendar-edit-row">
-                        <label>新規追加</label>
-                        <input type="text" id="project-admin-new-name" placeholder="新しいプロジェクト名">
-                        <select id="project-admin-new-category" style="display:none"></select>
-                        <button id="project-admin-new-btn" class="triage-btn">追加</button>
-                    </div>
-
-                    <!-- プロジェクト一覧（使用件数・状態・名前変更・統合・削除を統合、選択したプロジェクトのタスク一覧を下に表示） -->
-                    <p class="calendar-section-label calendar-section-label--sub">プロジェクト一覧</p>
-                    <p class="calendar-dayplan-hint">名前変更・統合は既存タスク／ナレッジの「プロジェクト」を一括で書き換えます。削除は使用中の場合、別のプロジェクトへの再割り当て、または未割り当てにしてから削除できます。</p>
-                    <div class="table-wrapper table-wrapper--limited">
-                        <table id="project-browser-table"></table>
-                    </div>
-                    <p class="calendar-section-label calendar-section-label--sub">選択中のプロジェクトのタスク</p>
-                    <div class="table-wrapper table-wrapper--limited">
-                        <table id="project-browser-task-table"></table>
-                    </div>
-
-                    <!-- タスク編集（一覧から選択、または新規登録） -->
-                    <div id="project-task-edit" class="calendar-task-edit">
-                        <p class="calendar-section-label calendar-section-label--sub">タスク編集</p>
-                        <div class="calendar-edit-row">
-                            <label>ID</label>
-                            <input type="text" id="projtask-id" readonly placeholder="（新規登録時は未採番）">
-                        </div>
-                        <div class="calendar-edit-row">
-                            <label>タイトル</label>
-                            <input type="text" id="projtask-title">
-                        </div>
-                        <div class="calendar-edit-row calendar-edit-row--top">
-                            <label>内容</label>
-                            <textarea id="projtask-content" class="calendar-edit-textarea" rows="4"></textarea>
-                        </div>
-                        <div class="calendar-edit-row">
-                            <label>備考</label>
-                            <input type="text" id="projtask-biko">
-                        </div>
-                        <div class="calendar-edit-row">
-                            <label>ステータス</label>
-                            <select id="projtask-status"></select>
-                        </div>
-                        <div class="calendar-edit-row">
-                            <label>優先度</label>
-                            <select id="projtask-priority"></select>
-                        </div>
-                        <div class="calendar-edit-row">
-                            <label>見積時間（分）</label>
-                            <input type="number" id="projtask-estimate" min="0" step="1" placeholder="（省略可）">
-                        </div>
-                        <div class="calendar-edit-row">
-                            <label>実績時間（h）</label>
-                            <input type="text" id="projtask-actual" readonly>
-                        </div>
-                        <div class="calendar-edit-row">
-                            <label>開始予定</label>
-                            <input type="date" id="projtask-start-date">
-                            <input type="number" id="projtask-start-hour" class="calendar-time-num" min="0" max="23" placeholder="時">
-                            <span>:</span>
-                            <input type="number" id="projtask-start-minute" class="calendar-time-num" min="0" max="59" step="15" placeholder="分">
-                        </div>
-                        <div class="calendar-edit-row">
-                            <label>終了予定</label>
-                            <input type="date" id="projtask-end-date">
-                            <input type="number" id="projtask-end-hour" class="calendar-time-num" min="0" max="23" placeholder="時">
-                            <span>:</span>
-                            <input type="number" id="projtask-end-minute" class="calendar-time-num" min="0" max="59" step="15" placeholder="分">
-                        </div>
-                        <div class="calendar-edit-row">
-                            <label>完了日</label>
-                            <input type="date" id="projtask-complete-date">
-                        </div>
-                        <div class="calendar-edit-row">
-                            <label>カテゴリ</label>
-                            <select id="projtask-category"></select>
-                        </div>
-                        <div class="calendar-edit-row">
-                            <label>タグ</label>
-                            <select id="projtask-tag"></select>
-                        </div>
-                        <div class="calendar-edit-row">
-                            <label>プロジェクト</label>
-                            <select id="projtask-project"></select>
-                        </div>
-                        <div class="calendar-edit-toolbar">
-                            <button id="projtask-new-btn" class="calendar-add-btn">新規</button>
-                            <button id="projtask-apply-btn">適用</button>
-                            <button id="projtask-delete-btn" class="calendar-danger-btn">削除</button>
-                        </div>
-                    </div>
-
-                </details>
-            </div>
-        </div>
-
-        <!-- 新プロジェクト（親子ブラウザ形式、Summaryページ「新プロジェクト」タブに表示） -->
+        <!-- プロジェクト（親子ブラウザ形式・親ID方式、Summaryページ「プロジェクト」タブに表示） -->
         <div id="project2-anchor-home" style="display:none">
             <div id="project2-group">
+
+                <!-- プロジェクト編集（デフォルトで開く） -->
                 <details class="expander" open>
-                    <summary class="expander-title" id="summary-project2-admin">プロジェクト（親子ブラウザ）</summary>
+                    <summary class="expander-title" id="summary-project2-admin">プロジェクト編集</summary>
 
-                    <!-- 親（子を持つ行）一覧 -->
-                    <p class="calendar-section-label">プロジェクト（子を持つ行）一覧</p>
-                    <p class="calendar-dayplan-hint">他の行から親IDとして参照されている行（タスク／ナレッジ問わず）を一覧表示しています。</p>
+                    <p class="calendar-section-label">プロジェクト管理</p>
                     <div class="table-wrapper table-wrapper--limited">
-                        <table id="project2-browser-table"></table>
+                        <table id="project2-admin-table"></table>
                     </div>
 
-                    <!-- 選択中の親の配下（子）一覧 -->
-                    <p class="calendar-section-label calendar-section-label--sub">選択中プロジェクトの配下タスク／ナレッジ</p>
-                    <div class="table-wrapper table-wrapper--limited">
-                        <table id="project2-browser-child-table"></table>
-                    </div>
+                    <div class="calendar-day-section">
+                        <!-- 左: 階層プルダウン（必要な階層数だけ表示）＋ 下階層の一覧 -->
+                        <div class="calendar-timeline-col">
+                            <div id="project2-edit-dropdowns"></div>
 
-                    <!-- 子（または新規行）の編集 -->
-                    <div id="project2-task-edit" class="calendar-task-edit">
-                        <p class="calendar-section-label calendar-section-label--sub">選択行の編集</p>
-                        <div class="calendar-edit-row">
-                            <label>ID</label>
-                            <input type="text" id="projtask2-id" readonly placeholder="（新規登録時は未採番）">
+                            <p class="calendar-section-label calendar-section-label--sub">下階層の一覧</p>
+                            <div class="table-wrapper table-wrapper--limited">
+                                <table id="project2-browser-child-table"></table>
+                            </div>
+
+                            <p class="calendar-section-label calendar-section-label--sub">階層整理</p>
+                            <div class="table-wrapper table-wrapper--limited">
+                                <table id="project2-sibling-table"></table>
+                            </div>
+                            <div class="calendar-edit-toolbar">
+                                <button id="project2-sibling-move-btn" class="calendar-add-btn">階層を移動</button>
+                            </div>
                         </div>
-                        <div class="calendar-edit-row">
-                            <label>データ区分</label>
-                            <select id="projtask2-kubun"></select>
-                        </div>
-                        <div class="calendar-edit-row">
-                            <label>タイトル</label>
-                            <input type="text" id="projtask2-title">
-                        </div>
-                        <div class="calendar-edit-row calendar-edit-row--top">
-                            <label>内容</label>
-                            <textarea id="projtask2-content" class="calendar-edit-textarea" rows="4"></textarea>
-                        </div>
-                        <div class="calendar-edit-row">
-                            <label>備考</label>
-                            <input type="text" id="projtask2-biko">
-                        </div>
-                        <div class="calendar-edit-row">
-                            <label>ステータス</label>
-                            <select id="projtask2-status"></select>
-                        </div>
-                        <div class="calendar-edit-row">
-                            <label>優先度</label>
-                            <select id="projtask2-priority"></select>
-                        </div>
-                        <div class="calendar-edit-row">
-                            <label>見積時間（分）</label>
-                            <input type="number" id="projtask2-estimate" min="0" step="1" placeholder="（省略可）">
-                        </div>
-                        <div class="calendar-edit-row">
-                            <label>実績時間（h）</label>
-                            <input type="text" id="projtask2-actual" readonly>
-                        </div>
-                        <div class="calendar-edit-row">
-                            <label>開始予定</label>
-                            <input type="date" id="projtask2-start-date">
-                            <input type="number" id="projtask2-start-hour" class="calendar-time-num" min="0" max="23" placeholder="時">
-                            <span>:</span>
-                            <input type="number" id="projtask2-start-minute" class="calendar-time-num" min="0" max="59" step="15" placeholder="分">
-                        </div>
-                        <div class="calendar-edit-row">
-                            <label>終了予定</label>
-                            <input type="date" id="projtask2-end-date">
-                            <input type="number" id="projtask2-end-hour" class="calendar-time-num" min="0" max="23" placeholder="時">
-                            <span>:</span>
-                            <input type="number" id="projtask2-end-minute" class="calendar-time-num" min="0" max="59" step="15" placeholder="分">
-                        </div>
-                        <div class="calendar-edit-row">
-                            <label>完了日</label>
-                            <input type="date" id="projtask2-complete-date">
-                        </div>
-                        <div class="calendar-edit-row">
-                            <label>カテゴリ</label>
-                            <select id="projtask2-category"></select>
-                        </div>
-                        <div class="calendar-edit-row">
-                            <label>タグ</label>
-                            <select id="projtask2-tag"></select>
-                        </div>
-                        <div class="calendar-edit-row">
-                            <label>親（プロジェクト）</label>
-                            <input type="text" id="projtask2-parent-search" list="projtask2-parent-list" placeholder="ID・タイトルで検索">
-                            <datalist id="projtask2-parent-list"></datalist>
-                            <input type="hidden" id="projtask2-parent-id">
-                            <button type="button" id="projtask2-parent-clear-btn" class="calendar-add-btn">解除</button>
-                        </div>
-                        <div class="calendar-edit-toolbar">
-                            <button id="projtask2-new-btn" class="calendar-add-btn">新規（選択中の親の子として追加）</button>
-                            <button id="projtask2-apply-btn">適用</button>
-                            <button id="projtask2-delete-btn" class="calendar-danger-btn">削除</button>
+
+                        <!-- 右: 現在選択中の行の属性編集エリアのみ -->
+                        <div class="calendar-edit-col">
+                            <div id="project2-task-edit" class="calendar-task-edit">
+                                <p class="calendar-section-label">編集</p>
+                                <div class="calendar-edit-row">
+                                    <label>ID</label>
+                                    <input type="text" id="projtask2-id" readonly placeholder="（新規登録時は未採番）">
+                                </div>
+                                <div class="calendar-edit-row">
+                                    <label>データ区分</label>
+                                    <select id="projtask2-kubun"></select>
+                                </div>
+                                <div class="calendar-edit-row">
+                                    <label>タイトル</label>
+                                    <input type="text" id="projtask2-title">
+                                </div>
+                                <div class="calendar-edit-row calendar-edit-row--top">
+                                    <label>内容</label>
+                                    <textarea id="projtask2-content" class="calendar-edit-textarea" rows="4"></textarea>
+                                </div>
+                                <div class="calendar-edit-row">
+                                    <label>備考</label>
+                                    <input type="text" id="projtask2-biko">
+                                </div>
+                                <div class="calendar-edit-row">
+                                    <label>ステータス</label>
+                                    <select id="projtask2-status"></select>
+                                </div>
+                                <div class="calendar-edit-row">
+                                    <label>優先度</label>
+                                    <select id="projtask2-priority"></select>
+                                </div>
+                                <div class="calendar-edit-row">
+                                    <label>見積時間（分）</label>
+                                    <input type="number" id="projtask2-estimate" min="0" step="1" placeholder="（省略可）">
+                                </div>
+                                <div class="calendar-edit-row">
+                                    <label>実績時間（h）</label>
+                                    <input type="text" id="projtask2-actual" readonly>
+                                </div>
+                                <div class="calendar-edit-row">
+                                    <label>開始予定</label>
+                                    <input type="date" id="projtask2-start-date">
+                                    <input type="number" id="projtask2-start-hour" class="calendar-time-num" min="0" max="23" placeholder="時">
+                                    <span>:</span>
+                                    <input type="number" id="projtask2-start-minute" class="calendar-time-num" min="0" max="59" step="15" placeholder="分">
+                                </div>
+                                <div class="calendar-edit-row">
+                                    <label>終了予定</label>
+                                    <input type="date" id="projtask2-end-date">
+                                    <input type="number" id="projtask2-end-hour" class="calendar-time-num" min="0" max="23" placeholder="時">
+                                    <span>:</span>
+                                    <input type="number" id="projtask2-end-minute" class="calendar-time-num" min="0" max="59" step="15" placeholder="分">
+                                </div>
+                                <div class="calendar-edit-row">
+                                    <label>完了日</label>
+                                    <input type="date" id="projtask2-complete-date">
+                                </div>
+                                <div class="calendar-edit-row">
+                                    <label>カテゴリ</label>
+                                    <select id="projtask2-category"></select>
+                                </div>
+                                <div class="calendar-edit-row">
+                                    <label>タグ</label>
+                                    <select id="projtask2-tag"></select>
+                                </div>
+                                <div class="calendar-edit-row">
+                                    <label>上階層</label>
+                                    <input type="text" id="projtask2-parent-search" list="projtask2-parent-list" placeholder="ID・タイトルで検索">
+                                    <datalist id="projtask2-parent-list"></datalist>
+                                    <input type="hidden" id="projtask2-parent-id">
+                                    <button type="button" id="projtask2-parent-clear-btn" class="calendar-add-btn">解除</button>
+                                </div>
+                                <div class="calendar-edit-toolbar">
+                                    <button type="button" id="projtask2-insert-parent-btn" class="calendar-add-btn">上階層を挿入</button>
+                                    <button id="projtask2-new-btn" class="calendar-add-btn">下階層に追加</button>
+                                    <button id="projtask2-apply-btn">適用</button>
+                                    <button id="projtask2-delete-btn" class="calendar-danger-btn">削除</button>
+                                </div>
+                                <div class="calendar-edit-toolbar">
+                                    <button type="button" id="projtask2-new-project-btn" class="calendar-add-btn">新規プロジェクト登録</button>
+                                </div>
+                            </div>
                         </div>
                     </div>
-
                 </details>
             </div>
         </div>

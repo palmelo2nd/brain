@@ -634,19 +634,22 @@ details[open] > .expander-title::after { transform: rotate(90deg); }
     font-size: 13px;
 }
 
-/* タスク整理のタグ／プロジェクト／ステータスフィルタを点線で区切る */
-#calendar-filter-area.triage-filter-area {
+/* タスク整理のタグ／プロジェクト／ステータスフィルタを点線で区切る（新タスク整理も同様） */
+#calendar-filter-area.triage-filter-area,
+#calendar2-filter-area.triage-filter-area {
     flex-direction: column;
     align-items: stretch;
 }
 
-#calendar-filter-area .triage-filter-row {
+#calendar-filter-area .triage-filter-row,
+#calendar2-filter-area .triage-filter-row {
     flex-wrap: wrap;
     padding-bottom: 8px;
     border-bottom: 1px dashed #d0d7de;
 }
 
-#calendar-filter-area .triage-filter-row:last-child {
+#calendar-filter-area .triage-filter-row:last-child,
+#calendar2-filter-area .triage-filter-row:last-child {
     border-bottom: none;
     padding-bottom: 0;
 }
