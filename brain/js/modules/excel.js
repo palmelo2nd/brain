@@ -9,6 +9,23 @@ import { MAIN_DATA_COLUMNS, MASTER_DATA_COLUMNS } from './dataModel.js';
  *             データが空でも列ヘッダー行は必ず出力する
  * (4) アウトプット: なし（writeFile がブラウザのダウンロードを直接発火）
  */
+// Excelの1セルあたりの文字数上限（これを超えると書き込み時にエラーになる）
+const EXCEL_CELL_MAX_LENGTH = 32767;
+
+/** 行配列の各セル値のうち、文字列でEXCEL_CELL_MAX_LENGTHを超えるものを切り詰めた複製を返す（元データは変更しない）。 */
+function truncateLongCells(rows) {
+    return rows.map(row => {
+        const copy = { ...row };
+        Object.keys(copy).forEach(key => {
+            const val = copy[key];
+            if (typeof val === 'string' && val.length > EXCEL_CELL_MAX_LENGTH) {
+                copy[key] = val.slice(0, EXCEL_CELL_MAX_LENGTH);
+            }
+        });
+        return copy;
+    });
+}
+
 export function exportToExcel(mainData, masterData) {
     const wb = window.XLSX.utils.book_new();
 
@@ -16,12 +33,15 @@ export function exportToExcel(mainData, masterData) {
     const mainHeader   = [...new Set([...MAIN_DATA_COLUMNS,   ...mainData.flatMap(r => Object.keys(r))])];
     const masterHeader = [...new Set([...MASTER_DATA_COLUMNS, ...masterData.flatMap(r => Object.keys(r))])];
 
-    const wsMain = mainData.length > 0
-        ? window.XLSX.utils.json_to_sheet(mainData,   { header: mainHeader })
+    const mainDataSafe   = truncateLongCells(mainData);
+    const masterDataSafe = truncateLongCells(masterData);
+
+    const wsMain = mainDataSafe.length > 0
+        ? window.XLSX.utils.json_to_sheet(mainDataSafe,   { header: mainHeader })
         : window.XLSX.utils.aoa_to_sheet([mainHeader]);
 
-    const wsMaster = masterData.length > 0
-        ? window.XLSX.utils.json_to_sheet(masterData, { header: masterHeader })
+    const wsMaster = masterDataSafe.length > 0
+        ? window.XLSX.utils.json_to_sheet(masterDataSafe, { header: masterHeader })
         : window.XLSX.utils.aoa_to_sheet([masterHeader]);
 
     window.XLSX.utils.book_append_sheet(wb, wsMain,   'メインデータ');
