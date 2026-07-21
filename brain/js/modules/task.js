@@ -111,6 +111,70 @@ export function filterProjectsByCategory(masterData, category) {
         .filter(Boolean);
 }
 
+/** 指定IDを親IDに持つ行（子）一覧を返す。 */
+export function getChildren(mainData, parentId) {
+    if (!parentId) return [];
+    return mainData.filter(r => String(r['親ID'] || '') === String(parentId));
+}
+
+/** 指定IDが、他のいずれかの行から親IDとして参照されているか（＝実質プロジェクトかどうか）を判定する。 */
+export function isParentRow(mainData, id) {
+    if (!id) return false;
+    return mainData.some(r => String(r['親ID'] || '') === String(id));
+}
+
+/** 行の親ID（row['親ID']）から親行本体を引く。親IDが空欄、または参照先が存在しない場合は null。 */
+export function getParentRow(mainData, row) {
+    const parentId = row && row['親ID'];
+    if (!parentId) return null;
+    return mainData.find(r => String(r['ID']) === String(parentId)) || null;
+}
+
+/**
+ * newParentId を childId の親として設定した場合に循環参照が発生するかを判定する。
+ * newParentId から親を辿っていき、途中で childId に戻り着けば循環とみなす。
+ * 自分自身を親にしようとする場合（newParentId === childId）も循環として扱う。
+ */
+export function wouldCreateCycle(mainData, childId, newParentId) {
+    if (!newParentId) return false;
+    if (String(newParentId) === String(childId)) return true;
+
+    const idMap = new Map(mainData.map(r => [String(r['ID']), r]));
+    let current = idMap.get(String(newParentId));
+    const visited = new Set();
+    while (current && current['親ID']) {
+        const pid = String(current['親ID']);
+        if (pid === String(childId)) return true;
+        if (visited.has(pid)) return false; // 既存データ側に別の循環がある場合の無限ループ防止
+        visited.add(pid);
+        current = idMap.get(pid);
+    }
+    return false;
+}
+
+/**
+ * 親ID選択UI（datalist）用の候補一覧を返す。excludeId を指定すると、その行自身と
+ * その子孫（excludeId を親として辿れる全行）を候補から除外する（自分自身や自分の子孫を親にできないようにする）。
+ */
+export function getAllParentCandidates(mainData, excludeId) {
+    let excludedIds = new Set();
+    if (excludeId) {
+        excludedIds.add(String(excludeId));
+        let frontier = [String(excludeId)];
+        while (frontier.length > 0) {
+            const next = mainData
+                .filter(r => frontier.includes(String(r['親ID'] || '')))
+                .map(r => String(r['ID']))
+                .filter(id => !excludedIds.has(id));
+            next.forEach(id => excludedIds.add(id));
+            frontier = next;
+        }
+    }
+    return mainData
+        .filter(r => !excludedIds.has(String(r['ID'])))
+        .map(r => ({ id: r['ID'], title: r['タイトル'] || '', kubun: r['データ区分'] || '' }));
+}
+
 // (3)〜(4) メイン機能・アウトプット
 // このモジュールの各関数は純粋計算のみを行い、引数として受け取った値から
 // 計算結果を return する（DOM操作・グローバル状態への直接アクセスは行わない）。

@@ -70,6 +70,13 @@ export function computeMasterWarnings(mainData, masterData, mainColumns, masterC
         warnings.push(`ステータスの親「${invalidStatusParents[0]}」は「タスク」か「ナレッジ」である必要があります`);
     }
 
+    // 親ID（新プロジェクト方式）が実在する行を参照しているか確認
+    const mainIds = new Set(mainData.map(r => String(r['ID'])));
+    const invalidParentRefs = mainData.filter(r => r['親ID'] && !mainIds.has(String(r['親ID'])));
+    if (invalidParentRefs.length > 0) {
+        warnings.push(`親IDが存在しない行を参照している行が ${invalidParentRefs.length} 件あります（例: ID=${invalidParentRefs[0]['ID']}）`);
+    }
+
     return warnings;
 }
 
