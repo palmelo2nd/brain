@@ -257,7 +257,7 @@
             </div>
         </div>
 
-        <!-- 新タスク整理（親ID方式・簡易版：一覧＋編集フォームのみ。カレンダー／ガント／日別タイムラインは対象外、Summaryページ「新タスク整理」タブに表示） -->
+        <!-- 新タスク整理（親ID方式：月間カレンダー＋ガントチャート＋日別タイムライン＋1日タスク＋未設定タスク一覧＋一覧＋編集フォーム。旧タスク整理の機能は全て移行済み、Summaryページ「新タスク整理」タブに表示） -->
         <div id="taskorg2-anchor-home" style="display:none">
             <div id="taskorg2-details">
 
@@ -267,12 +267,123 @@
                     <div id="calendar2-filter-area" class="triage-filter-area"></div>
                 </details>
 
+                <!-- カレンダー／ガントチャートの切り替え -->
+                <div class="taskorg-view-toggle">
+                    <button type="button" id="taskorg2-tab-calendar" class="taskorg-view-btn taskorg-view-btn--active" data-view="calendar">カレンダー</button>
+                    <button type="button" id="taskorg2-tab-gantt" class="taskorg-view-btn" data-view="gantt">ガントチャート</button>
+                </div>
+
+                <!-- カレンダービュー（日をクリックするとその日を選択し、下の日別タイムラインにも反映する） -->
+                <div id="taskorg2-view-calendar" class="calendar-panel calendar-panel--full">
+                    <div class="calendar-header">
+                        <button id="calendar2-prev-btn" class="calendar-nav-btn">‹</button>
+                        <span id="calendar2-month-label" class="calendar-month-label"></span>
+                        <button id="calendar2-next-btn" class="calendar-nav-btn">›</button>
+                    </div>
+                    <div id="calendar2-grid" class="calendar-grid"></div>
+                </div>
+
+                <!-- ガントチャートビュー（月間カレンダーと年月・選択日を共有。旧タスク整理と同一仕様） -->
+                <div id="taskorg2-view-gantt" class="calendar-panel calendar-panel--full" style="display:none">
+                    <div class="calendar-header">
+                        <button id="calendar2-gantt-prev-btn" class="calendar-nav-btn">‹</button>
+                        <span id="calendar2-gantt-month-label" class="calendar-month-label"></span>
+                        <button id="calendar2-gantt-next-btn" class="calendar-nav-btn">›</button>
+                    </div>
+                    <div class="gantt-unit-toggle">
+                        <button type="button" id="calendar2-gantt-unit-day" class="gantt-unit-btn gantt-unit-btn--active" data-unit="day">日</button>
+                        <button type="button" id="calendar2-gantt-unit-week" class="gantt-unit-btn" data-unit="week">週</button>
+                    </div>
+                    <div class="gantt-legend">
+                        <span class="gantt-legend-item"><span class="gantt-swatch calendar-time-block--todo"></span>未着手</span>
+                        <span class="gantt-legend-item"><span class="gantt-swatch calendar-time-block--doing"></span>進行中</span>
+                        <span class="gantt-legend-item"><span class="gantt-swatch calendar-time-block--waiting"></span>中断・連絡待ち・報告待ち</span>
+                        <span class="gantt-legend-item"><span class="gantt-swatch calendar-time-block--done"></span>完了</span>
+                    </div>
+                    <div class="table-wrapper table-wrapper--limited">
+                        <table id="calendar2-gantt-table" class="gantt-table"></table>
+                    </div>
+                </div>
+
+                <!-- 選択した日のタイムスケジュール（左）＋ タスク編集（右） -->
                 <div class="calendar-day-section">
                     <div class="calendar-timeline-col">
-                        <!-- タスク一覧 -->
-                        <div id="taskorg2-tasklist" class="table-wrapper table-wrapper--limited">
-                            <table id="calendar2-task-list-table" class="calendar-task-list-table"></table>
+                        <h3 id="calendar2-detail-title" class="calendar-detail-title"></h3>
+
+                        <!-- 1日の予定表（上から下へ時間が進むタイムライン） -->
+                        <div class="calendar-timeline-scroll" id="calendar2-timeline-scroll">
+                            <div class="calendar-timeline-wrap">
+                                <div class="calendar-timeline-hours" id="calendar2-timeline-hours"></div>
+                                <div class="calendar-timeline-lanes" id="calendar2-timeline-lanes"></div>
+                            </div>
                         </div>
+
+                        <!-- 1日タスク（その日のタイムスケジュールを文法で記述して管理、旧タスク整理と同じデータ・仕様） -->
+                        <div class="calendar-dayplan-section">
+                            <div class="calendar-dayplan-toolbar">
+                                <p class="calendar-section-label">1日タスク</p>
+                                <button id="calendar2-dayplan-create-btn" class="calendar-add-btn">1日タスクを作成</button>
+                            </div>
+                            <div id="calendar2-dayplan-editor" class="calendar-dayplan-editor" style="display:none">
+                                <p class="calendar-dayplan-hint">1行1件、「HH:MM-HH:MM 内容」または「HH:MM-HH:MM #ID ラベル」の形式で入力してください（#IDを書くと既存タスクにリンクします）</p>
+                                <textarea id="calendar2-dayplan-content" class="calendar-dayplan-textarea" rows="6" placeholder="10:00-12:00 #123 資料作成の続き&#10;13:00-13:30 昼会"></textarea>
+                                <div class="calendar-dayplan-toolbar">
+                                    <button id="calendar2-dayplan-save-btn" class="calendar-add-btn">保存</button>
+                                    <button id="calendar2-dayplan-delete-btn" class="calendar-danger-btn">1日タスクを削除</button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 未設定／設定済みタスク（既定は折りたたみ） -->
+                        <details class="expander calendar-sub-expander">
+                            <summary class="expander-title">未設定/設定済みタスク<span id="calendar2-todo-dayplan-count" class="expander-count"></span></summary>
+                            <div class="calendar-unscheduled-section">
+                                <p class="calendar-section-label">未設定タスク</p>
+                                <div id="calendar2-unscheduled-list" class="calendar-unscheduled-list"></div>
+                                <p class="calendar-section-label calendar-section-label--sub">設定済みタスク</p>
+                                <div id="calendar2-dayplan-added-list" class="calendar-unscheduled-list"></div>
+                            </div>
+                        </details>
+
+                        <!-- 開始予定・終了予定のいずれかが空欄のタスク（既定は折りたたみ） -->
+                        <details class="expander calendar-sub-expander">
+                            <summary class="expander-title">日付未確定のタスク<span id="calendar2-incomplete-count" class="expander-count"></span></summary>
+                            <p class="calendar-dayplan-hint">開始予定・終了予定のいずれかが空欄のタスクです。</p>
+                            <div class="calendar-unscheduled-section">
+                                <div id="calendar2-incomplete-date-list" class="calendar-unscheduled-list"></div>
+                            </div>
+                        </details>
+
+                        <!-- カテゴリ／ステータス／優先度／プロジェクト（親ID）のいずれかが未設定のタスク（既定は折りたたみ） -->
+                        <details class="expander calendar-sub-expander">
+                            <summary class="expander-title">属性未設定タスク<span id="calendar2-unset-total-count" class="expander-count"></span></summary>
+                            <p class="calendar-dayplan-hint">カテゴリ・ステータス・優先度・プロジェクト（親ID）のいずれかが未入力のタスクです（複数の領域に重複して表示される場合があります）。</p>
+
+                            <div class="calendar-unscheduled-section">
+                                <p class="calendar-section-label calendar-section-label--accent">カテゴリ<span id="calendar2-unset-category-count" class="expander-count"></span></p>
+                                <div id="calendar2-unset-category-list" class="calendar-unscheduled-list"></div>
+                            </div>
+                            <div class="calendar-unscheduled-section">
+                                <p class="calendar-section-label calendar-section-label--accent">ステータス<span id="calendar2-unset-status-count" class="expander-count"></span></p>
+                                <div id="calendar2-unset-status-list" class="calendar-unscheduled-list"></div>
+                            </div>
+                            <div class="calendar-unscheduled-section">
+                                <p class="calendar-section-label calendar-section-label--accent">優先度<span id="calendar2-unset-priority-count" class="expander-count"></span></p>
+                                <div id="calendar2-unset-priority-list" class="calendar-unscheduled-list"></div>
+                            </div>
+                            <div class="calendar-unscheduled-section">
+                                <p class="calendar-section-label calendar-section-label--accent">プロジェクト（親ID）<span id="calendar2-unset-project-count" class="expander-count"></span></p>
+                                <div id="calendar2-unset-project-list" class="calendar-unscheduled-list"></div>
+                            </div>
+                        </details>
+
+                        <!-- ステータスが「中断」のタスク（既定は折りたたみ） -->
+                        <details class="expander calendar-sub-expander">
+                            <summary class="expander-title">中断タスク<span id="calendar2-suspended-count" class="expander-count"></span></summary>
+                            <div class="calendar-unscheduled-section">
+                                <div id="calendar2-suspended-list" class="calendar-unscheduled-list"></div>
+                            </div>
+                        </details>
                     </div>
 
                     <div class="calendar-edit-col">
@@ -363,6 +474,11 @@
                             </div>
                         </div>
                     </div>
+                </div>
+
+                <!-- タスク一覧（カレンダー・編集エリアの下、常に画面下部） -->
+                <div id="taskorg2-tasklist" class="table-wrapper table-wrapper--limited">
+                    <table id="calendar2-task-list-table" class="calendar-task-list-table"></table>
                 </div>
             </div>
         </div>
@@ -507,8 +623,11 @@
                                 <select id="recuredit-tag"></select>
                             </div>
                             <div class="calendar-edit-row">
-                                <label>プロジェクト</label>
-                                <select id="recuredit-project"></select>
+                                <label>親（プロジェクト）</label>
+                                <input type="text" id="recuredit-parent-search" list="recuredit-parent-list" placeholder="ID・タイトルで検索">
+                                <datalist id="recuredit-parent-list"></datalist>
+                                <input type="hidden" id="recuredit-parent-id">
+                                <button type="button" id="recuredit-parent-clear-btn" class="calendar-add-btn">解除</button>
                             </div>
                             <div class="calendar-edit-toolbar">
                                 <button id="recuredit-apply-btn">適用</button>
@@ -571,11 +690,10 @@
             <div class="taskorg-view-toggle summary-main-tabs">
                 <button type="button" id="summary-tab-taskorg" class="taskorg-view-btn taskorg-view-btn--active" data-view="taskorg">旧タスク整理</button>
                 <button type="button" id="summary-tab-taskorg2" class="taskorg-view-btn" data-view="taskorg2">新タスク整理</button>
-                <button type="button" id="summary-tab-recurring" class="taskorg-view-btn" data-view="recurring">旧繰返し</button>
+                <button type="button" id="summary-tab-recurring" class="taskorg-view-btn" data-view="recurring">繰返し</button>
                 <button type="button" id="summary-tab-runner" class="taskorg-view-btn" data-view="runner">タスク実行</button>
                 <button type="button" id="summary-tab-top" class="taskorg-view-btn" data-view="top">INBOX</button>
-                <button type="button" id="summary-tab-edit" class="taskorg-view-btn" data-view="edit">旧編集</button>
-                <button type="button" id="summary-tab-edit2" class="taskorg-view-btn" data-view="edit2">新編集</button>
+                <button type="button" id="summary-tab-edit2" class="taskorg-view-btn" data-view="edit2">編集</button>
                 <button type="button" id="summary-tab-knowledge" class="taskorg-view-btn" data-view="knowledge">ナレッジ</button>
                 <button type="button" id="summary-tab-project2" class="taskorg-view-btn" data-view="project2">プロジェクト</button>
                 <button type="button" id="summary-tab-data" class="taskorg-view-btn" data-view="data">データ</button>
@@ -615,11 +733,6 @@
             </div>
 
             <!-- 編集（表示切り替え時に本体を移動して表示） -->
-            <div id="summary-view-edit" class="summary-view-panel" style="display:none">
-                <div id="edit-anchor-summary"></div>
-            </div>
-
-            <!-- 新編集（表示切り替え時に本体を移動して表示） -->
             <div id="summary-view-edit2" class="summary-view-panel" style="display:none">
                 <div id="edit2-anchor-summary"></div>
             </div>
@@ -676,105 +789,7 @@
             </div>
         </div>
 
-        <!-- 編集（INBOX／タスク／ナレッジ 統合編集・新規登録、Summaryページ「編集」タブに表示） -->
-        <div id="edit-anchor-home" style="display:none">
-            <details id="edit-details" class="expander" open>
-                <summary class="expander-title" id="summary-edit">編集</summary>
-
-                <!-- 対象データ区分タブ（一覧の絞り込み） -->
-                <div id="edit-kubun-tabs" class="triage-kubun-tabs"></div>
-
-                <!-- フィルタエリア -->
-                <div id="edit-filter-area" class="triage-filter-area"></div>
-
-                <!-- 一覧テーブル -->
-                <div class="table-wrapper">
-                    <table id="table-edit-list"></table>
-                </div>
-
-                <!-- 入力・編集フォーム（未選択時は新規登録、選択時はその行の編集） -->
-                <div class="triage-form">
-
-                    <!-- 内容（新規登録・編集どちらでも入力可） -->
-                    <div id="edit-content-row" class="triage-form-row triage-form-row--top">
-                        <label>内容</label>
-                        <textarea id="edit-content" class="triage-textarea" rows="8" placeholder="内容を入力してください"></textarea>
-                    </div>
-
-                    <div class="triage-form-row">
-                        <label>移動先のデータ区分 <span class="required">*</span></label>
-                        <select id="edit-kubun"></select>
-                    </div>
-                    <div class="triage-form-row">
-                        <label>タイトル</label>
-                        <input type="text" id="edit-title" placeholder="（省略可）">
-                    </div>
-                    <div class="triage-form-row">
-                        <label>備考</label>
-                        <input type="text" id="edit-biko" placeholder="（省略可）">
-                    </div>
-                    <div class="triage-form-row">
-                        <label>カテゴリ</label>
-                        <select id="edit-category"></select>
-                    </div>
-                    <div class="triage-form-row">
-                        <label>タグ</label>
-                        <select id="edit-tag"></select>
-                    </div>
-                    <div class="triage-form-row">
-                        <label>プロジェクト</label>
-                        <select id="edit-project"></select>
-                    </div>
-
-                    <!-- ステータス（タスク／ナレッジ選択時） -->
-                    <div id="edit-status-row" class="triage-form-row" style="display:none">
-                        <label>ステータス</label>
-                        <select id="edit-status"></select>
-                    </div>
-
-                    <!-- 優先度・開始予定・終了予定・見積時間（タスク選択時のみ） -->
-                    <div id="edit-priority-row" class="triage-form-row" style="display:none">
-                        <label>優先度</label>
-                        <select id="edit-priority"></select>
-                    </div>
-                    <div id="edit-start-row" class="triage-form-row" style="display:none">
-                        <label>開始予定</label>
-                        <input type="date" id="edit-start">
-                    </div>
-                    <div id="edit-end-row" class="triage-form-row" style="display:none">
-                        <label>終了予定</label>
-                        <input type="date" id="edit-end">
-                    </div>
-                    <div id="edit-estimate-row" class="triage-form-row" style="display:none">
-                        <label>見積時間（分）</label>
-                        <input type="number" id="edit-estimate" min="0" step="1" placeholder="（省略可）">
-                    </div>
-
-                    <!-- Input・Output（ナレッジ選択時のみ） -->
-                    <div id="edit-input-row" class="triage-form-row" style="display:none">
-                        <label>Input</label>
-                        <select id="edit-input"></select>
-                    </div>
-                    <div id="edit-output-row" class="triage-form-row" style="display:none">
-                        <label>Output</label>
-                        <select id="edit-output"></select>
-                    </div>
-                    <div id="edit-para-row" class="triage-form-row" style="display:none">
-                        <label>PARA区分</label>
-                        <select id="edit-para"></select>
-                    </div>
-
-                    <div class="triage-toolbar">
-                        <span id="edit-selection-info" class="triage-info"></span>
-                        <button id="edit-new-btn" class="triage-btn">新規</button>
-                        <button id="edit-apply-btn" class="triage-btn triage-btn--primary">更新</button>
-                        <button id="edit-delete-btn" class="triage-btn triage-btn--danger">削除</button>
-                    </div>
-                </div>
-            </details>
-        </div>
-
-        <!-- 新編集（親ID方式、INBOX／タスク／ナレッジ 統合編集・新規登録、Summaryページ「新編集」タブに表示） -->
+        <!-- 編集（親ID方式、INBOX／タスク／ナレッジ 統合編集・新規登録、Summaryページ「編集」タブに表示） -->
         <div id="edit2-anchor-home" style="display:none">
             <details id="edit2-details" class="expander" open>
                 <summary class="expander-title" id="summary-edit2">編集</summary>

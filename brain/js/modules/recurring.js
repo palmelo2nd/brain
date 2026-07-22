@@ -138,7 +138,7 @@ function buildChild(parent, template, matchedDate, startDate, targetDate, id, ts
     child['内容']         = template.content || parent['内容'] || '';
     child['カテゴリ']     = parent['カテゴリ']  || '';
     child['タグ']         = parent['タグ']      || '';
-    child['プロジェクト']         = parent['プロジェクト']      || '';
+    child['親ID']         = parent['親ID']      || '';
     child['優先度']       = parent['優先度']    || '';
     child['見積時間']     = parent['見積時間']  || '';
     child['開始予定']     = formatSlashDate(startDate);
