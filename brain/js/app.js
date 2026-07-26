@@ -77,6 +77,7 @@ let taskorg2CalendarMonth = new Date().getMonth();    // 新タスク整理の�
 let selectedTaskorg2Date  = jpDateOnly(formatJpDatetime(new Date())); // 新タスク整理でカレンダーの日クリックにより選択中の日付（YYYY/MM/DD）。開いた時点では常に今日を選択する
 let taskorg2GanttViewUnit = 'day';  // 新タスク整理のガントチャートの列の単位（'day' | 'week'、旧タスク整理とは独立）
 let taskorg2View = 'calendar';      // 新タスク整理の表示ビュー（'calendar' | 'gantt'、旧タスク整理とは独立）
+let dayedit2ParentPath = [];        // 新タスク整理・編集フォームの親（プロジェクト）階層プルダウンで選択中のID列（ルート→現在選択中の階層の順）
 let selectedEdit2Ids = new Set();   // 新編集で選択中の行ID
 let edit2Filters = {};              // 新編集のフィルタ値
 let edit2Kubun   = 'INBOX';         // 新編集の対象データ区分
@@ -4014,6 +4015,103 @@ function wireParentSearchInput(prefix) {
     });
 }
 
+/** 「新タスク整理」編集フォームの親（プロジェクト）階層プルダウン用に、excludeId自身とその子孫を除いた「親になれる（データ区分がタスク）」行一覧を返す。 */
+function getDayedit2ParentEligibleRows(excludeId) {
+    let excludedIds = new Set();
+    if (excludeId) {
+        excludedIds.add(String(excludeId));
+        let frontier = [String(excludeId)];
+        while (frontier.length > 0) {
+            const next = currentMainData
+                .filter(r => frontier.includes(String(r['親ID'] || '')))
+                .map(r => String(r['ID']))
+                .filter(id => !excludedIds.has(id));
+            next.forEach(id => excludedIds.add(id));
+            frontier = next;
+        }
+    }
+    return currentMainData.filter(r => !excludedIds.has(String(r['ID']))).filter(isEligibleParentRowM);
+}
+
+const DAYEDIT2_NEW_PJ_MARK = '__dayedit2_new_pj__'; // 親プルダウンの「＋ 新規PJを追加」選択肢の特殊値
+
+/**
+ * 親（プロジェクト）階層プルダウンで「＋ 新規PJを追加」を選んだ際、その場で新規プロジェクト（タスク）を作成しIDを返す。
+ * ステータス=未着手・優先度=中、開始予定・終了予定・完了日は空欄とする。タイトル未入力（キャンセル含む）ならnullを返す。
+ * @param {string} parentId - 新規プロジェクトの親ID（空文字ならルート＝最上位プロジェクトとして作成）
+ */
+function createDayedit2NewProject(parentId) {
+    const title = (prompt('新しいプロジェクト（PJ）のタイトルを入力してください') || '').trim();
+    if (!title) return null;
+
+    const maxId = currentMainData.reduce((max, row) => {
+        const id = parseInt(row['ID'], 10);
+        return isNaN(id) ? max : Math.max(max, id);
+    }, 0);
+    const ts = formatJpDatetime(new Date());
+
+    const entry = Object.fromEntries(MAIN_DATA_COLUMNS.map(col => [col, '']));
+    entry['ID']        = String(maxId + 1);
+    entry['データ区分'] = 'タスク';
+    entry['タイトル']   = title;
+    entry['ステータス'] = '未着手';
+    entry['優先度']     = '中';
+    entry['カテゴリ']   = currentCategory === 'すべて' ? '' : currentCategory;
+    entry['親ID']       = parentId || '';
+    entry['作成日時']   = ts;
+    entry['更新日時']   = ts;
+
+    currentMainData.push(entry);
+    persistLocalCache();
+
+    return entry['ID'];
+}
+
+/**
+ * 「新タスク整理」編集フォームの親（プロジェクト）階層プルダウン（PJ(1層)〜必要な階層数だけ）を描画する。
+ * 階層1は既存の最上位プロジェクトのみ、階層2以降は直前に選択した行の子（データ区分がタスクのもの）を選択肢とする。
+ * どの階層にも「＋ 新規PJを追加」を用意し、選ぶとその階層でその場に新規プロジェクトを作成して選択状態にする。
+ * 何かが選択されている限り次の階層のプルダウンを（既存の子が無くても）表示し、任意の深さまで追加できるようにする。
+ * 選択のたびに dayedit2ParentPath を再構築し、最終選択値を dayedit2-parent-id（hidden）へ反映する。
+ */
+function renderDayedit2ParentDropdowns() {
+    const container = document.getElementById('dayedit2-parent-dropdowns');
+    if (!container) return;
+    container.innerHTML = '';
+
+    const eligibleRows = getDayedit2ParentEligibleRows(selectedTaskorg2Id);
+    const newPjExtraOption = [{ value: DAYEDIT2_NEW_PJ_MARK, label: '＋ 新規PJを追加' }];
+
+    let level = 0;
+    let parentId = ''; // 空文字ならこのレベルはルート階層（親ID空欄）の選択肢を出す
+    for (;;) {
+        const options = level === 0
+            ? eligibleRows.filter(r => !r['親ID'] && (isParentRowM(currentMainData, r['ID']) || String(r['ID']) === dayedit2ParentPath[0]))
+            : getChildrenM(eligibleRows, parentId);
+
+        const currentValue    = dayedit2ParentPath[level] || '';
+        const levelForClosure = level;
+        const parentIdForClosure = parentId;
+        appendProject2DropdownRow(container, `PJ(${level + 1}層)`, options, currentValue, value => {
+            if (value === DAYEDIT2_NEW_PJ_MARK) {
+                const newId = createDayedit2NewProject(parentIdForClosure);
+                if (newId) dayedit2ParentPath = [...dayedit2ParentPath.slice(0, levelForClosure), newId];
+                renderDayedit2ParentDropdowns();
+                return;
+            }
+            dayedit2ParentPath = value ? buildProject2PathFromId(value) : dayedit2ParentPath.slice(0, levelForClosure);
+            renderDayedit2ParentDropdowns();
+        }, newPjExtraOption);
+
+        if (!currentValue) break; // このレベルで何も選ばれていなければ、これ以上下の階層は出さない
+        parentId = currentValue;
+        level++;
+    }
+
+    const hiddenEl = document.getElementById('dayedit2-parent-id');
+    if (hiddenEl) hiddenEl.value = dayedit2ParentPath[dayedit2ParentPath.length - 1] || '';
+}
+
 /** 指定行の親IDに newParentId を設定しようとした際に循環参照になる場合、確認アラートを出して false を返す。 */
 function checkParentCycleOrAlert(childId, newParentId) {
     if (!newParentId) return true;
@@ -4091,12 +4189,18 @@ function renderTaskorg2CalendarGrid() {
         grid.appendChild(cell);
     }
 
+    const workExceptions = parseExceptions(getWorkCalendarContent(taskorg2CalendarYear));
+
     for (let d = 1; d <= daysInMonth; d++) {
         const dateJP = `${taskorg2CalendarYear}/${pad(taskorg2CalendarMonth + 1)}/${pad(d)}`;
         const cell = document.createElement('div');
         cell.className = 'calendar-day';
         if (dateJP === todayJP)              cell.classList.add('calendar-day--today');
         if (dateJP === selectedTaskorg2Date) cell.classList.add('calendar-day--selected');
+
+        const workType = workExceptions.get(dateJP)?.type
+            ?? getDefaultType(new Date(taskorg2CalendarYear, taskorg2CalendarMonth, d));
+        if (workType !== '出勤日') cell.classList.add(`calendar-day--work-${workType}`);
 
         const num = document.createElement('div');
         num.className = 'calendar-day-num';
@@ -4823,31 +4927,6 @@ function renderTaskorg2List() {
     table.replaceChildren(thead, tbody);
 }
 
-/** 選択中行の配下（子）タスク／ナレッジ一覧（読み取り専用）を描画する。行クリックで編集対象をその子に切り替える。 */
-function renderTaskorg2Children(parentId) {
-    const table   = document.getElementById('dayedit2-children-list');
-    const countEl = document.getElementById('dayedit2-children-count');
-    if (!table) return;
-
-    const children = parentId ? getChildrenM(currentMainData, parentId) : [];
-    if (countEl) countEl.textContent = children.length ? ` (${children.length})` : '';
-
-    const cols = ['ID', 'データ区分', 'タイトル', 'ステータス'];
-    const thead = document.createElement('thead');
-    const hRow  = document.createElement('tr');
-    cols.forEach(col => { const th = document.createElement('th'); th.textContent = col; hRow.appendChild(th); });
-    thead.appendChild(hRow);
-
-    const tbody = document.createElement('tbody');
-    children.forEach(row => {
-        const tr = document.createElement('tr');
-        cols.forEach(col => { const td = document.createElement('td'); td.textContent = row[col] ?? ''; tr.appendChild(td); });
-        tr.addEventListener('click', () => { selectedTaskorg2Id = String(row['ID']); renderCalendar2(); });
-        tbody.appendChild(tr);
-    });
-    table.replaceChildren(thead, tbody);
-}
-
 /** 新規登録モード（未選択）の際、編集フォームを既定値へリセットする。 */
 function clearTaskorg2EditForm() {
     ['dayedit2-id', 'dayedit2-title', 'dayedit2-content', 'dayedit2-biko'].forEach(id => {
@@ -4862,8 +4941,7 @@ function clearTaskorg2EditForm() {
     if (categoryEl && currentCategory !== 'すべて') categoryEl.value = currentCategory;
     const tagEl = document.getElementById('dayedit2-tag');
     if (tagEl) tagEl.value = '';
-    document.getElementById('dayedit2-parent-search').value = '';
-    document.getElementById('dayedit2-parent-id').value = '';
+    dayedit2ParentPath = [];
     ['start-date', 'start-hour', 'start-minute', 'end-date', 'end-hour', 'end-minute', 'complete-date'].forEach(f => {
         const el = document.getElementById(`dayedit2-${f}`);
         if (el) el.value = '';
@@ -4875,12 +4953,11 @@ function clearTaskorg2EditForm() {
 /** 新タスク整理の編集フォーム（選択中行、または新規登録モード）を描画する。 */
 function renderTaskorg2Edit() {
     populateTaskEditSelects2('dayedit2');
-    renderParentDatalist('dayedit2', selectedTaskorg2Id);
 
     const row = currentMainData.find(r => String(r['ID']) === selectedTaskorg2Id);
     if (!row) {
         clearTaskorg2EditForm();
-        renderTaskorg2Children(null);
+        renderDayedit2ParentDropdowns();
         return;
     }
 
@@ -4892,11 +4969,10 @@ function renderTaskorg2Edit() {
     document.getElementById('dayedit2-priority').value = row['優先度'] || '';
     document.getElementById('dayedit2-category').value = row['カテゴリ'] || '';
     document.getElementById('dayedit2-tag').value      = row['タグ'] || '';
-    setParentFieldDisplay('dayedit2', row);
+    dayedit2ParentPath = buildProject2PathFromId(row['親ID']);
+    renderDayedit2ParentDropdowns();
     writeTaskDateTimeFieldsToForm('dayedit2', row);
     writeTaskEstimateActualToForm('dayedit2', row, 'minutes');
-
-    renderTaskorg2Children(row['ID']);
 }
 
 /** 「新タスク整理」タブ全体（フィルタ・カレンダー・一覧・編集フォーム・子一覧）を再描画する。 */
@@ -4912,7 +4988,10 @@ function renderCalendar2() {
     renderTaskorg2Edit();
 }
 
-wireParentSearchInput('dayedit2');
+document.getElementById('dayedit2-parent-clear-btn')?.addEventListener('click', () => {
+    dayedit2ParentPath = [];
+    renderDayedit2ParentDropdowns();
+});
 
 document.getElementById('calendar2-quick-new-btn')?.addEventListener('click', () => {
     selectedTaskorg2Id = null;
@@ -5812,8 +5891,8 @@ function deleteProject2(projectId, reassignToId) {
 
 const PROJECT2_STANDALONE_MARK = '__standalone__'; // 階層1の「（単独タスク）」選択肢の特殊値
 
-/** 汎用の階層プルダウン1段を container に追加する（ラベル・選択肢・現在値・changeハンドラを指定）。 */
-function appendProject2DropdownRow(container, labelText, options, currentValue, onChange, extraOptionLabel) {
+/** 汎用の階層プルダウン1段を container に追加する（ラベル・選択肢・現在値・changeハンドラを指定）。extraOptions（{value, label}の配列）指定時は先頭付近に特殊選択肢を追加する。 */
+function appendProject2DropdownRow(container, labelText, options, currentValue, onChange, extraOptions = []) {
     const row = document.createElement('div');
     row.className = 'calendar-edit-row';
     const label = document.createElement('label');
@@ -5823,12 +5902,12 @@ function appendProject2DropdownRow(container, labelText, options, currentValue, 
     blankOpt.value = '';
     blankOpt.textContent = '（未選択）';
     select.appendChild(blankOpt);
-    if (extraOptionLabel) {
+    extraOptions.forEach(({ value, label: text }) => {
         const extraOpt = document.createElement('option');
-        extraOpt.value = PROJECT2_STANDALONE_MARK;
-        extraOpt.textContent = extraOptionLabel;
+        extraOpt.value = value;
+        extraOpt.textContent = text;
         select.appendChild(extraOpt);
-    }
+    });
     options.forEach(r => {
         const opt = document.createElement('option');
         opt.value = String(r['ID']);
@@ -5866,7 +5945,7 @@ function renderProject2EditDropdowns() {
             }
             renderProjectAdmin2();
         },
-        '（単独タスク）'
+        [{ value: PROJECT2_STANDALONE_MARK, label: '（単独タスク）' }]
     );
 
     if (rootIsStandalone || (!rootId && project2Level0Mode === 'standalone')) {
