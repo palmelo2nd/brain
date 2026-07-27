@@ -1,8 +1,15 @@
 // (1) インポート
-import { formatJpDatetime } from './task.js';
+import { formatJpDatetime, isRecurringParentRow } from './task.js';
 
-// 1日タスク（その日のタイムスケジュールを文法で記述する特殊タスク）を表す予約プロジェクト名。
-export const DAYPLAN_PROJECT = '1日タスク';
+// 1日タスク（その日のタイムスケジュールを文法で記述する特殊行）は、通常のタスクと区別するため
+// データ区分＝ナレッジ・PARA区分＝DAYPLAN_PARA として登録する（作業ログ的な性質のため）。
+export const DAYPLAN_KUBUN = 'ナレッジ';
+export const DAYPLAN_PARA  = '1日タスク';
+
+/** row が1日タスク（DAYPLAN）の器行かどうかを判定する。 */
+export function isDayPlanRow(row) {
+    return row['データ区分'] === DAYPLAN_KUBUN && row['PARA区分'] === DAYPLAN_PARA;
+}
 
 // 完了・中断・報告待ち・連絡待ちのステータスなら「残務なし（緑）」扱いとする。
 const CALENDAR_DONE_STATUSES = ['完了', '中断', '報告待ち', '連絡待ち'];
@@ -50,35 +57,13 @@ export function getCalendarMarkDate(row, todayJP) {
     return todayJP;
 }
 
-/**
- * 「未設定/設定済みタスク」欄用のマーク日判定。カレンダーの●印（getCalendarMarkDate）とは異なり、
- * 報告待ち・連絡待ちは自分の作業自体は完了していても、いずれ報告・フォローが必要なため「未完了」として扱い、
- * 通常のタスクと同様に開始予定〜終了予定の範囲で表示され続けるようにする（完了・中断のみ完了日基準）。
- */
-function getDayPlanListMarkDate(row, todayJP) {
-    const start = jpDateOnly(row['開始予定']) || jpDateOnly(row['終了予定']);
-    const end   = jpDateOnly(row['終了予定']) || start;
-
-    if (['完了', '中断'].includes(row['ステータス'])) {
-        const done = jpDateOnly(row['完了日']);
-        return done || null;
-    }
-
-    if (!start) return null;
-    if (todayJP < start) return start;
-    if (todayJP > end)   return end;
-    return todayJP;
-}
-
-/** カテゴリ・calendarFiltersで絞り込んだメインデータのうち、データ区分がタスクで1日タスクでない行を返す（内部共通処理）。 */
+/** カテゴリ・calendarFiltersで絞り込んだメインデータのうち、データ区分がタスクの行を返す（内部共通処理。1日タスクはデータ区分がナレッジのため自動的に除外される）。 */
 function filterCalendarTasks(mainData, category, calendarFilters) {
     return mainData.filter(r => {
         if (category !== 'すべて' && r['カテゴリ'] !== category) return false;
         if (r['データ区分'] !== 'タスク') return false;
-        if (r['プロジェクト'] === DAYPLAN_PROJECT) return false;
-        if (r['繰返し識別子'] === '1' && !r['繰返し親ID']) return false; // 繰返しタスクの親は対象外
+        if (isRecurringParentRow(r)) return false; // 繰返しタスクの親は対象外
         if (!matchesMultiFilter(calendarFilters.tag, r['タグ'])) return false;
-        if (!matchesMultiFilter(calendarFilters.project, r['プロジェクト'])) return false;
         if (!matchesMultiFilter(calendarFilters.status, r['ステータス'])) return false;
         return true;
     });
@@ -91,36 +76,10 @@ export function getTasksForDate(mainData, category, calendarFilters, dateJP) {
         .filter(r => getCalendarMarkDate(r, todayJP) === dateJP);
 }
 
-/**
- * dateJP の1日タスク編集対象として扱うタスクを返す（フィルタ適用済み）。
- * dateJP が未来日の場合、その日にマークされるタスクに加えて、今日マークされている進行中のタスク
- * （開始予定〜終了予定の範囲内に今日が含まれるもの）も編集対象に含め、将来の1日タスクへ前倒しで計画できるようにする。
- * ただし、ステータスが「完了」のもの、および終了予定がその未来日（dateJP）より前のもの（その日には
- * 既に期限切れになる）は対象から除外する。dateJP が今日以前の場合は getTasksForDate と同じ結果を返す。
- */
-export function getTasksAvailableForDayPlan(mainData, category, calendarFilters, dateJP) {
-    const todayJP = jpDateOnly(formatJpDatetime(new Date()));
-    const pool = filterCalendarTasks(mainData, category, calendarFilters);
-
-    if (dateJP <= todayJP) {
-        return pool.filter(r => getDayPlanListMarkDate(r, todayJP) === dateJP);
-    }
-    return pool.filter(r => {
-        const mark = getDayPlanListMarkDate(r, todayJP);
-        if (mark === dateJP) return true;
-        if (mark !== todayJP) return false;
-
-        if (r['ステータス'] === '完了') return false;
-        const end = jpDateOnly(r['終了予定']) || jpDateOnly(r['開始予定']);
-        if (end && dateJP > end) return false;
-        return true;
-    });
-}
-
-/** 指定日の1日タスク（プロジェクト=DAYPLAN_PROJECT、開始予定=dateJP のタスク行）を返す。無ければ null。 */
+/** 指定日の1日タスク（isDayPlanRow、開始予定=dateJP の行）を返す。無ければ null。 */
 export function getDayPlanTask(mainData, dateJP) {
     return mainData.find(r =>
-        r['データ区分'] === 'タスク' && r['プロジェクト'] === DAYPLAN_PROJECT && jpDateOnly(r['開始予定']) === dateJP
+        isDayPlanRow(r) && jpDateOnly(r['開始予定']) === dateJP
     ) || null;
 }
 
@@ -217,29 +176,6 @@ export function compareDateAscEmptyLast(a, b) {
     if (!a) return 1;
     if (!b) return -1;
     return a.localeCompare(b);
-}
-
-/**
- * タグ／プロジェクト／ステータスでフィルタ中のタスク一覧（日付を問わず全件）を返す。
- * ソート順: ステータス（完了・報告待ち・連絡待ち・中断・進行中・未着手・空欄の順）→ 完了日 昇順 → 開始予定 昇順 → 終了予定 昇順。
- */
-export function getCalendarFilteredTaskList(mainData, category, calendarFilters) {
-    const tasks = filterCalendarTasks(mainData, category, calendarFilters);
-
-    tasks.sort((a, b) => {
-        const rankDiff = calendarTaskListStatusRank(a['ステータス']) - calendarTaskListStatusRank(b['ステータス']);
-        if (rankDiff !== 0) return rankDiff;
-
-        let cmp = compareDateAscEmptyLast(a['完了日'], b['完了日']);
-        if (cmp !== 0) return cmp;
-
-        cmp = compareDateAscEmptyLast(a['開始予定'], b['開始予定']);
-        if (cmp !== 0) return cmp;
-
-        return compareDateAscEmptyLast(a['終了予定'], b['終了予定']);
-    });
-
-    return tasks;
 }
 
 /** value（"YYYY/MM/DD" または "YYYY/MM/DD HH:mm"）が dateJP と同じ日付かどうかを調べ、時刻情報を返す。 */
@@ -372,12 +308,11 @@ export function getTaskScheduledTimeOnDate(row, dateJP) {
     return { startStr: fmt(startInfo.minutes), endStr: fmt(endInfo.minutes) };
 }
 
-/** データ区分がタスクで、1日タスク自体・繰返し親を除いた行を返す（未設定タスク各領域の共通母集団）。 */
+/** データ区分がタスクで、繰返し親を除いた行を返す（未設定タスク各領域の共通母集団。1日タスクはデータ区分がナレッジのため自動的に除外される）。 */
 function unsetTaskPool(mainData) {
     return mainData.filter(r => {
         if (r['データ区分'] !== 'タスク') return false;
-        if (r['プロジェクト'] === DAYPLAN_PROJECT) return false;
-        if (r['繰返し識別子'] === '1' && !r['繰返し親ID']) return false;
+        if (isRecurringParentRow(r)) return false;
         return true;
     });
 }
@@ -388,7 +323,8 @@ function matchesCategoryOrUnset(row, category) {
 }
 
 /**
- * カテゴリ・ステータス・優先度・プロジェクトそれぞれが未設定のタスクを、領域ごとに分けて返す（重複あり）。
+ * カテゴリ・ステータス・優先度それぞれが未設定のタスクを、領域ごとに分けて返す（重複あり）。
+ * プロジェクト（親ID方式）の未設定判定は呼び出し側（新タスク整理）で個別に行う。
  * カテゴリ未設定の領域は currentCategory の絞り込みを受けない（カテゴリが無いので判定不能なため）。
  * それ以外の領域は、行にカテゴリがあれば currentCategory と一致するもののみ、カテゴリが無ければ常に対象にする。
  */
@@ -398,7 +334,6 @@ export function getUnsetAttributeGroups(mainData, category) {
         categoryUnset: pool.filter(r => !r['カテゴリ']),
         statusUnset:   pool.filter(r => !r['ステータス'] && matchesCategoryOrUnset(r, category)),
         priorityUnset: pool.filter(r => !r['優先度']   && matchesCategoryOrUnset(r, category)),
-        projectUnset:      pool.filter(r => !r['プロジェクト']     && matchesCategoryOrUnset(r, category)),
     };
 }
 
@@ -442,7 +377,7 @@ export function groupUnsetTasksByStatus(rows) {
 /** 開始予定・終了予定の少なくとも一方が空欄のタスク（フィルタ適用済み、繰返し親は除外）を返す。 */
 export function getIncompleteDateTasks(mainData, category, calendarFilters) {
     return filterCalendarTasks(mainData, category, calendarFilters).filter(r => {
-        if (r['繰返し識別子'] === '1' && !r['繰返し親ID']) return false; // 繰返しタスクの親は対象外
+        if (isRecurringParentRow(r)) return false; // 繰返しタスクの親は対象外
         if (r['開始予定'] && r['終了予定']) return false; // 両方入力済みは対象外
         return true;
     });

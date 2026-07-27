@@ -12,20 +12,20 @@ import { parseExceptions, stringifyExceptions, computeMonthCalendar, computeMont
 import {
     parseJpDatetime, formatJpDatetime, parseTimestampLog, formatDuration, isLogRunning,
     computeTotalDuration as computeTotalDurationM,
-    filterMainDataByCategory, filterTagsByCategory, filterProjectsByCategory, computeActualHours,
+    filterMainDataByCategory, filterTagsByCategory, computeActualHours,
     getChildren as getChildrenM, isParentRow as isParentRowM, getParentRow as getParentRowM,
     wouldCreateCycle as wouldCreateCycleM, getAllParentCandidates as getAllParentCandidatesM,
-    getRootParentId as getRootParentIdM, isEligibleParentRow as isEligibleParentRowM
+    getRootParentId as getRootParentIdM, isEligibleParentRow as isEligibleParentRowM,
+    isRecurringParentRow, isRecurringChildRow
 } from './modules/task.js';
 import {
-    DAYPLAN_PROJECT, matchesMultiFilter, isTaskDoneForCalendar, getCalendarMarkDate,
+    DAYPLAN_KUBUN, DAYPLAN_PARA, isDayPlanRow, isTaskDoneForCalendar, getCalendarMarkDate,
     getTasksForDate as getTasksForDateM, getDayPlanTask as getDayPlanTaskM, parseDayPlanContent,
     countActiveTasksByField as countActiveTasksByFieldM, countTasksByField as countTasksByFieldM,
     sortByTotalCountDesc as sortByTotalCountDescM, calendarTaskListStatusRank, compareDateAscEmptyLast,
-    getCalendarFilteredTaskList as getCalendarFilteredTaskListM, extractTimeOnDate,
-    getCalendarSegmentsForDate as getCalendarSegmentsForDateM, assignCalendarLanes, getCalendarStatusClass,
+    extractTimeOnDate, assignCalendarLanes, getCalendarStatusClass,
     computeDayPlanTimeSlot, getTaskScheduledTimeOnDate,
-    getIncompleteDateTasks as getIncompleteDateTasksM, getUnsetAttributeGroups as getUnsetAttributeGroupsM,
+    getUnsetAttributeGroups as getUnsetAttributeGroupsM,
     getSuspendedTasks as getSuspendedTasksM, taskOrganizeStatusRank,
     sortDayPlanBlocks, stringifyDayPlanBlocks, updateDayPlanBlockTime
 } from './modules/calendar.js';
@@ -46,32 +46,26 @@ let lastSyncedMarkdown = null;   // 直近でGitHub/キャッシュと一致し�
 let currentCategory   = 'すべて';        // カテゴリフィルタの選択値
 let categoryInitialized = false;         // 初回ロード時にデフォルトカテゴリを設定済みか
 let selectedRunTaskId    = null;       // タスク実行で選択中のタスクID
+let runnerParentPath     = [];         // タスク実行の属性編集パネルの親（プロジェクト）階層プルダウンで選択中のID列（ルート→現在選択中の階層の順）
 let timerIsRunning       = false;      // タイマー動作中フラグ
 let timerInterval        = null;       // setInterval ハンドル
-const todayForCalendar   = new Date();
-let calendarYear         = todayForCalendar.getFullYear(); // カレンダーの表示年
-let calendarMonth        = todayForCalendar.getMonth();    // カレンダーの表示月（0-11）
-let selectedCalendarDate = jpDateOnly(formatJpDatetime(todayForCalendar)); // カレンダーで選択中の日付（"YYYY/MM/DD"）。初期値は今日
-let selectedCalendarTaskId = null;     // 日別予定表で選択中のタスクID（属性編集パネル用）
-let calendarFilters = { tag: new Set(), project: new Set(), status: new Set() }; // カレンダーのタグ／プロジェクト／ステータスフィルタ値（複数選択）
-// 一度でも選択肢として現れたことがある値（タグ／プロジェクト／ステータス）。
-// 初出の選択肢はデフォルトでチェック済みにするために使い、ユーザーが手動で外した選択は再チェックしない。
-const calendarFilterKnownOptions = { tag: new Set(), project: new Set(), status: new Set() };
-// 旧繰返しページの絞り込みは新タスク整理と同じ独立方式（プロジェクトは親ID方式）に切り替えたため、
-// 旧タスク整理のcalendarFiltersとは別に独立管理する。
+// 旧繰返しページの絞り込みは新タスク整理と同じ独立方式（プロジェクトは親ID方式）で管理する。
 let recurringFilters = { tag: new Set(), status: new Set(), project: new Set() };
 const recurringFilterKnownOptions = { tag: new Set(), status: new Set(), project: new Set() };
-let calendarQuickNewMode = false;      // true時: 「新規登録」ボタンから起動した新規登録モード（日付は空欄のまま）
-let taskOrgView = 'calendar';          // 「タスク整理」の表示ビュー（'calendar' | 'gantt'）。年月・タグ/プロジェクト/ステータスフィルタ・選択中タスクは両ビューで共有する
-let ganttViewUnit = 'day';             // ガントチャートの列の単位（'day' | 'week'）
-let summaryView          = 'taskorg';   // Summary ページの表示ビュー（'top' | 'runner' | 'taskorg' | 'recurring' | 'edit2' | 'data' | 'project' | 'work'）
+let summaryView          = 'taskorg2';  // Summary ページの表示ビュー（'top' | 'runner' | 'taskorg2' | 'recurring' | 'edit2' | 'data' | 'project' | 'work'）
 let workCalendarYear  = new Date().getFullYear();
 let workCalendarMonth = new Date().getMonth();
 
 // ===== 新方式（親ID）タブ用の状態 =====
-let taskorg2Filters = { tag: new Set(), status: new Set(), project: new Set() }; // 新タスク整理の絞り込み（プロジェクトは最上位の親IDで代表）
+// タグ／ステータス／プロジェクト（最上位の親ID）は複数選択、その他フィルタ（プロジェクト行・繰返し親タスク・繰返し子タスクの表示）は表示ON/OFFの単純なチェックボックス。
+let taskorg2Filters = {
+    tag: new Set(), status: new Set(), project: new Set(),
+    showProject: false, showRecurringParent: false, showRecurringChild: true,
+};
 const taskorg2FilterKnownOptions = { tag: new Set(), status: new Set(), project: new Set() };
 let selectedTaskorg2Id = null;      // 新タスク整理で選択中の行ID
+let taskorg2QuickNewMode = false;   // true時: 「新規登録」ボタンから起動した新規登録モード（日付は空欄のまま）
+const dayedit2Freq = { month: new Set(), day: new Set(), weekday: new Set() }; // 新タスク整理・編集パネルの頻度チップの選択状態
 let taskorg2CalendarYear  = new Date().getFullYear(); // 新タスク整理のカレンダー表示年（旧タスク整理とは独立）
 let taskorg2CalendarMonth = new Date().getMonth();    // 新タスク整理のカレンダー表示月（0始まり、旧タスク整理とは独立）
 let selectedTaskorg2Date  = jpDateOnly(formatJpDatetime(new Date())); // 新タスク整理でカレンダーの日クリックにより選択中の日付（YYYY/MM/DD）。開いた時点では常に今日を選択する
@@ -148,12 +142,11 @@ function mountSection(elId, anchorId) {
 
 // --- ページレンダラー ---
 
-const SUMMARY_VIEWS = ['taskorg', 'taskorg2', 'recurring', 'runner', 'top', 'edit2', 'knowledge', 'project2', 'data', 'work'];
+const SUMMARY_VIEWS = ['taskorg2', 'recurring', 'runner', 'top', 'edit2', 'knowledge', 'project2', 'data', 'work'];
 
 /** Summary ページ（INBOX／タスク整理／繰返し／タスク実行／編集／プロジェクト／データの表示切り替え。PW・Load〜Import・カテゴリは常時表示バーで共通）を描画する */
 function renderSummary() {
     // 選択中のビューに応じて、セクション本体をこのページへ移動する
-    if (summaryView === 'taskorg')   mountSection('taskorg-details',   'taskorg-anchor-summary');
     if (summaryView === 'taskorg2')  mountSection('taskorg2-details',  'taskorg2-anchor-summary');
     if (summaryView === 'recurring') mountSection('recurring-details', 'recurring-anchor-summary');
     if (summaryView === 'edit2')     mountSection('edit2-details',     'edit2-anchor-summary');
@@ -164,7 +157,6 @@ function renderSummary() {
     renderWarnings(computeMasterWarnings());
     renderInboxBadge();
     renderTaskRunner();
-    if (summaryView === 'taskorg')   renderCalendar();
     if (summaryView === 'taskorg2')  renderCalendar2();
     if (summaryView === 'recurring') renderRecurringSection();
     if (summaryView === 'edit2')     renderEdit2();
@@ -393,15 +385,22 @@ function applyContent(content, sha) {
     // 廃止済みの旧項目（ステータスコメント）が残っていれば除去する
     currentMainData.forEach(r => { delete r['ステータスコメント']; });
 
+    // 旧形式の繰返し子タスク（繰返し親ID列で繰返しテンプレートを参照）が残っていれば、
+    // 親ID方式（親ID=繰返しテンプレートのID）へ自動変換する。繰返し識別子は親（テンプレート）側にのみ残す。
+    currentMainData.forEach(r => {
+        if (r['繰返し親ID']) {
+            r['親ID'] = r['繰返し親ID'];
+            r['繰返し識別子'] = '';
+        }
+        delete r['繰返し親ID'];
+    });
+
     // 初回ロード時のみ、先頭カテゴリをデフォルト選択にする
     if (!categoryInitialized) {
         const categories = [...new Set(currentMasterData.map(r => r['(M)カテゴリ']).filter(Boolean))];
         if (categories.length > 0) currentCategory = categories[0];
         categoryInitialized = true;
     }
-
-    // フィルタUIがまだ描画されていない状態でも絞り込み結果が正しくなるよう、先に初出の選択肢をチェック済みにしておく
-    seedCalendarFilterDefaults();
 
     renderCategoryFilter();   // データ更新時にカテゴリ一覧を再構築
     renderSummary();
@@ -735,14 +734,14 @@ function getFilteredMainData() {
     return filterMainDataByCategory(currentMainData, currentCategory);
 }
 
-/** 「ナレッジ」タブ: データ区分=ナレッジの行を更新日時の新しい順に一覧表示する（一覧表示のみ、行クリックは無反応）。 */
+/** 「ナレッジ」タブ: データ区分=ナレッジの行（1日タスクの器行を除く）を更新日時の新しい順に一覧表示する（一覧表示のみ、行クリックは無反応）。 */
 function renderKnowledgeList() {
     const container = document.getElementById('knowledge-list-summary');
     if (!container) return;
     container.innerHTML = '';
 
     const rows = getFilteredMainData()
-        .filter(r => r['データ区分'] === 'ナレッジ')
+        .filter(r => r['データ区分'] === 'ナレッジ' && !isDayPlanRow(r))
         .sort((a, b) => (b['更新日時'] || '').localeCompare(a['更新日時'] || ''));
 
     const wrap  = document.createElement('div');
@@ -793,16 +792,6 @@ function renderKnowledgeList() {
  */
 export function getFilteredTags() {
     return filterTagsByCategory(currentMasterData, currentCategory);
-}
-
-/**
- * 選択中のカテゴリに属する、有効な（(M)プロジェクト_ステータスが0でない）プロジェクト名一覧を返す。
- * 「すべて」選択時は (M)プロジェクト_子 の全値を返す。
- * それ以外は (M)プロジェクト_親 === currentCategory の行の (M)プロジェクト_子 を返す。
- * @returns {string[]}
- */
-export function getFilteredProjects() {
-    return filterProjectsByCategory(currentMasterData, currentCategory);
 }
 
 // ===== タスク実行機能 =====
@@ -1046,7 +1035,7 @@ function buildTaskRunnerUI(container) {
     const todayDayPlanBlocks = todayDayPlan ? parseDayPlanContent(todayDayPlan['内容']) : [];
     const todayReferencedIds = new Set(todayDayPlanBlocks.map(b => b.refId).filter(Boolean));
     const todaysDayPlanTasks = currentMainData.filter(r =>
-        r['データ区分'] === 'タスク' && r['プロジェクト'] !== DAYPLAN_PROJECT
+        r['データ区分'] === 'タスク'
         && todayReferencedIds.has(String(r['ID']))
         && (currentCategory === 'すべて' || r['カテゴリ'] === currentCategory)
     );
@@ -1054,7 +1043,7 @@ function buildTaskRunnerUI(container) {
 
     const inProgress = getFilteredMainData().filter(r =>
         r['データ区分'] === 'タスク' && r['ステータス'] === '進行中'
-        && !(r['繰返し識別子'] === '1' && !r['繰返し親ID']) // 繰返しタスクの親は対象外
+        && !isRecurringParentRow(r) // 繰返しタスクの親は対象外
     );
     // 1階層でも2階層でも誰かの親（プロジェクト）になっているタスクは、通常の進行中一覧とは分けて「（親タスク）」表に表示する。
     const inProgressParents    = inProgress.filter(r => isParentRowM(currentMainData, r['ID']));
@@ -1251,6 +1240,43 @@ function buildTaskRunnerUI(container) {
 }
 
 /**
+ * タスク実行パネル用の親（プロジェクト）階層プルダウン（PJ(1層)〜必要な階層数だけ）を container に描画する。
+ * 新タスク整理の編集フォームと同じ親ID方式・同じ挙動（＋新規PJ追加・階層追加）を runnerParentPath に対して行う。
+ */
+function renderRunnerParentDropdowns(container, excludeId) {
+    container.innerHTML = '';
+
+    const eligibleRows = getParentEligibleRows(excludeId);
+    const newPjExtraOption = [{ value: NEW_PJ_MARK, label: '＋ 新規PJを追加' }];
+
+    let level = 0;
+    let parentId = ''; // 空文字ならこのレベルはルート階層（親ID空欄）の選択肢を出す
+    for (;;) {
+        const options = level === 0
+            ? eligibleRows.filter(r => !r['親ID'] && (isParentRowM(currentMainData, r['ID']) || String(r['ID']) === runnerParentPath[0]))
+            : getChildrenM(eligibleRows, parentId);
+
+        const currentValue    = runnerParentPath[level] || '';
+        const levelForClosure = level;
+        const parentIdForClosure = parentId;
+        appendProject2DropdownRow(container, `PJ(${level + 1}層)`, options, currentValue, value => {
+            if (value === NEW_PJ_MARK) {
+                const newId = createNewProjectViaPrompt(parentIdForClosure);
+                if (newId) runnerParentPath = [...runnerParentPath.slice(0, levelForClosure), newId];
+                renderRunnerParentDropdowns(container, excludeId);
+                return;
+            }
+            runnerParentPath = value ? buildProject2PathFromId(value) : runnerParentPath.slice(0, levelForClosure);
+            renderRunnerParentDropdowns(container, excludeId);
+        }, newPjExtraOption);
+
+        if (!currentValue) break; // このレベルで何も選ばれていなければ、これ以上下の階層は出さない
+        parentId = currentValue;
+        level++;
+    }
+}
+
+/**
  * タスク実行パネル用の属性編集フォームを構築する（タスク整理「新規追加・編集」と同様の項目）。
  * ステータス・繰り返しはタスク実行の他の機能と重複するため対象外。
  */
@@ -1344,23 +1370,36 @@ function buildRunnerAttributeEditor(row) {
     tagSelect.value = row['タグ'] || '';
     addRow('タグ', tagSelect);
 
-    const projectSelect = document.createElement('select');
-    populateSelectOptions(projectSelect, getFilteredProjects(), '（未設定）');
-    projectSelect.value = row['プロジェクト'] || '';
-    addRow('プロジェクト', projectSelect);
+    runnerParentPath = buildProject2PathFromId(row['親ID']);
+    const parentDropdowns = document.createElement('div');
+    renderRunnerParentDropdowns(parentDropdowns, row['ID']);
+    addRow('プロジェクト', parentDropdowns);
+
+    const parentClearBtn = document.createElement('button');
+    parentClearBtn.type = 'button';
+    parentClearBtn.className = 'calendar-add-btn';
+    parentClearBtn.textContent = '親を解除';
+    parentClearBtn.addEventListener('click', () => {
+        runnerParentPath = [];
+        renderRunnerParentDropdowns(parentDropdowns, row['ID']);
+    });
+    addRow('', parentClearBtn);
 
     const toolbar = document.createElement('div');
     toolbar.className = 'calendar-edit-toolbar';
     const applyBtn = document.createElement('button');
     applyBtn.textContent = '適用';
     applyBtn.addEventListener('click', () => {
+        const parentId = runnerParentPath[runnerParentPath.length - 1] || '';
+        if (!checkParentCycleOrAlert(row['ID'], parentId)) return;
+
         row['タイトル'] = titleInput.value.trim();
         row['内容']     = contentInput.value.trim();
         row['備考']     = bikoInput.value.trim();
         row['優先度']   = prioritySelect.value;
         row['カテゴリ'] = categorySelect.value;
         row['タグ']     = tagSelect.value;
-        row['プロジェクト']     = projectSelect.value;
+        row['親ID']     = parentId;
 
         const startTime = start.hourInput.value !== '' && start.minuteInput.value !== ''
             ? `${String(start.hourInput.value).padStart(2, '0')}:${String(start.minuteInput.value).padStart(2, '0')}` : '';
@@ -1372,7 +1411,7 @@ function buildRunnerAttributeEditor(row) {
         row['更新日時'] = formatJpDatetime(new Date());
 
         persistLocalCache();
-        renderCalendar();
+        renderCalendar2();
         renderRecurringSection();
         renderTaskRunner();
     });
@@ -1383,16 +1422,6 @@ function buildRunnerAttributeEditor(row) {
 }
 
 // ===== カレンダー =====
-
-/** dateJP に●印が出るタスク（フィルタ適用済み）を返す。●の判定とクリック後の一覧表示で共有するロジック。 */
-function getTasksForDate(dateJP) {
-    return getTasksForDateM(currentMainData, currentCategory, calendarFilters, dateJP);
-}
-
-/** 指定日の1日タスク（プロジェクト=DAYPLAN_PROJECT、開始予定=dateJP のタスク行）を返す。無ければ null。 */
-function getDayPlanTask(dateJP) {
-    return getDayPlanTaskM(currentMainData, dateJP);
-}
 
 /** データ区分がタスクで、指定フィールドが value と一致し、ステータスが完了・中断以外の件数を、カテゴリで絞り込んで返す。 */
 function countActiveTasksByField(field, value) {
@@ -1455,14 +1484,17 @@ function matchesFilterValue(set, value) {
     return !value || set.has(value);
 }
 
-/** rows が属する、実際にプロジェクト（子を持つ最上位の親行）である最上位の親行一覧を返す。 */
+/** rows が属する、実際にプロジェクト（子を持つ最上位の親行）である最上位の親行一覧を返す（繰返しテンプレートは除く）。 */
 function getProjectRootRows(rows) {
     const rootIds = new Set();
     rows.forEach(r => {
         const rootId = getRootParentIdM(currentMainData, r['ID']);
         if (isParentRowM(currentMainData, rootId)) rootIds.add(rootId);
     });
-    return [...rootIds].map(id => currentMainData.find(r => String(r['ID']) === id)).filter(Boolean);
+    return [...rootIds]
+        .map(id => currentMainData.find(r => String(r['ID']) === id))
+        .filter(Boolean)
+        .filter(r => !isRecurringParentRow(r));
 }
 
 /** rows のうち、最上位の親IDが rootId と一致する件数を返す（activeOnly指定時は完了・中断を除く）。 */
@@ -1477,7 +1509,10 @@ function countRowsByProjectRoot(rows, rootId, activeOnly = false) {
 /** row がプロジェクト（親ID方式）の絞り込みを満たすか判定する。プロジェクトに属さない単独行は常に素通しする。 */
 function matchesProjectRootFilter(row, filterSet) {
     const rootId = getRootParentIdM(currentMainData, row['ID']);
-    if (!isParentRowM(currentMainData, rootId)) return true;
+    const rootRow = currentMainData.find(r => String(r['ID']) === rootId);
+    // 最上位が繰返しテンプレート（プロジェクトに属さない単独の繰返しタスク）の場合は、
+    // プロジェクト一覧の選択肢に出てこないため、単独タスクと同様に常に通過させる。
+    if (!isParentRowM(currentMainData, rootId) || (rootRow && isRecurringParentRow(rootRow))) return true;
     return filterSet.has(rootId);
 }
 
@@ -1538,87 +1573,6 @@ function renderParentProjectFilters(area, filters, knownOptions, projectRootRows
     makeRow('ステータス', statusOptions, filters.status, v => `${v} (${countActiveTasksByField('ステータス', v)}/${countTasksByField('ステータス', v)})`);
 }
 
-/**
- * タグ／プロジェクト／ステータスの初出の選択肢を、フィルタのデフォルト選択（チェック済み）として登録する。
- * データ読込直後に呼ぶことで、フィルタUIが一度も描画されていない状態でも絞り込み結果が正しくなる
- * （renderTaskRunner等、フィルタUIより先に絞り込み結果を参照する描画処理があるため）。
- */
-function seedCalendarFilterDefaults() {
-    seedFilterOptionSet(getFilteredTags(),         calendarFilters.tag,     calendarFilterKnownOptions.tag);
-    seedFilterOptionSet(getFilteredProjects(),      calendarFilters.project, calendarFilterKnownOptions.project);
-    seedFilterOptionSet(getFilteredTaskStatuses(),  calendarFilters.status,  calendarFilterKnownOptions.status);
-}
-
-/**
- * タグ／プロジェクト／ステータスの絞り込みチップ（いずれも複数選択可、件数(n/N)併記・N降順）を area に描画する。
- * カレンダー・ガントチャートなど複数箇所から共通利用する。
- * @param {HTMLElement} area     - チップ群を描画する要素
- * @param {{tag:Set, project:Set, status:Set}} filters - 選択状態を持つフィルタ値（複数選択）
- * @param {Function} onChange    - 選択変更時に呼ぶ再描画コールバック
- */
-function renderTagProjectStatusFilters(area, filters, onChange) {
-    if (!area) return;
-    area.innerHTML = '';
-
-    function makeRow(labelText, options, selectedSet, ctrl) {
-        const row = document.createElement('div');
-        row.className = 'triage-filter-row';
-        const lbl = document.createElement('span');
-        lbl.className = 'triage-filter-label';
-        lbl.textContent = labelText;
-
-        const selectAllBtn = document.createElement('button');
-        selectAllBtn.type = 'button';
-        selectAllBtn.className = 'calendar-filter-bulk-btn';
-        selectAllBtn.textContent = '全選択';
-        selectAllBtn.addEventListener('click', () => {
-            options.forEach(v => selectedSet.add(v));
-            onChange();
-        });
-
-        const deselectAllBtn = document.createElement('button');
-        deselectAllBtn.type = 'button';
-        deselectAllBtn.className = 'calendar-filter-bulk-btn';
-        deselectAllBtn.textContent = '全解除';
-        deselectAllBtn.addEventListener('click', () => {
-            selectedSet.clear();
-            onChange();
-        });
-
-        row.append(lbl, selectAllBtn, deselectAllBtn, ctrl);
-        area.appendChild(row);
-    }
-
-    const tagOptions = sortByTotalCountDesc(getFilteredTags(), 'タグ');
-    seedFilterOptionSet(tagOptions, filters.tag, calendarFilterKnownOptions.tag);
-    makeRow('タグ', tagOptions, filters.tag, createCalendarMultiFilter(
-        tagOptions, filters.tag,
-        v => `${v} (${countActiveTasksByField('タグ', v)}/${countTasksByField('タグ', v)})`,
-        onChange
-    ));
-
-    const projectOptions = sortByTotalCountDesc(getFilteredProjects(), 'プロジェクト');
-    seedFilterOptionSet(projectOptions, filters.project, calendarFilterKnownOptions.project);
-    makeRow('プロジェクト', projectOptions, filters.project, createCalendarMultiFilter(
-        projectOptions, filters.project,
-        v => `${v} (${countActiveTasksByField('プロジェクト', v)}/${countTasksByField('プロジェクト', v)})`,
-        onChange
-    ));
-
-    const statusOptions = sortByTotalCountDesc(getFilteredTaskStatuses(), 'ステータス');
-    seedFilterOptionSet(statusOptions, filters.status, calendarFilterKnownOptions.status);
-    makeRow('ステータス', statusOptions, filters.status, createCalendarMultiFilter(
-        statusOptions, filters.status,
-        v => `${v} (${countActiveTasksByField('ステータス', v)}/${countTasksByField('ステータス', v)})`,
-        onChange
-    ));
-}
-
-/** カレンダー上部のタグ／プロジェクト／ステータスフィルタ（いずれも複数選択可）を描画する。 */
-function renderCalendarFilters() {
-    renderTagProjectStatusFilters(document.getElementById('calendar-filter-area'), calendarFilters, () => renderCalendar());
-}
-
 /** 旧繰返しページ上部のタグ／プロジェクト（親ID方式）／ステータスフィルタを描画する（新タスク整理と同一仕様）。 */
 function renderRecurringFilters() {
     renderParentProjectFilters(
@@ -1656,7 +1610,7 @@ function buildRecurringWeekBoardRow(item, isParent) {
     tr.appendChild(td);
 
     tr.addEventListener('click', () => {
-        selectedRecurringParentId = isParent ? id : item['繰返し親ID'];
+        selectedRecurringParentId = isParent ? id : item['親ID'];
         selectedRecurringEditId   = id;
         renderRecurringSection();
     });
@@ -1702,7 +1656,7 @@ function buildRecurringWeekBoardWeek(container, weekStart) {
                 const parentId = String(parent['ID']);
                 // この日（基準日）を起点に既に生成済みの子タスクがあれば、親の代わりにそれらを表示する
                 const generatedChildren = currentMainData.filter(r =>
-                    r['繰返し親ID'] === parentId && r['繰返し基準日'] === dateJP
+                    r['親ID'] === parentId && r['繰返し基準日'] === dateJP
                 );
 
                 if (generatedChildren.length > 0) {
@@ -1848,7 +1802,7 @@ function buildRecurringChildExecRow(child) {
     const running = isLogRunning(child['タイムスタンプログ']);
 
     const tr = buildRecurringListTitleCell(child, getCalendarStatusClass(child['ステータス']), childId === selectedRecurringEditId, () => {
-        selectedRecurringParentId = child['繰返し親ID'];
+        selectedRecurringParentId = child['親ID'];
         selectedRecurringEditId   = childId;
         renderRecurringSection();
     });
@@ -1908,7 +1862,7 @@ function buildRecurringChildExecRow(child) {
         persistLocalCache();
         renderRecurringSection();
         renderTaskRunner();
-        renderCalendar();
+        renderCalendar2();
     });
     actionTd.appendChild(doneBtn);
 
@@ -1970,7 +1924,7 @@ function renderRecurringExecArea() {
     parents.forEach(parent => {
         const parentId = String(parent['ID']);
         const generatedChildren = currentMainData.filter(r =>
-            r['繰返し親ID'] === parentId && r['繰返し基準日'] === todayJP
+            r['親ID'] === parentId && r['繰返し基準日'] === todayJP
         );
 
         if (generatedChildren.length > 0) {
@@ -1983,594 +1937,6 @@ function renderRecurringExecArea() {
     table.replaceChildren(tbody);
 }
 
-/**
- * タグ／プロジェクト／ステータスでフィルタ中のタスク一覧（日付を問わず全件）を返す。
- * ソート順: ステータス（完了・報告待ち・連絡待ち・中断・進行中・未着手・空欄の順）→ 完了日 昇順 → 開始予定 昇順 → 終了予定 昇順。
- */
-function getCalendarFilteredTaskList() {
-    return getCalendarFilteredTaskListM(currentMainData, currentCategory, calendarFilters);
-}
-
-/** タグ／プロジェクトでフィルタ中のタスク一覧テーブルを、指定した table 要素（カレンダー／ガントチャート共通）に描画する。 */
-function renderCalendarTaskList(tableId = 'calendar-task-list-table') {
-    const table = document.getElementById(tableId);
-    if (!table) return;
-
-    const tasks = getCalendarFilteredTaskList();
-    const wrapper = table.closest('.table-wrapper');
-    if (wrapper) wrapper.style.display = '';
-
-    table.className = 'data-table';
-    const cols = ['ID', 'タイトル', 'ステータス', '開始予定', '終了予定', '完了日'];
-
-    const thead = document.createElement('thead');
-    const hRow  = document.createElement('tr');
-    cols.forEach(col => {
-        const th = document.createElement('th');
-        th.textContent = col;
-        hRow.appendChild(th);
-    });
-    thead.appendChild(hRow);
-
-    const tbody = document.createElement('tbody');
-    tasks.forEach(row => {
-        const tr = document.createElement('tr');
-        if (String(row['ID']) === selectedCalendarTaskId) tr.classList.add('selected-row');
-        cols.forEach(col => {
-            const td = document.createElement('td');
-            td.textContent = row[col] ?? '';
-            tr.appendChild(td);
-        });
-        tr.addEventListener('click', () => selectCalendarTaskFromList(row));
-        tbody.appendChild(tr);
-    });
-
-    table.replaceChildren(thead, tbody);
-}
-
-/** タスク一覧から選択した行を、対応する日付・月へカレンダーを連動させつつ編集対象にする。 */
-function selectCalendarTaskFromList(row) {
-    const dateValue = row['開始予定'] || row['終了予定'];
-    if (dateValue) {
-        const datePart = dateValue.split(' ')[0];
-        const [y, m, d] = datePart.split('/').map(Number);
-        if (y && m && d) {
-            calendarYear  = y;
-            calendarMonth = m - 1;
-            selectedCalendarDate = datePart;
-        }
-    }
-    selectedCalendarTaskId = String(row['ID']);
-    calendarQuickNewMode   = false;
-    renderCalendar();
-}
-
-/** 「新規登録」ボタンをクリックした際、日付を空欄にした新規登録モードで編集パネルを開く。 */
-function startCalendarQuickNewTask() {
-    selectedCalendarTaskId = null;
-    calendarQuickNewMode   = true;
-    renderCalendarDetail();
-}
-document.getElementById('calendar-quick-new-btn')?.addEventListener('click', startCalendarQuickNewTask);
-
-/** 「タスク整理」のビュー切り替えボタン（カレンダー／ガントチャート）の表示状態を反映する。 */
-function renderTaskOrgViewToggle() {
-    document.getElementById('taskorg-tab-calendar')?.classList.toggle('taskorg-view-btn--active', taskOrgView === 'calendar');
-    document.getElementById('taskorg-tab-gantt')?.classList.toggle('taskorg-view-btn--active', taskOrgView === 'gantt');
-    const calEl   = document.getElementById('taskorg-view-calendar');
-    const ganttEl = document.getElementById('taskorg-view-gantt');
-    if (calEl)   calEl.style.display   = taskOrgView === 'calendar' ? '' : 'none';
-    if (ganttEl) ganttEl.style.display = taskOrgView === 'gantt'    ? '' : 'none';
-
-    const calListEl   = document.getElementById('taskorg-tasklist-calendar');
-    const ganttListEl = document.getElementById('taskorg-tasklist-gantt');
-    if (calListEl)   calListEl.style.display   = taskOrgView === 'calendar' ? '' : 'none';
-    if (ganttListEl) ganttListEl.style.display = taskOrgView === 'gantt'    ? '' : 'none';
-}
-
-document.getElementById('taskorg-tab-calendar')?.addEventListener('click', () => { taskOrgView = 'calendar'; renderCalendar(); });
-document.getElementById('taskorg-tab-gantt')?.addEventListener('click', () => { taskOrgView = 'gantt'; renderCalendar(); });
-
-/** ガントチャートの日／週切り替えボタンの表示状態を反映する。 */
-function renderGanttUnitToggle() {
-    document.getElementById('gantt-unit-day')?.classList.toggle('gantt-unit-btn--active', ganttViewUnit === 'day');
-    document.getElementById('gantt-unit-week')?.classList.toggle('gantt-unit-btn--active', ganttViewUnit === 'week');
-}
-
-document.getElementById('gantt-unit-day')?.addEventListener('click', () => { ganttViewUnit = 'day'; renderGanttUnitToggle(); renderGanttChart(); });
-document.getElementById('gantt-unit-week')?.addEventListener('click', () => { ganttViewUnit = 'week'; renderGanttUnitToggle(); renderGanttChart(); });
-
-/** 「タスク整理」セクション全体（ビュー切替・フィルタ・カレンダー/ガントチャート・詳細ビュー）を再描画する。 */
-function renderCalendar() {
-    renderTaskOrgViewToggle();
-    renderCalendarFilters();
-    if (taskOrgView === 'calendar') {
-        renderCalendarTaskList('calendar-task-list-table');
-        renderCalendarGrid();
-    } else {
-        renderCalendarTaskList('gantt-task-list-table');
-        renderGanttUnitToggle();
-        renderGanttChart();
-    }
-    renderCalendarDetail();
-}
-
-/** 現在の calendarYear / calendarMonth に基づいて月カレンダーを描画する。 */
-function renderCalendarGrid() {
-    const label = document.getElementById('calendar-month-label');
-    if (label) label.textContent = `${calendarYear}年${calendarMonth + 1}月`;
-
-    const grid = document.getElementById('calendar-grid');
-    if (!grid) return;
-    grid.innerHTML = '';
-
-    ['日', '月', '火', '水', '木', '金', '土'].forEach(d => {
-        const head = document.createElement('div');
-        head.className = 'calendar-day-head';
-        head.textContent = d;
-        grid.appendChild(head);
-    });
-
-    const todayJP        = jpDateOnly(formatJpDatetime(new Date()));
-    const startWeekday   = new Date(calendarYear, calendarMonth, 1).getDay();
-    const daysInMonth    = new Date(calendarYear, calendarMonth + 1, 0).getDate();
-    const pad            = n => String(n).padStart(2, '0');
-
-    for (let i = 0; i < startWeekday; i++) {
-        const cell = document.createElement('div');
-        cell.className = 'calendar-day calendar-day--empty';
-        grid.appendChild(cell);
-    }
-
-    const workExceptions = parseExceptions(getWorkCalendarContent(calendarYear));
-
-    for (let d = 1; d <= daysInMonth; d++) {
-        const dateJP = `${calendarYear}/${pad(calendarMonth + 1)}/${pad(d)}`;
-        const cell = document.createElement('div');
-        cell.className = 'calendar-day';
-        if (dateJP === todayJP)              cell.classList.add('calendar-day--today');
-        if (dateJP === selectedCalendarDate) cell.classList.add('calendar-day--selected');
-
-        const workType = workExceptions.get(dateJP)?.type
-            ?? getDefaultType(new Date(calendarYear, calendarMonth, d));
-        if (workType !== '出勤日') cell.classList.add(`calendar-day--work-${workType}`);
-
-        const num = document.createElement('div');
-        num.className = 'calendar-day-num';
-        num.textContent = String(d);
-        cell.appendChild(num);
-
-        const dayTasks = getTasksForDate(dateJP);
-        if (dayTasks.length > 0) {
-            const hasRemaining = dayTasks.some(r => !isTaskDoneForCalendar(r));
-            const badge = document.createElement('span');
-            badge.className = `calendar-day-badge ${hasRemaining ? 'calendar-day-badge--red' : 'calendar-day-badge--green'}`;
-            badge.textContent = '●';
-            badge.title = `${dayTasks.length} 件の予定`;
-            cell.appendChild(badge);
-        }
-
-        cell.addEventListener('click', () => {
-            selectedCalendarDate   = dateJP;
-            selectedCalendarTaskId = null;
-            calendarQuickNewMode   = false;
-            renderCalendar();
-        });
-        grid.appendChild(cell);
-    }
-}
-
-/**
- * dateJP のタスクを「時間帯が決まっているもの（timed）」と「時間帯未定（unscheduled）」に分ける。
- * timed の各要素は { row, startMin, endMin }（分単位、0〜1440）。
- */
-function getCalendarSegmentsForDate(dateJP) {
-    return getCalendarSegmentsForDateM(currentMainData, currentCategory, calendarFilters, dateJP);
-}
-
-const CALENDAR_HOUR_HEIGHT = 40; // 1時間あたりの高さ(px)
-
-/** 1日の時間軸（0:00〜24:00の目盛り）とタスクの時間帯ブロックを描画する。 */
-function renderCalendarTimeline(dateJP) {
-    const hoursEl = document.getElementById('calendar-timeline-hours');
-    const lanesEl = document.getElementById('calendar-timeline-lanes');
-    if (!hoursEl || !lanesEl) return;
-
-    const totalHeight = CALENDAR_HOUR_HEIGHT * 24;
-    hoursEl.style.height = `${totalHeight}px`;
-    lanesEl.style.height = `${totalHeight}px`;
-
-    hoursEl.innerHTML = '';
-    for (let h = 0; h < 24; h++) {
-        const row = document.createElement('div');
-        row.className = 'calendar-hour-row';
-        row.style.height = `${CALENDAR_HOUR_HEIGHT}px`;
-        row.textContent = `${String(h).padStart(2, '0')}:00`;
-        hoursEl.appendChild(row);
-    }
-
-    lanesEl.innerHTML = '';
-    const { timed } = getCalendarSegmentsForDate(dateJP);
-    assignCalendarLanes(timed);
-
-    const pxPerMin = CALENDAR_HOUR_HEIGHT / 60;
-    const fmt = m => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
-
-    // 横軸グリッド線（00分=太、30分=中、15分・45分=細）
-    for (let m = 0; m < 1440; m += 15) {
-        const minuteOfHour = m % 60;
-        const variant = minuteOfHour === 0 ? 'hour' : minuteOfHour === 30 ? 'half' : 'quarter';
-        const line = document.createElement('div');
-        line.className = `calendar-timeline-gridline calendar-timeline-gridline--${variant}`;
-        line.style.top = `${m * pxPerMin}px`;
-        lanesEl.appendChild(line);
-    }
-
-    timed.forEach(seg => {
-        const laneWidthPct = 100 / seg.laneCount;
-        const block = document.createElement('div');
-        const hasLinkedTask = seg.row['ID'] != null;
-        block.className = `calendar-time-block ${hasLinkedTask ? getCalendarStatusClass(seg.row['ステータス']) : 'calendar-time-block--dayplan'}`;
-        if (hasLinkedTask && String(seg.row['ID']) === selectedCalendarTaskId) block.classList.add('calendar-time-block--selected');
-        block.style.top    = `${seg.startMin * pxPerMin}px`;
-        block.style.height = `${(seg.endMin - seg.startMin) * pxPerMin}px`;
-        block.style.left   = `${seg.lane * laneWidthPct}%`;
-        block.style.width  = `calc(${laneWidthPct}% - 4px)`;
-
-        const labelSpan = document.createElement('span');
-        labelSpan.textContent = `${fmt(seg.startMin)}–${fmt(seg.endMin)} ${seg.row['タイトル'] || '（無題）'}`;
-        block.appendChild(labelSpan);
-
-        const handle = document.createElement('div');
-        handle.className = 'calendar-time-block-resize-handle';
-        block.appendChild(handle);
-
-        attachTimelineDragHandlers(block, handle, labelSpan, seg, dateJP, pxPerMin, hasLinkedTask);
-        lanesEl.appendChild(block);
-    });
-
-    // デフォルトで 8:00〜18:00 が見える位置までスクロールする
-    const scrollEl = document.getElementById('calendar-timeline-scroll');
-    if (scrollEl) scrollEl.scrollTop = 8 * CALENDAR_HOUR_HEIGHT;
-}
-
-const TIMELINE_SNAP_MIN = 15;         // ドラッグ操作のスナップ単位（分）
-const TIMELINE_DRAG_THRESHOLD_MIN = 8; // これ未満の移動量はクリック（属性編集を開く）として扱う
-
-/** 分を15分単位に丸める。 */
-function snapTimelineMinutes(min) {
-    return Math.round(min / TIMELINE_SNAP_MIN) * TIMELINE_SNAP_MIN;
-}
-
-/**
- * タイムラインのブロックへ「移動（ブロック全体をドラッグ）」「リサイズ（下端ハンドルをドラッグ）」操作を付与する。
- * Pointer Events を使うためマウス・タッチいずれにも対応する。移動量が小さい場合はクリックとして扱い、
- * リンク先タスクがあれば属性編集パネルを開く（従来のクリック挙動を維持）。
- */
-function attachTimelineDragHandlers(block, handle, labelSpan, seg, dateJP, pxPerMin, hasLinkedTask) {
-    const fmt = m => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
-    let dragMode  = null; // 'move' | 'resize'
-    let pointerId = null;
-    let startClientY = 0;
-    let origStart = seg.startMin;
-    let origEnd   = seg.endMin;
-    let pendingStart = seg.startMin;
-    let pendingEnd   = seg.endMin;
-
-    function updatePreview(newStart, newEnd) {
-        pendingStart = newStart;
-        pendingEnd   = newEnd;
-        block.style.top    = `${newStart * pxPerMin}px`;
-        block.style.height = `${(newEnd - newStart) * pxPerMin}px`;
-        labelSpan.textContent = `${fmt(newStart)}–${fmt(newEnd)} ${seg.row['タイトル'] || '（無題）'}`;
-    }
-
-    function onPointerMove(e) {
-        if (!dragMode) return;
-        const deltaMin = snapTimelineMinutes((e.clientY - startClientY) / pxPerMin);
-
-        if (dragMode === 'move') {
-            const duration = origEnd - origStart;
-            const newStart = Math.max(0, Math.min(1440 - duration, origStart + deltaMin));
-            updatePreview(newStart, newStart + duration);
-        } else {
-            const newEnd = Math.max(origStart + TIMELINE_SNAP_MIN, Math.min(1440, origEnd + deltaMin));
-            updatePreview(origStart, newEnd);
-        }
-    }
-
-    function onPointerUp() {
-        if (!dragMode) return;
-        block.releasePointerCapture(pointerId);
-        block.removeEventListener('pointermove', onPointerMove);
-        block.removeEventListener('pointerup', onPointerUp);
-        block.removeEventListener('pointercancel', onPointerUp);
-
-        const movedMin = Math.abs(pendingStart - origStart) + Math.abs(pendingEnd - origEnd);
-        if (movedMin < TIMELINE_DRAG_THRESHOLD_MIN) {
-            updatePreview(origStart, origEnd); // 微小な移動は元に戻す
-            if (dragMode === 'move' && hasLinkedTask) openCalendarTaskEdit(String(seg.row['ID']));
-        } else {
-            commitTimelineDrag(seg, dateJP, pendingStart, pendingEnd);
-        }
-        dragMode = null;
-    }
-
-    function startDrag(mode, e) {
-        if (e.pointerType === 'mouse' && e.button !== 0) return;
-        dragMode      = mode;
-        pointerId     = e.pointerId;
-        startClientY  = e.clientY;
-        origStart     = seg.startMin;
-        origEnd       = seg.endMin;
-        pendingStart  = origStart;
-        pendingEnd    = origEnd;
-        block.setPointerCapture(pointerId);
-        block.addEventListener('pointermove', onPointerMove);
-        block.addEventListener('pointerup', onPointerUp);
-        block.addEventListener('pointercancel', onPointerUp);
-        e.preventDefault();
-        e.stopPropagation();
-    }
-
-    block.addEventListener('pointerdown', (e) => startDrag('move', e));
-    handle.addEventListener('pointerdown', (e) => startDrag('resize', e));
-}
-
-/**
- * タイムラインのドラッグ操作結果を確定保存する。
- * 1日タスクのスケジュール行（isDayPlanBlock）はその行の時刻を、通常のタスクは開始予定・終了予定（dateJP当日分）を書き換える。
- */
-function commitTimelineDrag(seg, dateJP, newStartMin, newEndMin) {
-    const fmt = m => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
-
-    if (seg.isDayPlanBlock) {
-        const dayPlan = getDayPlanTask(dateJP);
-        if (!dayPlan) return;
-        dayPlan['内容']     = updateDayPlanBlockTime(dayPlan['内容'], seg.dayPlanBlockIndex, newStartMin, newEndMin);
-        dayPlan['更新日時'] = formatJpDatetime(new Date());
-    } else {
-        const row = currentMainData.find(r => String(r['ID']) === String(seg.row['ID']));
-        if (!row) return;
-        row['開始予定'] = `${dateJP} ${fmt(newStartMin)}`;
-        row['終了予定'] = `${dateJP} ${fmt(newEndMin)}`;
-        row['更新日時'] = formatJpDatetime(new Date());
-    }
-
-    persistLocalCache();
-    renderCalendarDetail();
-    renderTaskRunner();
-}
-
-/** 1日タスクの作成ボタン／編集エリアを、選択中の日付の状態に合わせて描画する。 */
-function renderDayPlanSection() {
-    const createBtn = document.getElementById('dayplan-create-btn');
-    const editor     = document.getElementById('dayplan-editor');
-    const contentEl  = document.getElementById('dayplan-content');
-    if (!createBtn || !editor || !contentEl) return;
-
-    if (!selectedCalendarDate) {
-        createBtn.style.display = 'none';
-        editor.style.display = 'none';
-        return;
-    }
-
-    const dayPlan = getDayPlanTask(selectedCalendarDate);
-    if (dayPlan) {
-        createBtn.style.display = 'none';
-        editor.style.display = '';
-        if (document.activeElement !== contentEl) contentEl.value = dayPlan['内容'] || '';
-    } else {
-        createBtn.style.display = '';
-        editor.style.display = 'none';
-        contentEl.value = '';
-    }
-}
-
-/** "HH:MM" 文字列を分に変換する。 */
-function parseHHMMToMinutes(str) {
-    const [h, m] = str.split(':').map(Number);
-    return h * 60 + m;
-}
-
-/**
- * 選択中日付の1日タスクを新規作成する（プロジェクト=DAYPLAN_PROJECT、開始予定=選択中日付）。
- * 内容には既定の「09:00-09:30 メールチェック、予定整理」に加え、その日既に開始予定・終了予定が
- * 時刻まで指定されている既存タスクを取り込む（カテゴリの絞り込みは適用、タグ／プロジェクト／ステータスの絞り込みは適用しない）。
- */
-function createDayPlanTask() {
-    if (!selectedCalendarDate) return;
-
-    const maxId = currentMainData.reduce((max, row) => {
-        const id = parseInt(row['ID'], 10);
-        return isNaN(id) ? max : Math.max(max, id);
-    }, 0);
-    const ts = formatJpDatetime(new Date());
-
-    const noFilters = { tag: new Set(), project: new Set(), status: new Set() };
-    const scheduledBlocks = getTasksForDateM(currentMainData, currentCategory, noFilters, selectedCalendarDate)
-        .map(row => {
-            const timeInfo = getTaskScheduledTimeOnDate(row, selectedCalendarDate);
-            if (!timeInfo) return null;
-            return {
-                startMin: parseHHMMToMinutes(timeInfo.startStr),
-                endMin:   parseHHMMToMinutes(timeInfo.endStr),
-                refId:    String(row['ID']),
-                label:    ''
-            };
-        })
-        .filter(Boolean);
-
-    const defaultBlock = { startMin: 9 * 60, endMin: 9 * 60 + 30, refId: null, label: 'メールチェック、予定整理' };
-    const content = stringifyDayPlanBlocks(sortDayPlanBlocks([defaultBlock, ...scheduledBlocks]));
-
-    const entry = Object.fromEntries(MAIN_DATA_COLUMNS.map(col => [col, '']));
-    entry['ID']        = String(maxId + 1);
-    entry['データ区分'] = 'タスク';
-    entry['タイトル']   = `1日タスク ${selectedCalendarDate}`;
-    entry['プロジェクト']       = DAYPLAN_PROJECT;
-    entry['開始予定']   = selectedCalendarDate;
-    entry['ステータス'] = '未着手';
-    entry['内容']       = content;
-    entry['作成日時']   = ts;
-    entry['更新日時']   = ts;
-
-    currentMainData.push(entry);
-    persistLocalCache();
-    renderCalendarDetail();
-    renderCalendarGrid();
-}
-
-/** 編集エリアの内容をその日の1日タスクに保存する。 */
-function saveDayPlanContent() {
-    if (!selectedCalendarDate) return;
-    const dayPlan = getDayPlanTask(selectedCalendarDate);
-    if (!dayPlan) return;
-    const contentEl  = document.getElementById('dayplan-content');
-    const rawContent = contentEl ? contentEl.value : '';
-    const sortedBlocks = sortDayPlanBlocks(parseDayPlanContent(rawContent));
-    dayPlan['内容']     = stringifyDayPlanBlocks(sortedBlocks);
-    dayPlan['更新日時'] = formatJpDatetime(new Date());
-    if (contentEl) contentEl.value = dayPlan['内容'];
-    persistLocalCache();
-    renderCalendarDetail();
-}
-
-/** 選択中日付の1日タスクを削除する。 */
-function deleteDayPlanTask() {
-    if (!selectedCalendarDate) return;
-    const dayPlan = getDayPlanTask(selectedCalendarDate);
-    if (!dayPlan) return;
-    currentMainData = currentMainData.filter(r => r !== dayPlan);
-    persistLocalCache();
-    renderCalendarDetail();
-    renderCalendarGrid();
-}
-
-document.getElementById('dayplan-create-btn')?.addEventListener('click', createDayPlanTask);
-document.getElementById('dayplan-save-btn')?.addEventListener('click', saveDayPlanContent);
-document.getElementById('dayplan-delete-btn')?.addEventListener('click', deleteDayPlanTask);
-
-/**
- * タスクを選択中日付の1日タスクに「HH:MM-HH:MM #ID タイトル」の1行として追加する。1日タスクが無ければ新規作成する。
- * 開始予定・終了予定が今日の日付かつ時刻まで指定されていれば、その時間帯をそのまま使う。
- * 未指定時は、現在時刻以降で30分刻みに丸めた時刻から、その日の既存の予定と重ならない1時間の空き枠を自動で探して挿入する。
- */
-function addTaskToDayPlan(row) {
-    if (!selectedCalendarDate) return;
-    let dayPlan = getDayPlanTask(selectedCalendarDate);
-    if (!dayPlan) {
-        createDayPlanTask();
-        dayPlan = getDayPlanTask(selectedCalendarDate);
-        if (!dayPlan) return;
-    }
-    const busyBlocks = parseDayPlanContent(dayPlan['内容']);
-    const { startStr, endStr } = getTaskScheduledTimeOnDate(row, selectedCalendarDate) || computeDayPlanTimeSlot(busyBlocks);
-    const line = `${startStr}-${endStr} #${row['ID']} ${row['タイトル'] || '（無題）'}`;
-    dayPlan['内容']     = dayPlan['内容'] ? `${dayPlan['内容']}\n${line}` : line;
-    dayPlan['更新日時'] = formatJpDatetime(new Date());
-    persistLocalCache();
-    renderCalendarDetail();
-}
-
-/** チップ群（{row, label}の配列）を container に描画する。空なら emptyText を表示する。options.showAddButton（既定true）で1日タスクへの追加＋ボタンの有無を切り替える。 */
-function renderCalendarChipList(container, chipEntries, emptyText, options = {}) {
-    const { showAddButton = true } = options;
-    if (!container) return;
-    container.innerHTML = '';
-    if (chipEntries.length === 0) {
-        const p = document.createElement('p');
-        p.className = 'calendar-empty-text';
-        p.textContent = emptyText;
-        container.appendChild(p);
-        return;
-    }
-    chipEntries.forEach(({ row, label }) => {
-        const wrap = document.createElement('span');
-        wrap.className = 'calendar-unscheduled-chip-wrap';
-
-        const chip = document.createElement('button');
-        chip.type = 'button';
-        chip.className = `calendar-unscheduled-chip ${getCalendarStatusClass(row['ステータス'])}`;
-        if (String(row['ID']) === selectedCalendarTaskId) chip.classList.add('calendar-unscheduled-chip--selected');
-        chip.textContent = label;
-        chip.addEventListener('click', () => openCalendarTaskEdit(String(row['ID'])));
-        wrap.appendChild(chip);
-
-        if (showAddButton) {
-            const addBtn = document.createElement('button');
-            addBtn.type = 'button';
-            addBtn.className = 'calendar-unscheduled-chip-add';
-            addBtn.title = '1日タスクに追加';
-            addBtn.textContent = '+';
-            addBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                addTaskToDayPlan(row);
-            });
-            wrap.appendChild(addBtn);
-        }
-
-        container.appendChild(wrap);
-    });
-}
-
-/**
- * 未設定タスクの一覧を、ステータス（未着手→進行中→中断→連絡待ち→報告待ち→完了→その他の順）でグループ化して描画する。
- * 各グループの見出しは青色太字（calendar-section-label--accent）、グループ内は終了予定が近い順。
- */
-function renderGroupedTaskChips(container, chipEntries, emptyText, options = {}) {
-    const { showAddButton = false } = options;
-    if (!container) return;
-    container.innerHTML = '';
-    if (chipEntries.length === 0) {
-        const p = document.createElement('p');
-        p.className = 'calendar-empty-text';
-        p.textContent = emptyText;
-        container.appendChild(p);
-        return;
-    }
-
-    const groups = new Map();
-    chipEntries.forEach(entry => {
-        const status = entry.row['ステータス'] || '（未設定）';
-        if (!groups.has(status)) groups.set(status, []);
-        groups.get(status).push(entry);
-    });
-    const sortedStatuses = [...groups.keys()].sort((a, b) => taskOrganizeStatusRank(a) - taskOrganizeStatusRank(b));
-
-    sortedStatuses.forEach(status => {
-        const groupEntries = groups.get(status)
-            .sort((a, b) => compareDateAscEmptyLast(a.row['終了予定'], b.row['終了予定']));
-
-        const header = document.createElement('p');
-        header.className = 'calendar-section-label calendar-section-label--accent calendar-section-label--nested';
-        header.textContent = `${status}（${groupEntries.length}）`;
-        container.appendChild(header);
-
-        const listEl = document.createElement('div');
-        listEl.className = 'calendar-unscheduled-list';
-        container.appendChild(listEl);
-
-        renderCalendarChipList(listEl, groupEntries, '', { showAddButton });
-    });
-}
-
-/** 開始予定・終了予定の少なくとも一方が空欄のタスク（フィルタ適用済み）を返す。 */
-function getIncompleteDateTasks() {
-    return getIncompleteDateTasksM(currentMainData, currentCategory, calendarFilters);
-}
-
-/** カテゴリ／ステータス／優先度／プロジェクトそれぞれが未設定のタスクを、領域ごとに分けて返す（重複あり）。 */
-function getUnsetAttributeGroups() {
-    return getUnsetAttributeGroupsM(currentMainData, currentCategory);
-}
-
-/** ステータスが「中断」のタスクを返す（終了予定が近い順）。 */
-function getSuspendedTasks() {
-    return getSuspendedTasksM(currentMainData, currentCategory);
-}
-
-/** 選択中の日付の詳細ビュー（時間帯未定タスク・1日の予定表・属性編集パネル）を描画する。 */
 /** id要素（expander-count用span）に "N 件" 形式で件数を表示する。 */
 function setExpanderCount(id, count) {
     const el = document.getElementById(id);
@@ -2581,195 +1947,6 @@ function setExpanderCount(id, count) {
 function setExpanderCountPair(id, countA, countB) {
     const el = document.getElementById(id);
     if (el) el.textContent = `${countA} 件 / ${countB} 件`;
-}
-
-function renderCalendarDetail() {
-    const titleEl        = document.getElementById('calendar-detail-title');
-    const unscheduledEl  = document.getElementById('calendar-unscheduled-list');
-    const dayplanAddedEl = document.getElementById('calendar-dayplan-added-list');
-    const incompleteEl      = document.getElementById('calendar-incomplete-date-list');
-    const unsetCategoryEl   = document.getElementById('calendar-unset-category-list');
-    const unsetStatusEl     = document.getElementById('calendar-unset-status-list');
-    const unsetPriorityEl   = document.getElementById('calendar-unset-priority-list');
-    const unsetProjectEl        = document.getElementById('calendar-unset-project-list');
-    const suspendedEl       = document.getElementById('calendar-suspended-list');
-    if (!titleEl) return;
-
-    const incompleteChips = getIncompleteDateTasks().map(row => ({ row, label: row['タイトル'] || '（無題）' }));
-    renderCalendarChipList(incompleteEl, incompleteChips, '該当するタスクはありません');
-    setExpanderCount('calendar-incomplete-count', incompleteChips.length);
-
-    const unsetGroups = getUnsetAttributeGroups();
-    const toChips = rows => rows.map(row => ({ row, label: row['タイトル'] || '（無題）' }));
-    renderCalendarChipList(unsetCategoryEl, toChips(unsetGroups.categoryUnset), '該当するタスクはありません', { showAddButton: false });
-    renderCalendarChipList(unsetStatusEl,   toChips(unsetGroups.statusUnset),   '該当するタスクはありません', { showAddButton: false });
-    renderCalendarChipList(unsetPriorityEl, toChips(unsetGroups.priorityUnset), '該当するタスクはありません', { showAddButton: false });
-    renderCalendarChipList(unsetProjectEl,      toChips(unsetGroups.projectUnset),      '該当するタスクはありません', { showAddButton: false });
-    setExpanderCount('calendar-unset-category-count', unsetGroups.categoryUnset.length);
-    setExpanderCount('calendar-unset-status-count',   unsetGroups.statusUnset.length);
-    setExpanderCount('calendar-unset-priority-count', unsetGroups.priorityUnset.length);
-    setExpanderCount('calendar-unset-project-count',      unsetGroups.projectUnset.length);
-    setExpanderCount('calendar-unset-total-count',
-        unsetGroups.categoryUnset.length + unsetGroups.statusUnset.length +
-        unsetGroups.priorityUnset.length + unsetGroups.projectUnset.length);
-
-    const suspendedChips = toChips(getSuspendedTasks());
-    renderCalendarChipList(suspendedEl, suspendedChips, '該当するタスクはありません', { showAddButton: false });
-    setExpanderCount('calendar-suspended-count', suspendedChips.length);
-
-    if (!selectedCalendarDate) {
-        titleEl.textContent = 'カレンダーで日付を選択してください';
-        if (unscheduledEl)  unscheduledEl.innerHTML = '';
-        if (dayplanAddedEl) dayplanAddedEl.innerHTML = '';
-        setExpanderCountPair('calendar-todo-dayplan-count', 0, 0);
-        const hoursEl = document.getElementById('calendar-timeline-hours');
-        const lanesEl = document.getElementById('calendar-timeline-lanes');
-        if (hoursEl) hoursEl.innerHTML = '';
-        if (lanesEl) lanesEl.innerHTML = '';
-        renderDayPlanSection();
-        renderCalendarTaskEdit();
-        return;
-    }
-
-    titleEl.textContent = selectedCalendarDate;
-    renderDayPlanSection();
-
-    const { timed, unscheduled, referenced } = getCalendarSegmentsForDate(selectedCalendarDate);
-    const fmt = m => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
-    const chipEntries = [
-        ...unscheduled.map(row => ({ row, label: row['タイトル'] || '（無題）' })),
-        ...timed.filter(seg => seg.row['ID'] != null && !seg.isDayPlanBlock)
-                .map(seg => ({ row: seg.row, label: `${fmt(seg.startMin)}–${fmt(seg.endMin)} ${seg.row['タイトル'] || '（無題）'}` })),
-    ];
-    chipEntries.sort((a, b) => compareDateAscEmptyLast(a.row['終了予定'], b.row['終了予定']));
-    renderGroupedTaskChips(unscheduledEl, chipEntries, 'この日のタスクはありません', { showAddButton: true });
-
-    const referencedChips = referenced.map(row => ({ row, label: row['タイトル'] || '（無題）' }));
-    renderGroupedTaskChips(dayplanAddedEl, referencedChips, 'まだありません');
-
-    setExpanderCountPair('calendar-todo-dayplan-count', chipEntries.length, referencedChips.length);
-
-    renderCalendarTimeline(selectedCalendarDate);
-    renderCalendarTaskEdit();
-}
-
-/** 指定タスクを属性編集パネルの対象にする。 */
-function openCalendarTaskEdit(taskId) {
-    selectedCalendarTaskId = taskId;
-    calendarQuickNewMode = false;
-    renderCalendarDetail();
-}
-
-/**
- * 属性編集パネルを描画する。選択中タスクがあれば編集モード（値を反映）、
- * 無ければ新規登録モード（フォームをクリアし、開始予定を選択中の日付で初期化）にする。
- */
-const dayeditFreq = { month: new Set(), day: new Set(), weekday: new Set() }; // 属性編集パネルの頻度チップの選択状態
-
-/** 「繰り返しタスクの親として管理する」チェックボックスの状態に応じて頻度（月/日/曜日）チップの表示・非表示を切り替える。 */
-function updateDayeditFreqVisibility() {
-    const section = document.getElementById('dayedit-freq-section');
-    const checkbox = document.getElementById('dayedit-recurring-parent');
-    if (section) section.style.display = (checkbox && checkbox.checked) ? '' : 'none';
-}
-
-/** 属性編集パネルの頻度（月/日/曜日）チップを描画する。 */
-function renderDayeditFreqChips() {
-    renderFreqChipsFor('dayedit', dayeditFreq);
-}
-
-document.getElementById('dayedit-recurring-parent')?.addEventListener('change', updateDayeditFreqVisibility);
-
-/** ステータスを「完了」に変更したら、完了日を自動的に本日の日付にする。 */
-document.getElementById('dayedit-status')?.addEventListener('change', (e) => {
-    if (e.target.value !== '完了') return;
-    const completeEl = document.getElementById('dayedit-complete-date');
-    if (!completeEl) return;
-    const today = new Date();
-    const pad = n => String(n).padStart(2, '0');
-    completeEl.value = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
-});
-
-function renderCalendarTaskEdit() {
-    const panel = document.getElementById('calendar-task-edit');
-    if (!panel) return;
-
-    populateTaskEditSelects('dayedit');
-
-    const row = selectedCalendarTaskId
-        ? currentMainData.find(r => String(r['ID']) === selectedCalendarTaskId)
-        : null;
-
-    if (!row) {
-        selectedCalendarTaskId = null;
-        clearCalendarTaskEditForm();
-        renderDayeditFreqChips();
-        updateDayeditFreqVisibility();
-        return;
-    }
-
-    document.getElementById('dayedit-id').value        = row['ID']         ?? '';
-    document.getElementById('dayedit-title').value    = row['タイトル']   ?? '';
-    document.getElementById('dayedit-content').value  = row['内容']       ?? '';
-    document.getElementById('dayedit-biko').value     = row['備考']       ?? '';
-    document.getElementById('dayedit-status').value   = row['ステータス'] ?? '';
-    document.getElementById('dayedit-priority').value = row['優先度']     ?? '';
-    document.getElementById('dayedit-category').value = row['カテゴリ']   ?? '';
-    document.getElementById('dayedit-tag').value      = row['タグ']       ?? '';
-    document.getElementById('dayedit-project').value      = row['プロジェクト']       ?? '';
-
-    writeTaskDateTimeFieldsToForm('dayedit', row);
-    writeTaskEstimateActualToForm('dayedit', row, 'minutes');
-
-    const recurringCheckbox = document.getElementById('dayedit-recurring-parent');
-    if (recurringCheckbox) recurringCheckbox.checked = row['繰返し識別子'] === '1' && !row['繰返し親ID'];
-
-    loadFreqStateFromRow(dayeditFreq, row);
-    renderDayeditFreqChips();
-    updateDayeditFreqVisibility();
-}
-
-/**
- * 編集フォームをクリアし、新規登録モードの初期値を設定する。
- * - 開始予定・終了予定の日付: 選択中のカレンダー日付
- * - タグ／プロジェクト: カレンダーで絞り込み中の値があればそれ
- * - ステータス: 未着手／優先度: 中（マスタに存在する場合のみ反映）
- * - カテゴリ: サイドバーで選択中のカテゴリ（「すべて」以外）
- */
-function clearCalendarTaskEditForm() {
-    ['dayedit-id', 'dayedit-title', 'dayedit-content', 'dayedit-biko', 'dayedit-status', 'dayedit-priority',
-     'dayedit-estimate', 'dayedit-actual',
-     'dayedit-start-hour', 'dayedit-start-minute', 'dayedit-end-hour', 'dayedit-end-minute',
-     'dayedit-complete-date', 'dayedit-category', 'dayedit-tag', 'dayedit-project'].forEach(id => {
-        const el = document.getElementById(id);
-        if (el) el.value = '';
-    });
-    dayeditFreq.month.clear();
-    dayeditFreq.day.clear();
-    dayeditFreq.weekday.clear();
-    const recurringCheckbox = document.getElementById('dayedit-recurring-parent');
-    if (recurringCheckbox) recurringCheckbox.checked = false;
-
-    // 一覧末尾の「（新規作成）」から起動した場合は、日付をカレンダー選択日で埋めずに空欄のままにする
-    const dateValue = (!calendarQuickNewMode && selectedCalendarDate) ? selectedCalendarDate.replace(/\//g, '-') : '';
-    const startDateEl = document.getElementById('dayedit-start-date');
-    if (startDateEl) startDateEl.value = dateValue;
-    const endDateEl = document.getElementById('dayedit-end-date');
-    if (endDateEl) endDateEl.value = dateValue;
-
-    // タグ／プロジェクトが1つだけ選択されている場合のみ、新規タスクの初期値として反映する
-    const tagEl = document.getElementById('dayedit-tag');
-    if (tagEl && calendarFilters.tag.size === 1) tagEl.value = [...calendarFilters.tag][0];
-    const projectEl = document.getElementById('dayedit-project');
-    if (projectEl && calendarFilters.project.size === 1) projectEl.value = [...calendarFilters.project][0];
-
-    const statusEl = document.getElementById('dayedit-status');
-    if (statusEl) statusEl.value = '未着手';
-    const priorityEl = document.getElementById('dayedit-priority');
-    if (priorityEl) priorityEl.value = '中';
-
-    const categoryEl = document.getElementById('dayedit-category');
-    if (categoryEl && currentCategory !== 'すべて') categoryEl.value = currentCategory;
 }
 
 /** 時・分の2つの<input type="number">から "HH:mm" 文字列を組み立てる（いずれか未入力なら空文字）。 */
@@ -2786,7 +1963,7 @@ function readCalendarTime(hourId, minuteId) {
 // ステータス/優先度/カテゴリ/タグ/プロジェクトの選択肢・日時フィールド・頻度チップの構造が同一のため、
 // prefixを引数に取る共通関数へ集約する。
 
-/** prefix-status／priority／category／tag／project の select 選択肢を再構築する。 */
+/** prefix-status／priority／category／tag の select 選択肢を再構築する。 */
 function populateTaskEditSelects(prefix) {
     const statuses = [...new Set(
         currentMasterData.filter(r => r['(M)ステータス_親'] === 'タスク')
@@ -2796,7 +1973,6 @@ function populateTaskEditSelects(prefix) {
     rebuildSelectById(`${prefix}-priority`, [...new Set(currentMasterData.map(r => r['(M)優先度']).filter(Boolean))]);
     rebuildSelectById(`${prefix}-category`, [...new Set(currentMasterData.map(r => r['(M)カテゴリ']).filter(Boolean))]);
     rebuildSelectById(`${prefix}-tag`,      getFilteredTags());
-    rebuildSelectById(`${prefix}-project`,      getFilteredProjects());
 }
 
 /** "YYYY/MM/DD[ HH:mm]" または日付なしの "HH:mm" のみの文字列を { date, time } に分解する。 */
@@ -2907,167 +2083,9 @@ function loadFreqStateFromRow(freqState, row) {
     freqState.weekday.clear(); (row['繰返し頻度_曜日'] || '').split(',').map(s => s.trim()).filter(Boolean).forEach(v => freqState.weekday.add(v));
 }
 
-/** 「完了日を開始/終了予定に代入」ボタン: 完了日が入力済みで、開始予定・終了予定の空欄になっている方だけに完了日（時間帯なし）を代入する。 */
-document.getElementById('dayedit-fill-date-from-complete-btn')?.addEventListener('click', () => {
-    const completeDate = document.getElementById('dayedit-complete-date').value;
-    if (!completeDate) return;
-
-    const startDateEl = document.getElementById('dayedit-start-date');
-    const endDateEl   = document.getElementById('dayedit-end-date');
-    if (!startDateEl.value) startDateEl.value = completeDate;
-    if (!endDateEl.value)   endDateEl.value   = completeDate;
-});
-
-/**
- * 「繰り返しタスクの親として管理する」チェックボックスがONなら、target を繰り返しタスクの親として
- * 繰返し識別子・繰返し頻度_月/日/曜日 を設定する。OFFなら関連フィールドを空にする。
- * 自動生成の有効/無効はここでは扱わず、ステータスが「進行中」かどうかで別途判定する。
- */
-function applyRecurringFieldsFromForm(target) {
-    const isRecurringParent = document.getElementById('dayedit-recurring-parent')?.checked;
-    if (isRecurringParent) {
-        target['繰返し識別子']   = '1';
-        target['繰返し親ID']     = target['繰返し親ID'] || '';
-        target['繰返し頻度_月']  = [...dayeditFreq.month].join(',');
-        target['繰返し頻度_日']  = [...dayeditFreq.day].join(',');
-        target['繰返し頻度_曜日'] = [...dayeditFreq.weekday].join(',');
-    } else {
-        target['繰返し識別子']   = '';
-        target['繰返し頻度_月']  = '';
-        target['繰返し頻度_日']  = '';
-        target['繰返し頻度_曜日'] = '';
-    }
-}
-
-/** 「適用」ボタン: 属性編集パネルの内容を選択中タスクへ書き戻す。 */
-document.getElementById('dayedit-apply-btn')?.addEventListener('click', () => {
-    if (!selectedCalendarTaskId) return;
-    const row = currentMainData.find(r => String(r['ID']) === selectedCalendarTaskId);
-    if (!row) return;
-
-    const status = document.getElementById('dayedit-status').value;
-
-    row['タイトル']   = document.getElementById('dayedit-title').value.trim();
-    row['内容']       = document.getElementById('dayedit-content').value.trim();
-    row['備考']       = document.getElementById('dayedit-biko').value.trim();
-    row['ステータス'] = status;
-    row['優先度']     = document.getElementById('dayedit-priority').value;
-    row['見積時間']   = document.getElementById('dayedit-estimate').value;
-    row['カテゴリ']   = document.getElementById('dayedit-category').value;
-    row['タグ']       = document.getElementById('dayedit-tag').value;
-    row['プロジェクト']       = document.getElementById('dayedit-project').value;
-    applyRecurringFieldsFromForm(row);
-    Object.assign(row, readTaskDateTimeFieldsFromForm('dayedit'));
-    row['更新日時'] = formatJpDatetime(new Date());
-
-    persistLocalCache();
-    renderCalendar();
-    renderTaskRunner();
-    renderRecurringSection();
-});
-
-/** 「削除」ボタン: 選択中タスクをメインデータから完全に削除する。 */
-document.getElementById('dayedit-delete-btn')?.addEventListener('click', () => {
-    if (!selectedCalendarTaskId) return;
-    if (!confirm('このタスクを削除します。よろしいですか？（この操作は取り消せません）')) return;
-
-    currentMainData = currentMainData.filter(r => String(r['ID']) !== selectedCalendarTaskId);
-    selectedCalendarTaskId = null;
-
-    persistLocalCache();
-    renderCalendar();
-    renderTaskRunner();
-    renderRecurringSection();
-});
-
-/** 開始予定の時刻を入力したら、終了予定に1時間後を自動セットする（日付をまたぐ場合は終了予定日も繰り上げる）。手動で修正可能。 */
-function autoFillCalendarEndTime() {
-    const startDateEl   = document.getElementById('dayedit-start-date');
-    const startHourEl   = document.getElementById('dayedit-start-hour');
-    const startMinuteEl = document.getElementById('dayedit-start-minute');
-    const endDateEl     = document.getElementById('dayedit-end-date');
-    const endHourEl      = document.getElementById('dayedit-end-hour');
-    const endMinuteEl    = document.getElementById('dayedit-end-minute');
-    if (!startDateEl.value || startHourEl.value === '' || startMinuteEl.value === '') return;
-
-    const [y, m, d] = startDateEl.value.split('-').map(Number);
-    const startDt = new Date(y, m - 1, d, Number(startHourEl.value), Number(startMinuteEl.value));
-    const endDt   = new Date(startDt.getTime() + 60 * 60 * 1000);
-
-    const pad = n => String(n).padStart(2, '0');
-    endDateEl.value   = `${endDt.getFullYear()}-${pad(endDt.getMonth() + 1)}-${pad(endDt.getDate())}`;
-    endHourEl.value   = endDt.getHours();
-    endMinuteEl.value = endDt.getMinutes();
-}
-document.getElementById('dayedit-start-hour')?.addEventListener('change', autoFillCalendarEndTime);
-document.getElementById('dayedit-start-minute')?.addEventListener('change', autoFillCalendarEndTime);
-
-/** 「新規登録」ボタン: フォームの現在値で新規タスクを追加する（選択中タスクの有無は無関係）。 */
-document.getElementById('dayedit-new-btn')?.addEventListener('click', () => {
-    const title = document.getElementById('dayedit-title').value.trim();
-
-    const maxId = currentMainData.reduce((max, row) => {
-        const id = parseInt(row['ID'], 10);
-        return isNaN(id) ? max : Math.max(max, id);
-    }, 0);
-    const ts = formatJpDatetime(new Date());
-
-    const entry = Object.fromEntries(MAIN_DATA_COLUMNS.map(col => [col, '']));
-    entry['ID']        = String(maxId + 1);
-    entry['データ区分'] = 'タスク';
-    entry['タイトル']   = title;
-    entry['内容']       = document.getElementById('dayedit-content').value.trim();
-    entry['備考']       = document.getElementById('dayedit-biko').value.trim();
-    entry['ステータス'] = document.getElementById('dayedit-status').value;
-    entry['優先度']     = document.getElementById('dayedit-priority').value;
-    entry['見積時間']   = document.getElementById('dayedit-estimate').value;
-    entry['カテゴリ']   = document.getElementById('dayedit-category').value || (currentCategory === 'すべて' ? '' : currentCategory);
-    entry['タグ']       = document.getElementById('dayedit-tag').value;
-    entry['プロジェクト']       = document.getElementById('dayedit-project').value;
-    applyRecurringFieldsFromForm(entry);
-    Object.assign(entry, readTaskDateTimeFieldsFromForm('dayedit'));
-    entry['作成日時']   = ts;
-    entry['更新日時']   = ts;
-
-    currentMainData.push(entry);
-    persistLocalCache();
-
-    selectedCalendarTaskId = null;
-    renderCalendar();
-    renderTaskRunner();
-});
-
-function goToPrevMonth() {
-    calendarMonth--;
-    if (calendarMonth < 0) { calendarMonth = 11; calendarYear--; }
-    if (taskOrgView === 'calendar') renderCalendarGrid(); else renderGanttChart();
-}
-
-function goToNextMonth() {
-    calendarMonth++;
-    if (calendarMonth > 11) { calendarMonth = 0; calendarYear++; }
-    if (taskOrgView === 'calendar') renderCalendarGrid(); else renderGanttChart();
-}
-
-document.getElementById('calendar-prev-btn')?.addEventListener('click', goToPrevMonth);
-document.getElementById('calendar-next-btn')?.addEventListener('click', goToNextMonth);
-document.getElementById('gantt-prev-btn')?.addEventListener('click', goToPrevMonth);
-document.getElementById('gantt-next-btn')?.addEventListener('click', goToNextMonth);
 
 // ===== ガントチャート（タスクページ） =====
 
-/** カテゴリ・calendarFilters（タグ／プロジェクト／ステータス）で絞り込んだタスク一覧を返す。1日タスクは除外し、日付未設定の行も除外する。 */
-function getGanttTasks() {
-    return getFilteredMainData().filter(r => {
-        if (r['データ区分'] !== 'タスク') return false;
-        if (r['プロジェクト'] === DAYPLAN_PROJECT) return false;
-        if (!r['開始予定'] && !r['終了予定']) return false;
-        if (!matchesMultiFilter(calendarFilters.tag, r['タグ'])) return false;
-        if (!matchesMultiFilter(calendarFilters.project, r['プロジェクト'])) return false;
-        if (!matchesMultiFilter(calendarFilters.status, r['ステータス'])) return false;
-        return true;
-    });
-}
 
 /**
  * dateJP が [startJP, endJP] の範囲内かどうかの表示マーカーを返す。
@@ -3133,114 +2151,6 @@ function getGanttWeekMarker(row, days) {
     return '';
 }
 
-/** ガントチャート（「タスク整理」のガントチャートビュー）を描画する。表示範囲は calendarYear/calendarMonth を基準とする。 */
-function renderGanttChart() {
-    const label = document.getElementById('gantt-month-label');
-    if (label) label.textContent = `${calendarYear}年${calendarMonth + 1}月`;
-
-    const table = document.getElementById('gantt-table');
-    if (!table) return;
-
-    const todayJP = jpDateOnly(formatJpDatetime(new Date()));
-    const tasks = getGanttTasks();
-
-    let columns;
-    if (ganttViewUnit === 'week') {
-        columns = getGanttWeekColumns(calendarYear, calendarMonth).map(days => ({
-            dates: days,
-            label: `${Number(days[0].split('/')[1])}/${Number(days[0].split('/')[2])}`,
-            isToday: days.includes(todayJP),
-            isSelected: days.includes(selectedCalendarDate),
-        }));
-    } else {
-        const daysInMonth = new Date(calendarYear, calendarMonth + 1, 0).getDate();
-        const pad = n => String(n).padStart(2, '0');
-        columns = Array.from({ length: daysInMonth }, (_, i) => {
-            const d = `${calendarYear}/${pad(calendarMonth + 1)}/${pad(i + 1)}`;
-            return { dates: [d], label: String(i + 1), isToday: d === todayJP, isSelected: d === selectedCalendarDate };
-        });
-    }
-
-    table.className = 'gantt-table';
-    const thead = document.createElement('thead');
-    const hRow  = document.createElement('tr');
-    ['ID', 'タイトル'].forEach(col => {
-        const th = document.createElement('th');
-        th.textContent = col;
-        th.className = 'gantt-fixed-col';
-        hRow.appendChild(th);
-    });
-    const ganttWorkExceptions = parseExceptions(getWorkCalendarContent(calendarYear));
-
-    columns.forEach(col => {
-        const th = document.createElement('th');
-        th.className = ganttViewUnit === 'week' ? 'gantt-day-col gantt-week-col' : 'gantt-day-col';
-        if (col.isToday)    th.classList.add('gantt-day-col--today');
-        if (col.isSelected) th.classList.add('gantt-day-col--selected');
-
-        if (ganttViewUnit === 'day') {
-            const [y, m, d] = col.dates[0].split('/').map(Number);
-            const wType = ganttWorkExceptions.get(col.dates[0])?.type
-                ?? getDefaultType(new Date(y, m - 1, d));
-            if (wType !== '出勤日') th.classList.add(`gantt-day-col--work-${wType}`);
-        }
-
-        th.textContent = col.label;
-        th.addEventListener('click', () => {
-            selectedCalendarDate   = col.dates[0];
-            selectedCalendarTaskId = null;
-            calendarQuickNewMode   = false;
-            renderCalendar();
-        });
-        hRow.appendChild(th);
-    });
-    thead.appendChild(hRow);
-
-    const tbody = document.createElement('tbody');
-    if (tasks.length === 0) {
-        const tr = document.createElement('tr');
-        const td = document.createElement('td');
-        td.className = 'empty-cell';
-        td.colSpan = columns.length + 2;
-        td.textContent = '該当するタスクがありません';
-        tr.appendChild(td);
-        tbody.appendChild(tr);
-    } else {
-        tasks.forEach(row => {
-            const tr = document.createElement('tr');
-            tr.className = 'gantt-task-row';
-            if (String(row['ID']) === selectedCalendarTaskId) tr.classList.add('selected-row');
-
-            const idTd = document.createElement('td');
-            idTd.className = 'gantt-fixed-col';
-            idTd.textContent = row['ID'] ?? '';
-            tr.appendChild(idTd);
-
-            const statusClass = getCalendarStatusClass(row['ステータス']);
-
-            const titleTd = document.createElement('td');
-            titleTd.className = `gantt-fixed-col gantt-title-col gantt-title-text ${statusClass}`;
-            titleTd.textContent = row['タイトル'] || '（無題）';
-            tr.appendChild(titleTd);
-
-            columns.forEach(col => {
-                const td = document.createElement('td');
-                td.className = 'gantt-day-col';
-                const marker = ganttViewUnit === 'week' ? getGanttWeekMarker(row, col.dates) : getGanttMarker(row, col.dates[0]);
-                if (marker) {
-                    td.textContent = marker;
-                    td.classList.add('gantt-marker', statusClass);
-                }
-                tr.appendChild(td);
-            });
-
-            tr.addEventListener('click', () => openCalendarTaskEdit(String(row['ID'])));
-            tbody.appendChild(tr);
-        });
-    }
-
-    table.replaceChildren(thead, tbody);
-}
 
 // ===== 繰り返しタスク =====
 
@@ -3253,7 +2163,7 @@ let recurEditTemplates = []; // 親タスク編集パネルの子タスクテン
 
 /** 繰返しページの母集団（カテゴリ絞り込み後の繰返し親タスク）を返す。 */
 function getRecurringParentPool() {
-    return getFilteredMainData().filter(r => r['繰返し識別子'] === '1' && !r['繰返し親ID']);
+    return getFilteredMainData().filter(isRecurringParentRow);
 }
 
 // プロジェクト絞り込みの選択肢・件数は、母集団を「繰返し親タスクのみ」に絞らず新タスク整理と全く同じ
@@ -3290,7 +2200,7 @@ function renderRecurringChildTable() {
 
     // 新しいものが上に来るよう、IDの降順（生成順の逆）で並べる
     const children = getFilteredMainData()
-        .filter(r => r['繰返し親ID'] === selectedRecurringParentId)
+        .filter(r => r['親ID'] === selectedRecurringParentId)
         .sort((a, b) => parseInt(b['ID'], 10) - parseInt(a['ID'], 10));
 
     table.className = 'recurring-list-table';
@@ -3328,7 +2238,7 @@ function renderRecurringEditChart() {
         return;
     }
 
-    const children  = currentMainData.filter(r => r['繰返し親ID'] === selectedRecurringParentId);
+    const children  = currentMainData.filter(r => r['親ID'] === selectedRecurringParentId);
     const chartData = buildChildChartData(children);
 
     if (chartData.labels.length > 0 && window.Chart) {
@@ -3497,7 +2407,7 @@ function renderRecurringEditPanel() {
         return;
     }
 
-    const isParentRow = !row['繰返し親ID'];
+    const isParentRow = isRecurringParentRow(row);
 
     const freqSectionEl = document.getElementById('recuredit-freq-section');
     if (freqSectionEl) freqSectionEl.style.display = isParentRow ? '' : 'none';
@@ -3577,7 +2487,7 @@ function applyRecurEditForm() {
     const parentId = document.getElementById('recuredit-parent-id').value || '';
     if (!checkParentCycleOrAlert(row['ID'], parentId)) return;
 
-    const isParentRow = !row['繰返し親ID'];
+    const isParentRow = isRecurringParentRow(row);
 
     row['タイトル']   = document.getElementById('recuredit-title').value.trim();
     row['内容']       = document.getElementById('recuredit-content').value.trim();
@@ -3602,7 +2512,7 @@ function applyRecurEditForm() {
 
     persistLocalCache();
     renderRecurringSection();
-    renderCalendar();
+    renderCalendar2();
     renderTaskRunner();
 }
 
@@ -3620,7 +2530,7 @@ function shiftSlashDateTimeString(str, days) {
 }
 
 /**
- * 「グループに適用」ボタン: 選択中の子タスクへの変更を適用したうえで、同じ回（繰返し親ID＋繰返し基準日が同じ）の
+ * 「グループに適用」ボタン: 選択中の子タスクへの変更を適用したうえで、同じ回（親ID＝繰返しテンプレート＋繰返し基準日が同じ）の
  * 他の子タスクへも連動反映する。開始予定・終了予定どちらも「変更前後の日数差分」で扱い、
  * その差分だけグループ全体（編集中タスク自身も含む）の開始予定・終了予定を平行移動する
  * （＝各タスクの長さ・相対位置を保ったまま全体が動く）。
@@ -3629,7 +2539,7 @@ function shiftSlashDateTimeString(str, days) {
 function applyRecurBatchSync() {
     if (!selectedRecurringEditId) return;
     const row = currentMainData.find(r => String(r['ID']) === selectedRecurringEditId);
-    if (!row || !row['繰返し親ID'] || !row['繰返し基準日']) return;
+    if (!row || !isRecurringChildRow(currentMainData, row) || !row['繰返し基準日']) return;
 
     const oldStartStr  = row['開始予定'];
     const oldEndStr    = row['終了予定'];
@@ -3654,7 +2564,7 @@ function applyRecurBatchSync() {
     if (oldEndStr)   row['終了予定'] = shiftSlashDateTimeString(oldEndStr, delta);
 
     const siblings = currentMainData.filter(r =>
-        r['繰返し親ID'] === row['繰返し親ID'] &&
+        r['親ID'] === row['親ID'] &&
         r['繰返し基準日'] === row['繰返し基準日'] &&
         String(r['ID']) !== selectedRecurringEditId
     );
@@ -3669,7 +2579,7 @@ function applyRecurBatchSync() {
 
     persistLocalCache();
     renderRecurringSection();
-    renderCalendar();
+    renderCalendar2();
     renderTaskRunner();
 }
 
@@ -3705,7 +2615,7 @@ document.getElementById('recuredit-delete-btn')?.addEventListener('click', () =>
 
     persistLocalCache();
     renderRecurringSection();
-    renderCalendar();
+    renderCalendar2();
     renderTaskRunner();
 });
 
@@ -3736,7 +2646,6 @@ document.getElementById('recuredit-new-btn')?.addEventListener('click', () => {
     entry['タグ']       = document.getElementById('recuredit-tag').value;
     entry['親ID']       = parentId;
     entry['繰返し識別子']   = '1';
-    entry['繰返し親ID']     = '';
     entry['繰返し頻度_月']  = [...recurEditFreq.month].join(',');
     entry['繰返し頻度_日']  = [...recurEditFreq.day].join(',');
     entry['繰返し頻度_曜日'] = [...recurEditFreq.weekday].join(',');
@@ -3750,7 +2659,7 @@ document.getElementById('recuredit-new-btn')?.addEventListener('click', () => {
     selectedRecurringParentId = String(entry['ID']);
     selectedRecurringEditId   = String(entry['ID']);
     renderRecurringSection();
-    renderCalendar();
+    renderCalendar2();
     renderTaskRunner();
 });
 
@@ -3953,7 +2862,7 @@ document.getElementById('work-cal-month-apply-btn')?.addEventListener('click', (
 
     saveWorkCalendarContent(workCalendarYear, stringifyExceptions(allExceptions));
     renderWorkCalendar();
-    if (taskOrgView === 'calendar') renderCalendarGrid();
+    if (taskorg2View === 'calendar') renderTaskorg2CalendarGrid();
 });
 
 // ===========================================================================
@@ -4015,8 +2924,8 @@ function wireParentSearchInput(prefix) {
     });
 }
 
-/** 「新タスク整理」編集フォームの親（プロジェクト）階層プルダウン用に、excludeId自身とその子孫を除いた「親になれる（データ区分がタスク）」行一覧を返す。 */
-function getDayedit2ParentEligibleRows(excludeId) {
+/** 親（プロジェクト）階層プルダウン用に、excludeId自身とその子孫を除いた「親になれる（データ区分がタスク）」行一覧を返す（新タスク整理・タスク実行で共有）。 */
+function getParentEligibleRows(excludeId) {
     let excludedIds = new Set();
     if (excludeId) {
         excludedIds.add(String(excludeId));
@@ -4030,17 +2939,19 @@ function getDayedit2ParentEligibleRows(excludeId) {
             frontier = next;
         }
     }
-    return currentMainData.filter(r => !excludedIds.has(String(r['ID']))).filter(isEligibleParentRowM);
+    return filterMainDataByCategory(currentMainData, currentCategory)
+        .filter(r => !excludedIds.has(String(r['ID'])))
+        .filter(isEligibleParentRowM);
 }
 
-const DAYEDIT2_NEW_PJ_MARK = '__dayedit2_new_pj__'; // 親プルダウンの「＋ 新規PJを追加」選択肢の特殊値
+const NEW_PJ_MARK = '__new_pj__'; // 親プルダウンの「＋ 新規PJを追加」選択肢の特殊値
 
 /**
  * 親（プロジェクト）階層プルダウンで「＋ 新規PJを追加」を選んだ際、その場で新規プロジェクト（タスク）を作成しIDを返す。
  * ステータス=未着手・優先度=中、開始予定・終了予定・完了日は空欄とする。タイトル未入力（キャンセル含む）ならnullを返す。
  * @param {string} parentId - 新規プロジェクトの親ID（空文字ならルート＝最上位プロジェクトとして作成）
  */
-function createDayedit2NewProject(parentId) {
+function createNewProjectViaPrompt(parentId) {
     const title = (prompt('新しいプロジェクト（PJ）のタイトルを入力してください') || '').trim();
     if (!title) return null;
 
@@ -4079,8 +2990,8 @@ function renderDayedit2ParentDropdowns() {
     if (!container) return;
     container.innerHTML = '';
 
-    const eligibleRows = getDayedit2ParentEligibleRows(selectedTaskorg2Id);
-    const newPjExtraOption = [{ value: DAYEDIT2_NEW_PJ_MARK, label: '＋ 新規PJを追加' }];
+    const eligibleRows = getParentEligibleRows(selectedTaskorg2Id);
+    const newPjExtraOption = [{ value: NEW_PJ_MARK, label: '＋ 新規PJを追加' }];
 
     let level = 0;
     let parentId = ''; // 空文字ならこのレベルはルート階層（親ID空欄）の選択肢を出す
@@ -4093,8 +3004,8 @@ function renderDayedit2ParentDropdowns() {
         const levelForClosure = level;
         const parentIdForClosure = parentId;
         appendProject2DropdownRow(container, `PJ(${level + 1}層)`, options, currentValue, value => {
-            if (value === DAYEDIT2_NEW_PJ_MARK) {
-                const newId = createDayedit2NewProject(parentIdForClosure);
+            if (value === NEW_PJ_MARK) {
+                const newId = createNewProjectViaPrompt(parentIdForClosure);
                 if (newId) dayedit2ParentPath = [...dayedit2ParentPath.slice(0, levelForClosure), newId];
                 renderDayedit2ParentDropdowns();
                 return;
@@ -4138,22 +3049,43 @@ function countTaskorg2ProjectTasks(rootId, activeOnly) {
     return countRowsByProjectRoot(pool, rootId, activeOnly);
 }
 
-/** 選択中カテゴリ・タグ／ステータス／プロジェクト（最上位の親ID）フィルタのみで絞り込んだメインデータ一覧を返す（日付絞り込みは含まない）。カレンダーの日別集計に使う。 */
+/** 選択中カテゴリ・タグ／ステータスフィルタ＋その他フィルタ（プロジェクト・繰返し親子タスクの表示ON/OFF）で絞り込んだメインデータ一覧を返す（日付絞り込みは含まない）。カレンダーの日別集計に使う。 */
 function getTaskorg2BaseFilteredList() {
-    return filterMainDataByCategory(currentMainData, currentCategory).filter(r =>
-        r['プロジェクト'] !== DAYPLAN_PROJECT && // 1日タスク（DAYPLAN）の器行は通常の一覧・カレンダーには出さない（旧タスク整理と同一仕様）
-        matchesFilterValue(taskorg2Filters.tag, r['タグ']) &&
-        matchesFilterValue(taskorg2Filters.status, r['ステータス']) &&
-        matchesProjectRootFilter(r, taskorg2Filters.project)
-    );
+    return filterMainDataByCategory(currentMainData, currentCategory).filter(r => {
+        if (isDayPlanRow(r)) return false; // 1日タスク（DAYPLAN）の器行は通常の一覧・カレンダーには出さない
+        if (!matchesFilterValue(taskorg2Filters.tag, r['タグ'])) return false;
+        if (!matchesFilterValue(taskorg2Filters.status, r['ステータス'])) return false;
+        if (!matchesProjectRootFilter(r, taskorg2Filters.project)) return false;
+
+        if (isRecurringParentRow(r) && !taskorg2Filters.showRecurringParent) return false;
+        if (isRecurringChildRow(currentMainData, r) && !taskorg2Filters.showRecurringChild) return false;
+        // 繰返しテンプレートは専用のshowRecurringParentで制御するため、showProjectの対象からは除く
+        if (!taskorg2Filters.showProject && !isRecurringParentRow(r) && isParentRowM(currentMainData, r['ID'])) return false;
+        return true;
+    });
 }
 
-/** 選択中カテゴリ・タグ／ステータス／プロジェクト（最上位の親ID）フィルタに加え、カレンダーで選択中の日付があればそれで絞り込んだメインデータ一覧を返す。 */
+/**
+ * 選択中カテゴリ・タグ／ステータス／プロジェクト（最上位の親ID）フィルタ＋その他フィルタで絞り込んだ、データ区分がタスクの行一覧を返す（日付を問わず全件、旧タスク整理と同一仕様）。
+ * ソート順: ステータス（完了・報告待ち・連絡待ち・中断・進行中・未着手・空欄の順）→ 完了日 昇順 → 開始予定 昇順 → 終了予定 昇順。
+ */
 function getTaskorg2FilteredList() {
-    const base = getTaskorg2BaseFilteredList();
-    if (!selectedTaskorg2Date) return base;
-    const todayJP = jpDateOnly(formatJpDatetime(new Date()));
-    return base.filter(r => getCalendarMarkDate(r, todayJP) === selectedTaskorg2Date);
+    const tasks = getTaskorg2BaseFilteredList().filter(r => r['データ区分'] === 'タスク');
+
+    tasks.sort((a, b) => {
+        const rankDiff = calendarTaskListStatusRank(a['ステータス']) - calendarTaskListStatusRank(b['ステータス']);
+        if (rankDiff !== 0) return rankDiff;
+
+        let cmp = compareDateAscEmptyLast(a['完了日'], b['完了日']);
+        if (cmp !== 0) return cmp;
+
+        cmp = compareDateAscEmptyLast(a['開始予定'], b['開始予定']);
+        if (cmp !== 0) return cmp;
+
+        return compareDateAscEmptyLast(a['終了予定'], b['終了予定']);
+    });
+
+    return tasks;
 }
 
 /** dateJP にカレンダーの●印が出る（＝その日にマークされる）taskorg2の行一覧を、タグ／プロジェクト／ステータスフィルタ適用済みで返す。 */
@@ -4219,6 +3151,8 @@ function renderTaskorg2CalendarGrid() {
 
         cell.addEventListener('click', () => {
             selectedTaskorg2Date = dateJP;
+            selectedTaskorg2Id   = null;
+            taskorg2QuickNewMode = false;
             renderCalendar2();
         });
         grid.appendChild(cell);
@@ -4255,7 +3189,7 @@ document.getElementById('taskorg2-tab-gantt')?.addEventListener('click', () => {
 
 // ===== 新タスク整理：ガントチャート（月間カレンダーと年月・選択日を共有。旧タスク整理と同一仕様） =====
 
-/** カテゴリ・taskorg2Filters（タグ／プロジェクト／ステータス）で絞り込んだタスク一覧を返す。1日タスクは除外し、日付未設定の行も除外する。 */
+/** カテゴリ・taskorg2Filters（タグ／ステータス／その他フィルタ）で絞り込んだタスク一覧を返す。1日タスクは除外し、日付未設定の行も除外する。 */
 function getTaskorg2GanttTasks() {
     return getTaskorg2BaseFilteredList().filter(r => r['データ区分'] === 'タスク' && (r['開始予定'] || r['終了予定']));
 }
@@ -4359,7 +3293,7 @@ function renderTaskorg2GanttChart() {
                 tr.appendChild(td);
             });
 
-            tr.addEventListener('click', () => { selectedTaskorg2Id = String(row['ID']); renderCalendar2(); });
+            tr.addEventListener('click', () => { selectedTaskorg2Id = String(row['ID']); taskorg2QuickNewMode = false; renderCalendar2(); });
             tbody.appendChild(tr);
         });
     }
@@ -4433,6 +3367,8 @@ function getTaskorg2SegmentsForDate(dateJP) {
     return { timed, unscheduled, referenced };
 }
 
+const CALENDAR_HOUR_HEIGHT = 40; // 1時間あたりの高さ(px)
+
 /** 1日の時間軸（0:00〜24:00の目盛り）と選択中日付のタスクの時間帯ブロックを描画する。選択中日付が無ければセクション自体を隠す。 */
 function renderTaskorg2Timeline() {
     const titleEl = document.getElementById('calendar2-detail-title');
@@ -4473,6 +3409,34 @@ function renderTaskorg2Timeline() {
         lanesEl.appendChild(line);
     }
 
+    const blockBySeg = new Map();
+
+    /**
+     * ドラッグ中のプレビュー位置（previewStart/End）で仮にレーンを再計算し、影響する全ブロックの
+     * 左位置・幅をその場で更新する（保存を待たずに重なりを見た目に反映するため）。
+     * activeSeg の startMin/endMin は計算後に元へ戻すため、確定前のデータは書き換わらない。
+     */
+    function relayoutLanes(activeSeg, previewStart, previewEnd) {
+        const origStart = activeSeg.startMin;
+        const origEnd   = activeSeg.endMin;
+        activeSeg.startMin = previewStart;
+        activeSeg.endMin   = previewEnd;
+
+        const sorted = [...timed].sort((a, b) => a.startMin - b.startMin);
+        assignCalendarLanes(sorted);
+
+        timed.forEach(seg => {
+            const el = blockBySeg.get(seg);
+            if (!el) return;
+            const laneWidthPct = 100 / seg.laneCount;
+            el.style.left  = `${seg.lane * laneWidthPct}%`;
+            el.style.width = `calc(${laneWidthPct}% - 4px)`;
+        });
+
+        activeSeg.startMin = origStart;
+        activeSeg.endMin   = origEnd;
+    }
+
     timed.forEach(seg => {
         const laneWidthPct = 100 / seg.laneCount;
         const block = document.createElement('div');
@@ -4492,7 +3456,8 @@ function renderTaskorg2Timeline() {
         handle.className = 'calendar-time-block-resize-handle';
         block.appendChild(handle);
 
-        attachTaskorg2TimelineDragHandlers(block, handle, labelSpan, seg, dateJP, pxPerMin, hasLinkedTask);
+        blockBySeg.set(seg, block);
+        attachTaskorg2TimelineDragHandlers(block, handle, labelSpan, seg, dateJP, pxPerMin, hasLinkedTask, relayoutLanes);
         lanesEl.appendChild(block);
     });
 
@@ -4502,8 +3467,20 @@ function renderTaskorg2Timeline() {
     renderTaskorg2DayPlanSection();
 }
 
-/** タイムラインのブロックへ「移動」「リサイズ」操作を付与する（旧タスク整理と同じドラッグ挙動）。 */
-function attachTaskorg2TimelineDragHandlers(block, handle, labelSpan, seg, dateJP, pxPerMin, hasLinkedTask) {
+const TIMELINE_SNAP_MIN = 15;         // ドラッグ操作のスナップ単位（分）
+const TIMELINE_DRAG_THRESHOLD_MIN = 8; // これ未満の移動量はクリック（属性編集を開く）として扱う
+
+/** 分を15分単位に丸める。 */
+function snapTimelineMinutes(min) {
+    return Math.round(min / TIMELINE_SNAP_MIN) * TIMELINE_SNAP_MIN;
+}
+
+/**
+ * タイムラインのブロックへ「移動」「リサイズ」操作を付与する（旧タスク整理と同じドラッグ挙動）。
+ * relayoutLanes が渡されている場合、ドラッグ中も他の重なるブロックを含めてレーン幅をその場で再計算する
+ * （保存前でも重なりが分かるようにするため）。
+ */
+function attachTaskorg2TimelineDragHandlers(block, handle, labelSpan, seg, dateJP, pxPerMin, hasLinkedTask, relayoutLanes) {
     const fmt = m => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
     let dragMode  = null; // 'move' | 'resize'
     let pointerId = null;
@@ -4519,6 +3496,7 @@ function attachTaskorg2TimelineDragHandlers(block, handle, labelSpan, seg, dateJ
         block.style.top    = `${newStart * pxPerMin}px`;
         block.style.height = `${(newEnd - newStart) * pxPerMin}px`;
         labelSpan.textContent = `${fmt(newStart)}–${fmt(newEnd)} ${seg.row['タイトル'] || '（無題）'}`;
+        relayoutLanes?.(seg, newStart, newEnd);
     }
 
     function onPointerMove(e) {
@@ -4545,7 +3523,7 @@ function attachTaskorg2TimelineDragHandlers(block, handle, labelSpan, seg, dateJ
         const movedMin = Math.abs(pendingStart - origStart) + Math.abs(pendingEnd - origEnd);
         if (movedMin < TIMELINE_DRAG_THRESHOLD_MIN) {
             updatePreview(origStart, origEnd); // 微小な移動は元に戻す
-            if (dragMode === 'move' && hasLinkedTask) { selectedTaskorg2Id = String(seg.row['ID']); renderCalendar2(); }
+            if (dragMode === 'move' && hasLinkedTask) { selectedTaskorg2Id = String(seg.row['ID']); taskorg2QuickNewMode = false; renderCalendar2(); }
         } else {
             commitTaskorg2TimelineDrag(seg, dateJP, pendingStart, pendingEnd);
         }
@@ -4598,7 +3576,7 @@ function commitTaskorg2TimelineDrag(seg, dateJP, newStartMin, newEndMin) {
     renderTaskRunner();
 }
 
-/** 選択中日付の1日タスク行（プロジェクト=DAYPLAN_PROJECT）を返す。無ければnull。旧タスク整理と同じ行を共有する。 */
+/** 選択中日付の1日タスク行（isDayPlanRow）を返す。無ければnull。 */
 function getTaskorg2DayPlanTask() {
     return selectedTaskorg2Date ? getDayPlanTaskM(currentMainData, selectedTaskorg2Date) : null;
 }
@@ -4628,8 +3606,14 @@ function renderTaskorg2DayPlanSection() {
     }
 }
 
+/** "HH:MM" 文字列を分に変換する。 */
+function parseHHMMToMinutes(str) {
+    const [h, m] = str.split(':').map(Number);
+    return h * 60 + m;
+}
+
 /**
- * 選択中日付の1日タスクを新規作成する（旧タスク整理と同一仕様：プロジェクト=DAYPLAN_PROJECT、開始予定=選択中日付）。
+ * 選択中日付の1日タスクを新規作成する（データ区分=ナレッジ・PARA区分=1日タスク、開始予定=選択中日付）。
  * 内容には既定の「09:00-09:30 メールチェック、予定整理」に加え、その日既に開始予定・終了予定が
  * 時刻まで指定されている既存タスクを取り込む（カテゴリの絞り込みは適用、タグ／プロジェクト／ステータスの絞り込みは適用しない）。
  */
@@ -4642,7 +3626,7 @@ function createTaskorg2DayPlanTask() {
     }, 0);
     const ts = formatJpDatetime(new Date());
 
-    const noFilters = { tag: new Set(), project: new Set(), status: new Set() };
+    const noFilters = { tag: new Set(), status: new Set() };
     const scheduledBlocks = getTasksForDateM(currentMainData, currentCategory, noFilters, selectedTaskorg2Date)
         .map(row => {
             const timeInfo = getTaskScheduledTimeOnDate(row, selectedTaskorg2Date);
@@ -4661,11 +3645,10 @@ function createTaskorg2DayPlanTask() {
 
     const entry = Object.fromEntries(MAIN_DATA_COLUMNS.map(col => [col, '']));
     entry['ID']        = String(maxId + 1);
-    entry['データ区分'] = 'タスク';
+    entry['データ区分'] = DAYPLAN_KUBUN;
+    entry['PARA区分']   = DAYPLAN_PARA;
     entry['タイトル']   = `1日タスク ${selectedTaskorg2Date}`;
-    entry['プロジェクト'] = DAYPLAN_PROJECT;
     entry['開始予定']   = selectedTaskorg2Date;
-    entry['ステータス'] = '未着手';
     entry['内容']       = content;
     entry['作成日時']   = ts;
     entry['更新日時']   = ts;
@@ -4747,7 +3730,7 @@ function renderTaskorg2ChipList(container, chipEntries, emptyText, options = {})
         chip.className = `calendar-unscheduled-chip ${getCalendarStatusClass(row['ステータス'])}`;
         if (String(row['ID']) === selectedTaskorg2Id) chip.classList.add('calendar-unscheduled-chip--selected');
         chip.textContent = label;
-        chip.addEventListener('click', () => { selectedTaskorg2Id = String(row['ID']); renderCalendar2(); });
+        chip.addEventListener('click', () => { selectedTaskorg2Id = String(row['ID']); taskorg2QuickNewMode = false; renderCalendar2(); });
         wrap.appendChild(chip);
 
         if (showAddButton) {
@@ -4809,7 +3792,6 @@ function renderTaskorg2GroupedChips(container, chipEntries, emptyText, options =
 function getTaskorg2IncompleteDateTasks() {
     return getTaskorg2BaseFilteredList().filter(r =>
         r['データ区分'] === 'タスク' &&
-        !(r['繰返し識別子'] === '1' && !r['繰返し親ID']) && // 繰返しタスクの親は対象外
         !(r['開始予定'] && r['終了予定']) // 両方入力済みは対象外
     );
 }
@@ -4817,9 +3799,7 @@ function getTaskorg2IncompleteDateTasks() {
 /** カテゴリ／ステータス／優先度／プロジェクト（親ID）それぞれが未設定のタスクを、領域ごとに分けて返す（重複あり）。カテゴリ／ステータス／優先度は旧タスク整理と共通のロジックを再利用し、プロジェクトのみ親ID方式で判定する。 */
 function getTaskorg2UnsetAttributeGroups() {
     const generic = getUnsetAttributeGroupsM(currentMainData, currentCategory);
-    const pool = getTaskorg2BaseFilteredList().filter(r =>
-        r['データ区分'] === 'タスク' && !(r['繰返し識別子'] === '1' && !r['繰返し親ID'])
-    );
+    const pool = getTaskorg2BaseFilteredList().filter(r => r['データ区分'] === 'タスク');
     const matchesCat = r => currentCategory === 'すべて' || !r['カテゴリ'] || r['カテゴリ'] === currentCategory;
     return {
         categoryUnset: generic.categoryUnset,
@@ -4891,14 +3871,83 @@ function renderTaskorg2UnsetSection() {
     setExpanderCountPair('calendar2-todo-dayplan-count', chipEntries.length, referencedChips.length);
 }
 
-/** 新タスク整理のタグ／ステータス／プロジェクト絞り込みチップを描画する。 */
+/**
+ * 新タスク整理のフィルタを描画する。表示順はタグ→ステータス（いずれも複数選択）。
+ * その下に「その他フィルタ」として、カレンダー・タスクリストへの表示有無を切り替える
+ * プロジェクト／繰返し親タスク／繰返し子タスクのチェックボックスを1行で並べる。
+ */
 function renderTaskorg2Filters() {
-    renderParentProjectFilters(
-        document.getElementById('calendar2-filter-area'),
-        taskorg2Filters, taskorg2FilterKnownOptions,
-        getTaskorg2ProjectRootRows(), countTaskorg2ProjectTasks,
-        () => renderCalendar2()
-    );
+    const area = document.getElementById('calendar2-filter-area');
+    if (!area) return;
+    area.innerHTML = '';
+
+    function makeRow(labelText, options, selectedSet, buildLabel) {
+        const row = document.createElement('div');
+        row.className = 'triage-filter-row';
+        const lbl = document.createElement('span');
+        lbl.className = 'triage-filter-label';
+        lbl.textContent = labelText;
+
+        const selectAllBtn = document.createElement('button');
+        selectAllBtn.type = 'button';
+        selectAllBtn.className = 'calendar-filter-bulk-btn';
+        selectAllBtn.textContent = '全選択';
+        selectAllBtn.addEventListener('click', () => { options.forEach(v => selectedSet.add(v)); renderCalendar2(); });
+
+        const deselectAllBtn = document.createElement('button');
+        deselectAllBtn.type = 'button';
+        deselectAllBtn.className = 'calendar-filter-bulk-btn';
+        deselectAllBtn.textContent = '全解除';
+        deselectAllBtn.addEventListener('click', () => { selectedSet.clear(); renderCalendar2(); });
+
+        const ctrl = createCalendarMultiFilter(options, selectedSet, buildLabel, () => renderCalendar2());
+        row.append(lbl, selectAllBtn, deselectAllBtn, ctrl);
+        area.appendChild(row);
+    }
+
+    const tagOptions = sortByTotalCountDesc(getFilteredTags(), 'タグ');
+    seedFilterOptionSet(tagOptions, taskorg2Filters.tag, taskorg2FilterKnownOptions.tag);
+    makeRow('タグ', tagOptions, taskorg2Filters.tag, v => `${v} (${countActiveTasksByField('タグ', v)}/${countTasksByField('タグ', v)})`);
+
+    const statusOptions = sortByTotalCountDesc(getFilteredTaskStatuses(), 'ステータス');
+    seedFilterOptionSet(statusOptions, taskorg2Filters.status, taskorg2FilterKnownOptions.status);
+    makeRow('ステータス', statusOptions, taskorg2Filters.status, v => `${v} (${countActiveTasksByField('ステータス', v)}/${countTasksByField('ステータス', v)})`);
+
+    // プロジェクト＝最上位の親IDのタイトルをボタンとして表示（中間階層の親IDは束ねてカウント、旧タスク整理と同様の選び方）
+    const projectRowsSorted = [...getTaskorg2ProjectRootRows()]
+        .sort((a, b) => countTaskorg2ProjectTasks(String(b['ID']), false) - countTaskorg2ProjectTasks(String(a['ID']), false));
+    const projectIds = projectRowsSorted.map(r => String(r['ID']));
+    seedFilterOptionSet(projectIds, taskorg2Filters.project, taskorg2FilterKnownOptions.project);
+    makeRow('プロジェクト', projectIds, taskorg2Filters.project, id => {
+        const row = projectRowsSorted.find(r => String(r['ID']) === id);
+        return `${row ? (row['タイトル'] || `#${id}`) : `#${id}`} (${countTaskorg2ProjectTasks(id, true)}/${countTaskorg2ProjectTasks(id, false)})`;
+    });
+
+    const otherRow = document.createElement('div');
+    otherRow.className = 'triage-filter-row';
+    const otherLbl = document.createElement('span');
+    otherLbl.className = 'triage-filter-label';
+    otherLbl.textContent = 'その他フィルタ';
+    otherRow.appendChild(otherLbl);
+
+    [
+        { key: 'showProject',         label: 'プロジェクト' },
+        { key: 'showRecurringParent', label: '繰返し親タスク' },
+        { key: 'showRecurringChild',  label: '繰返し子タスク' },
+    ].forEach(({ key, label }) => {
+        const cbLabel = document.createElement('label');
+        cbLabel.className = 'calendar-checkbox-label';
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.checked = taskorg2Filters[key];
+        cb.addEventListener('change', () => {
+            taskorg2Filters[key] = cb.checked;
+            renderCalendar2();
+        });
+        cbLabel.append(cb, document.createTextNode(label));
+        otherRow.appendChild(cbLabel);
+    });
+    area.appendChild(otherRow);
 }
 
 /** 新タスク整理のタスク一覧テーブルを描画する。行クリックで編集対象を切り替える。 */
@@ -4908,7 +3957,7 @@ function renderTaskorg2List() {
 
     const tasks = getTaskorg2FilteredList();
     table.className = 'data-table';
-    const cols = ['ID', 'データ区分', 'タイトル', 'ステータス', '親ID'];
+    const cols = ['ID', 'データ区分', 'タイトル', 'ステータス', '親ID', '開始予定', '終了予定', '完了日'];
 
     const thead = document.createElement('thead');
     const hRow  = document.createElement('tr');
@@ -4920,14 +3969,94 @@ function renderTaskorg2List() {
         const tr = document.createElement('tr');
         if (String(row['ID']) === selectedTaskorg2Id) tr.classList.add('selected-row');
         cols.forEach(col => { const td = document.createElement('td'); td.textContent = row[col] ?? ''; tr.appendChild(td); });
-        tr.addEventListener('click', () => { selectedTaskorg2Id = String(row['ID']); renderCalendar2(); });
+        tr.addEventListener('click', () => { selectedTaskorg2Id = String(row['ID']); taskorg2QuickNewMode = false; renderCalendar2(); });
         tbody.appendChild(tr);
     });
 
     table.replaceChildren(thead, tbody);
 }
 
-/** 新規登録モード（未選択）の際、編集フォームを既定値へリセットする。 */
+/** 「繰り返しタスクの親として管理する」チェックボックスの状態に応じて頻度（月/日/曜日）チップの表示・非表示を切り替える（新タスク整理版）。 */
+function updateDayedit2FreqVisibility() {
+    const section = document.getElementById('dayedit2-freq-section');
+    const checkbox = document.getElementById('dayedit2-recurring-parent');
+    if (section) section.style.display = (checkbox && checkbox.checked) ? '' : 'none';
+}
+
+/** 新タスク整理・編集パネルの頻度（月/日/曜日）チップを描画する。 */
+function renderDayedit2FreqChips() {
+    renderFreqChipsFor('dayedit2', dayedit2Freq);
+}
+
+document.getElementById('dayedit2-recurring-parent')?.addEventListener('change', updateDayedit2FreqVisibility);
+
+/** ステータスを「完了」に変更したら、完了日を自動的に本日の日付にする（新タスク整理版）。 */
+document.getElementById('dayedit2-status')?.addEventListener('change', (e) => {
+    if (e.target.value !== '完了') return;
+    const completeEl = document.getElementById('dayedit2-complete-date');
+    if (!completeEl) return;
+    const today = new Date();
+    const pad = n => String(n).padStart(2, '0');
+    completeEl.value = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
+});
+
+/** 開始予定の時刻を入力したら、終了予定に1時間後を自動セットする（新タスク整理版。日付をまたぐ場合は終了予定日も繰り上げる）。手動で修正可能。 */
+function autoFillTaskorg2EndTime() {
+    const startDateEl   = document.getElementById('dayedit2-start-date');
+    const startHourEl   = document.getElementById('dayedit2-start-hour');
+    const startMinuteEl = document.getElementById('dayedit2-start-minute');
+    const endDateEl     = document.getElementById('dayedit2-end-date');
+    const endHourEl     = document.getElementById('dayedit2-end-hour');
+    const endMinuteEl   = document.getElementById('dayedit2-end-minute');
+    if (!startDateEl.value || startHourEl.value === '' || startMinuteEl.value === '') return;
+
+    const [y, m, d] = startDateEl.value.split('-').map(Number);
+    const startDt = new Date(y, m - 1, d, Number(startHourEl.value), Number(startMinuteEl.value));
+    const endDt   = new Date(startDt.getTime() + 60 * 60 * 1000);
+
+    const pad = n => String(n).padStart(2, '0');
+    endDateEl.value   = `${endDt.getFullYear()}-${pad(endDt.getMonth() + 1)}-${pad(endDt.getDate())}`;
+    endHourEl.value   = endDt.getHours();
+    endMinuteEl.value = endDt.getMinutes();
+}
+document.getElementById('dayedit2-start-hour')?.addEventListener('change', autoFillTaskorg2EndTime);
+document.getElementById('dayedit2-start-minute')?.addEventListener('change', autoFillTaskorg2EndTime);
+
+/** 「完了日を開始/終了予定に代入」ボタン（新タスク整理版）: 完了日が入力済みで、開始予定・終了予定の空欄になっている方だけに完了日（時間帯なし）を代入する。 */
+document.getElementById('dayedit2-fill-date-from-complete-btn')?.addEventListener('click', () => {
+    const completeDate = document.getElementById('dayedit2-complete-date').value;
+    if (!completeDate) return;
+
+    const startDateEl = document.getElementById('dayedit2-start-date');
+    const endDateEl   = document.getElementById('dayedit2-end-date');
+    if (!startDateEl.value) startDateEl.value = completeDate;
+    if (!endDateEl.value)   endDateEl.value   = completeDate;
+});
+
+/**
+ * 「繰り返しタスクの親として管理する」チェックボックスがONなら、target を繰り返しタスクの親として
+ * 繰返し識別子・繰返し頻度_月/日/曜日 を設定する。OFFなら関連フィールドを空にする（新タスク整理版）。
+ */
+function applyRecurringFieldsFromForm2(target) {
+    const isRecurringParent = document.getElementById('dayedit2-recurring-parent')?.checked;
+    if (isRecurringParent) {
+        target['繰返し識別子']   = '1';
+        target['繰返し頻度_月']  = [...dayedit2Freq.month].join(',');
+        target['繰返し頻度_日']  = [...dayedit2Freq.day].join(',');
+        target['繰返し頻度_曜日'] = [...dayedit2Freq.weekday].join(',');
+    } else {
+        target['繰返し識別子']   = '';
+        target['繰返し頻度_月']  = '';
+        target['繰返し頻度_日']  = '';
+        target['繰返し頻度_曜日'] = '';
+    }
+}
+
+/**
+ * 新規登録モード（未選択）の際、編集フォームを既定値へリセットする。
+ * - 開始予定・終了予定の日付: 選択中のカレンダー日付（「新規登録」ボタン起動時＝taskorg2QuickNewModeは空欄のまま）
+ * - タグ: カレンダーで絞り込み中の値が1つだけならそれを初期値にする
+ */
 function clearTaskorg2EditForm() {
     ['dayedit2-id', 'dayedit2-title', 'dayedit2-content', 'dayedit2-biko'].forEach(id => {
         const el = document.getElementById(id);
@@ -4939,13 +4068,30 @@ function clearTaskorg2EditForm() {
     if (priorityEl) priorityEl.value = '中';
     const categoryEl = document.getElementById('dayedit2-category');
     if (categoryEl && currentCategory !== 'すべて') categoryEl.value = currentCategory;
-    const tagEl = document.getElementById('dayedit2-tag');
-    if (tagEl) tagEl.value = '';
+
+    dayedit2Freq.month.clear();
+    dayedit2Freq.day.clear();
+    dayedit2Freq.weekday.clear();
+    const recurringCheckbox = document.getElementById('dayedit2-recurring-parent');
+    if (recurringCheckbox) recurringCheckbox.checked = false;
+
     dayedit2ParentPath = [];
-    ['start-date', 'start-hour', 'start-minute', 'end-date', 'end-hour', 'end-minute', 'complete-date'].forEach(f => {
+    ['start-hour', 'start-minute', 'end-hour', 'end-minute', 'complete-date'].forEach(f => {
         const el = document.getElementById(`dayedit2-${f}`);
         if (el) el.value = '';
     });
+
+    // 「新規登録」ボタンから起動した場合は、日付をカレンダー選択日で埋めずに空欄のままにする
+    const dateValue = (!taskorg2QuickNewMode && selectedTaskorg2Date) ? selectedTaskorg2Date.replace(/\//g, '-') : '';
+    const startDateEl = document.getElementById('dayedit2-start-date');
+    if (startDateEl) startDateEl.value = dateValue;
+    const endDateEl = document.getElementById('dayedit2-end-date');
+    if (endDateEl) endDateEl.value = dateValue;
+
+    // タグが1つだけ選択されている場合のみ、新規タスクの初期値として反映する
+    const tagEl = document.getElementById('dayedit2-tag');
+    if (tagEl) tagEl.value = taskorg2Filters.tag.size === 1 ? [...taskorg2Filters.tag][0] : '';
+
     document.getElementById('dayedit2-estimate').value = '';
     document.getElementById('dayedit2-actual').value   = '';
 }
@@ -4958,6 +4104,8 @@ function renderTaskorg2Edit() {
     if (!row) {
         clearTaskorg2EditForm();
         renderDayedit2ParentDropdowns();
+        renderDayedit2FreqChips();
+        updateDayedit2FreqVisibility();
         return;
     }
 
@@ -4973,6 +4121,12 @@ function renderTaskorg2Edit() {
     renderDayedit2ParentDropdowns();
     writeTaskDateTimeFieldsToForm('dayedit2', row);
     writeTaskEstimateActualToForm('dayedit2', row, 'minutes');
+
+    const recurringCheckbox = document.getElementById('dayedit2-recurring-parent');
+    if (recurringCheckbox) recurringCheckbox.checked = isRecurringParentRow(row);
+    loadFreqStateFromRow(dayedit2Freq, row);
+    renderDayedit2FreqChips();
+    updateDayedit2FreqVisibility();
 }
 
 /** 「新タスク整理」タブ全体（フィルタ・カレンダー・一覧・編集フォーム・子一覧）を再描画する。 */
@@ -4995,6 +4149,7 @@ document.getElementById('dayedit2-parent-clear-btn')?.addEventListener('click', 
 
 document.getElementById('calendar2-quick-new-btn')?.addEventListener('click', () => {
     selectedTaskorg2Id = null;
+    taskorg2QuickNewMode = true;
     renderCalendar2();
 });
 
@@ -5023,6 +4178,7 @@ document.getElementById('dayedit2-new-btn')?.addEventListener('click', () => {
     entry['カテゴリ']   = document.getElementById('dayedit2-category').value || (currentCategory === 'すべて' ? '' : currentCategory);
     entry['タグ']       = document.getElementById('dayedit2-tag').value;
     entry['親ID']       = parentId;
+    applyRecurringFieldsFromForm2(entry);
     Object.assign(entry, readTaskDateTimeFieldsFromForm('dayedit2'));
     entry['作成日時']   = ts;
     entry['更新日時']   = ts;
@@ -5032,6 +4188,7 @@ document.getElementById('dayedit2-new-btn')?.addEventListener('click', () => {
 
     selectedTaskorg2Id = entry['ID'];
     renderCalendar2();
+    renderTaskRunner();
 });
 
 /** 「適用」ボタン: 選択中行へフォーム内容を書き戻す。親IDは循環参照チェックを通過した場合のみ保存する。 */
@@ -5052,11 +4209,14 @@ document.getElementById('dayedit2-apply-btn')?.addEventListener('click', () => {
     row['カテゴリ']   = document.getElementById('dayedit2-category').value;
     row['タグ']       = document.getElementById('dayedit2-tag').value;
     row['親ID']       = parentId;
+    applyRecurringFieldsFromForm2(row);
     Object.assign(row, readTaskDateTimeFieldsFromForm('dayedit2'));
     row['更新日時'] = formatJpDatetime(new Date());
 
     persistLocalCache();
     renderCalendar2();
+    renderTaskRunner();
+    renderRecurringSection();
 });
 
 /** 「削除」ボタン: 選択中行を削除する。この行を親IDとして参照していた子行は親ID欄を空欄化する。 */
@@ -5070,6 +4230,8 @@ document.getElementById('dayedit2-delete-btn')?.addEventListener('click', () => 
 
     selectedTaskorg2Id = null;
     renderCalendar2();
+    renderTaskRunner();
+    renderRecurringSection();
 });
 
 // ===========================================================================
@@ -5620,18 +4782,18 @@ document.getElementById('edit2-delete-btn')?.addEventListener('click', () => {
 
 const PROJECT2_HIDDEN_STATUS = '非表示'; // プロジェクトの「非表示」を表すステータス値（ステータス列を表示制御に共用する）
 
-/** 他行から親IDとして参照されている「最上位（ルート）」の行を、非表示のものを除きカテゴリで絞り込んで返す（自身に親IDを持たない行に限る）。 */
+/** 他行から親IDとして参照されている「最上位（ルート）」の行を、非表示のもの・繰返しテンプレートを除きカテゴリで絞り込んで返す（自身に親IDを持たない行に限る）。 */
 function getProject2ParentRows() {
     let rows = currentMainData.filter(r =>
-        !r['親ID'] && isParentRowM(currentMainData, r['ID']) && r['ステータス'] !== PROJECT2_HIDDEN_STATUS
+        !r['親ID'] && isParentRowM(currentMainData, r['ID']) && r['ステータス'] !== PROJECT2_HIDDEN_STATUS && !isRecurringParentRow(r)
     );
     if (currentCategory !== 'すべて') rows = rows.filter(r => r['カテゴリ'] === currentCategory);
     return rows;
 }
 
-/** プロジェクト管理表用：他行から親IDとして参照されている「最上位（ルート）」の行を、非表示のものも含めて全件返す。 */
+/** プロジェクト管理表用：他行から親IDとして参照されている「最上位（ルート）」の行を、非表示のものも含めて全件返す（繰返しテンプレートは除く）。 */
 function getProject2AllParentRowsForAdmin() {
-    let rows = currentMainData.filter(r => !r['親ID'] && isParentRowM(currentMainData, r['ID']));
+    let rows = currentMainData.filter(r => !r['親ID'] && isParentRowM(currentMainData, r['ID']) && !isRecurringParentRow(r));
     if (currentCategory !== 'すべて') rows = rows.filter(r => r['カテゴリ'] === currentCategory);
     return rows;
 }

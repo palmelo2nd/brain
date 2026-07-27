@@ -70,11 +70,6 @@ export function computeActualHours(row) {
     return ms > 0 ? Math.round(ms / 360000) / 10 : 0;
 }
 
-/** (M)プロジェクト_ステータスが '0'（無効）でない行かどうかを判定する。未入力は有効扱いにする。 */
-export function isProjectActive(row) {
-    return row['(M)プロジェクト_ステータス'] !== '0' && row['(M)プロジェクト_ステータス'] !== 0;
-}
-
 /** 選択中カテゴリでフィルタされたメインデータを返す。「すべて」選択時は全件返す（複製配列）。 */
 export function filterMainDataByCategory(mainData, category) {
     if (category === 'すべて') return [...mainData];
@@ -92,22 +87,6 @@ export function filterTagsByCategory(masterData, category) {
     return masterData
         .filter(r => r['(M)タグ_親'] === category)
         .map(r => r['(M)タグ_子'])
-        .filter(Boolean);
-}
-
-/**
- * 選択中カテゴリに属する、有効な（(M)プロジェクト_ステータスが0でない）プロジェクト名一覧を返す。
- * 「すべて」選択時は (M)プロジェクト_子 の全値、それ以外は (M)プロジェクト_親 === category の行の (M)プロジェクト_子 を返す。
- */
-export function filterProjectsByCategory(masterData, category) {
-    if (category === 'すべて') {
-        return [...new Set(
-            masterData.filter(isProjectActive).map(r => r['(M)プロジェクト_子']).filter(Boolean)
-        )];
-    }
-    return masterData
-        .filter(r => r['(M)プロジェクト_親'] === category && isProjectActive(r))
-        .map(r => r['(M)プロジェクト_子'])
         .filter(Boolean);
 }
 
@@ -172,9 +151,26 @@ export function getRootParentId(mainData, id) {
     return currentId;
 }
 
-/** 行が親（プロジェクト）になれるデータ区分かどうかを判定する。進捗管理の必要上、親になれるのはタスクのみ（ナレッジは親にはなれず、子にはなれる）。 */
+/** row が繰返しタスクの親（テンプレート）かどうかを判定する。 */
+export function isRecurringParentRow(row) {
+    return !!row && row['繰返し識別子'] === '1';
+}
+
+/** row が繰返しタスクの子（生成済みインスタンス）かどうかを判定する。親ID（row['親ID']）が繰返しテンプレート行を指しているかで判定する。 */
+export function isRecurringChildRow(mainData, row) {
+    const parentId = row && row['親ID'];
+    if (!parentId) return false;
+    const parent = mainData.find(r => String(r['ID']) === String(parentId));
+    return !!parent && isRecurringParentRow(parent);
+}
+
+/**
+ * 行が親（プロジェクト）になれるデータ区分かどうかを判定する。進捗管理の必要上、親になれるのはタスクのみ（ナレッジは親にはなれず、子にはなれる）。
+ * 繰返しタスクの親（テンプレート）は、生成済みの子タスクの親ID経由でのみ紐づく特殊な行のため、
+ * 通常の親（プロジェクト）選択候補としては提示しない（誤って選ばれることを防ぐ）。
+ */
 export function isEligibleParentRow(row) {
-    return row && row['データ区分'] === 'タスク';
+    return !!row && row['データ区分'] === 'タスク' && !isRecurringParentRow(row);
 }
 
 /**

@@ -15,7 +15,7 @@
 | `js/modules/*.js` | 機能ロジック。1機能1ファイル |
 
 ### 現在の modules 構成
-`github.js`（リモート通信）／`storage.js`（LocalStorageキャッシュ）／`dataModel.js`（列定義・Markdownパース／文字列化）／`task.js`（タスクロジック・フィルタ）／`calendar.js`（カレンダー表示ロジック）／`project.js`（プロジェクト管理：名前変更・統合・削除。旧`hub.js`）／`master.js`（マスタ整合性チェック）／`recurring.js`（繰り返しタスク）／`excel.js`（Excelエクスポート・インポート）／`workCalendar.js`／`merge.js`（mainDataの3-wayマージ。ID列をキーに base/local/remote を比較し自動解決。保存フロー内 `app.js` の `mergeMainData` 呼び出しから使用）
+`github.js`（リモート通信）／`storage.js`（LocalStorageキャッシュ）／`dataModel.js`（列定義・Markdownパース／文字列化）／`task.js`（タスクロジック・フィルタ）／`calendar.js`（カレンダー表示ロジック）／`master.js`（マスタ整合性チェック）／`recurring.js`（繰り返しタスク）／`excel.js`（Excelエクスポート・インポート）／`workCalendar.js`／`merge.js`（mainDataの3-wayマージ。ID列をキーに base/local/remote を比較し自動解決。保存フロー内 `app.js` の `mergeMainData` 呼び出しから使用）
 
 ### modules の関数構成（必須4段落）
 1. インポート（外部モジュール・ライブラリ）
@@ -76,3 +76,7 @@ updateView(filtered); // 画面描画
 ## 用語変更履歴
 
 - 2026-07-13: 上位概念を表す変数名を「ハブ」→「プロジェクト」に変更。対象: `dataModel.js`の列名、`hub.js`→`project.js`（ファイル名・関数名）、`data.md`内のキー名および`(M)変数名`の値、UI表示ラベル全般。データファイル名も`todo.md`→`data.md`に変更。
+- 2026-07-27: 「旧タスク整理」タブ（`calendar-`/`dayedit-`/`taskorg-`/`gantt-`系、フラットな`プロジェクト`列によるカレンダー／ガントチャート整理画面）を削除。機能はすべて「タスク整理」（`calendar2-`/`dayedit2-`/`taskorg2-`系、親ID方式）へ統合済み。あわせて未使用だった`project.js`（フラットプロジェクト管理）も削除。
+- 2026-07-27: フラット`プロジェクト`列の残り2用途を移行。(1) タスク実行タブの編集パネルのプロジェクト欄を親ID方式のPJ(n層)階層プルダウンに変更。(2) 1日タスク（DAYPLAN）の判定を`プロジェクト='1日タスク'`から`データ区分=ナレッジ・PARA区分=1日タスク`（`calendar.js`の`isDayPlanRow`）に変更（作業ログ的な性質のためナレッジ扱いに）。旧形式データは`app.js`の`applyContent`内で読み込み時に自動変換する。
+- 2026-07-27: マスタ側のフラット「プロジェクト」定義をコードから完全に削除。`dataModel.js`の`MAIN_DATA_COLUMNS`から`プロジェクト`、`MASTER_DATA_COLUMNS`から`(M)プロジェクト_親`/`(M)プロジェクト_子`/`(M)プロジェクト_ステータス`を除去。`task.js`の`isProjectActive`/`filterProjectsByCategory`、`app.js`の`getFilteredProjects`、`master.js`のプロジェクト親カテゴリ整合性チェックも削除。データ側（`data.md`）も利用者が`プロジェクト`列の値・`(M)プロジェクト_*`マスタ行・`(M)変数名=プロジェクト`行を削除済み。あわせて`app.js`の`applyContent`にあった旧形式1日タスク（プロジェクト=1日タスク）→新形式（データ区分=ナレッジ・PARA区分=1日タスク）の自動変換コードも、既存データの移行が完了したため削除（一時的な移行用コードだったため）。フラット`プロジェクト`方式は完全に廃止済み。
+- 2026-07-27: 繰返しタスクの親子関係を`繰返し親ID`列から親ID方式へ統合。`dataModel.js`の`MAIN_DATA_COLUMNS`から`繰返し親ID`を削除。子タスク生成時（`recurring.js`の`buildChild`）は`親ID`＝繰返しテンプレート自身のIDを設定する（プロジェクト所属はテンプレートの`親ID`をさらに辿って判定、多段階の階層になる）。`繰返し識別子`は繰返しテンプレート行にのみ残し、生成される子タスクには付与しない。`task.js`に`isRecurringParentRow`/`isRecurringChildRow`を追加し、`isEligibleParentRow`は繰返しテンプレートを親候補から除外するよう変更（誤って一般タスクの親に選ばれないようにするため）。`getProjectRootRows`・`getProject2ParentRows`・`getProject2AllParentRowsForAdmin`・`matchesProjectRootFilter`にも、繰返しテンプレートをプロジェクト一覧・フィルタから除外する処理を追加（単独の繰返しテンプレートがプロジェクトとして一覧に紛れ込むのを防ぐため）。旧形式データ（`繰返し親ID`列）は`app.js`の`applyContent`内で読み込み時に自動変換する。

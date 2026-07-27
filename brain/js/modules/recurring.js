@@ -78,7 +78,7 @@ function maxIdIn(mainData) {
 
 /** 親ID＋繰返し基準日＋タイトルで、既に同じ子タスクが生成済みかどうかを判定する（当日分・生成中の分の両方を対象）。 */
 function childAlreadyGenerated(mainData, generated, parentId, matchedDateSlash, title) {
-    const match = r => r['繰返し親ID'] === String(parentId) && r['繰返し基準日'] === matchedDateSlash && r['タイトル'] === title;
+    const match = r => r['親ID'] === String(parentId) && r['繰返し基準日'] === matchedDateSlash && r['タイトル'] === title;
     return mainData.some(match) || generated.some(match);
 }
 
@@ -138,13 +138,11 @@ function buildChild(parent, template, matchedDate, startDate, targetDate, id, ts
     child['内容']         = template.content || parent['内容'] || '';
     child['カテゴリ']     = parent['カテゴリ']  || '';
     child['タグ']         = parent['タグ']      || '';
-    child['親ID']         = parent['親ID']      || '';
+    child['親ID']         = String(parent['ID']); // 繰返しテンプレート自身を親IDとして指す（プロジェクトはテンプレートからさらに上を辿って判定する）
     child['優先度']       = parent['優先度']    || '';
     child['見積時間']     = parent['見積時間']  || '';
     child['開始予定']     = formatSlashDate(startDate);
     child['終了予定']     = formatSlashDate(targetDate);
-    child['繰返し識別子'] = '1';
-    child['繰返し親ID']   = String(parent['ID']);
     child['繰返し基準日'] = formatSlashDate(matchedDate); // 同時生成した一群（バッチ）を識別するキー
     child['作成日時']     = ts;
     child['更新日時']     = ts;

@@ -16,252 +16,11 @@
     <!-- ========== メインコンテンツ ========== -->
     <main class="main-content">
 
-        <!-- タスク整理（カレンダー／ガントチャート切り替え、Summaryページ「タスク整理」タブに表示） -->
-        <div id="taskorg-anchor-home" style="display:none">
-            <div id="taskorg-details">
-
-                <!-- タグ／プロジェクト／ステータスのフィルタ -->
-                <details class="expander calendar-sub-expander">
-                    <summary class="expander-title">フィルタ</summary>
-                    <div id="calendar-filter-area" class="triage-filter-area"></div>
-                </details>
-
-                <!-- カレンダー／ガントチャートの切り替え -->
-                <div class="taskorg-view-toggle">
-                    <button type="button" id="taskorg-tab-calendar" class="taskorg-view-btn taskorg-view-btn--active" data-view="calendar">カレンダー</button>
-                    <button type="button" id="taskorg-tab-gantt" class="taskorg-view-btn" data-view="gantt">ガントチャート</button>
-                </div>
-
-                <!-- カレンダービュー（月選択＋グリッド、横幅いっぱい） -->
-                <div id="taskorg-view-calendar" class="calendar-panel calendar-panel--full">
-                    <div class="calendar-header">
-                        <button id="calendar-prev-btn" class="calendar-nav-btn">‹</button>
-                        <span id="calendar-month-label" class="calendar-month-label"></span>
-                        <button id="calendar-next-btn" class="calendar-nav-btn">›</button>
-                    </div>
-
-                    <div id="calendar-grid" class="calendar-grid"></div>
-                </div>
-
-                <!-- ガントチャートビュー（月選択＋グリッド、横幅いっぱい） -->
-                <div id="taskorg-view-gantt" class="calendar-panel calendar-panel--full" style="display:none">
-                    <div class="calendar-header">
-                        <button id="gantt-prev-btn" class="calendar-nav-btn">‹</button>
-                        <span id="gantt-month-label" class="calendar-month-label"></span>
-                        <button id="gantt-next-btn" class="calendar-nav-btn">›</button>
-                    </div>
-
-                    <div class="gantt-unit-toggle">
-                        <button type="button" id="gantt-unit-day" class="gantt-unit-btn gantt-unit-btn--active" data-unit="day">日</button>
-                        <button type="button" id="gantt-unit-week" class="gantt-unit-btn" data-unit="week">週</button>
-                    </div>
-                    <div class="gantt-legend">
-                        <span class="gantt-legend-item"><span class="gantt-swatch calendar-time-block--todo"></span>未着手</span>
-                        <span class="gantt-legend-item"><span class="gantt-swatch calendar-time-block--doing"></span>進行中</span>
-                        <span class="gantt-legend-item"><span class="gantt-swatch calendar-time-block--waiting"></span>中断・連絡待ち・報告待ち</span>
-                        <span class="gantt-legend-item"><span class="gantt-swatch calendar-time-block--done"></span>完了</span>
-                    </div>
-                    <div class="table-wrapper table-wrapper--limited">
-                        <table id="gantt-table" class="gantt-table"></table>
-                    </div>
-                </div>
-
-                <!-- 選択した日のタイムスケジュール（左）＋ タスク編集（右） -->
-                <div class="calendar-day-section">
-                    <div class="calendar-timeline-col">
-                        <h3 id="calendar-detail-title" class="calendar-detail-title"></h3>
-
-                        <!-- 1日の予定表（上から下へ時間が進むタイムライン） -->
-                        <div class="calendar-timeline-scroll" id="calendar-timeline-scroll">
-                            <div class="calendar-timeline-wrap">
-                                <div class="calendar-timeline-hours" id="calendar-timeline-hours"></div>
-                                <div class="calendar-timeline-lanes" id="calendar-timeline-lanes"></div>
-                            </div>
-                        </div>
-
-                        <!-- 1日タスク（その日のタイムスケジュールを文法で記述して管理） -->
-                        <div class="calendar-dayplan-section">
-                            <div class="calendar-dayplan-toolbar">
-                                <p class="calendar-section-label">1日タスク</p>
-                                <button id="dayplan-create-btn" class="calendar-add-btn">1日タスクを作成</button>
-                            </div>
-                            <div id="dayplan-editor" class="calendar-dayplan-editor" style="display:none">
-                                <p class="calendar-dayplan-hint">1行1件、「HH:MM-HH:MM 内容」または「HH:MM-HH:MM #ID ラベル」の形式で入力してください（#IDを書くと既存タスクにリンクします）</p>
-                                <textarea id="dayplan-content" class="calendar-dayplan-textarea" rows="6" placeholder="10:00-12:00 #123 資料作成の続き&#10;13:00-13:30 昼会"></textarea>
-                                <div class="calendar-dayplan-toolbar">
-                                    <button id="dayplan-save-btn" class="calendar-add-btn">保存</button>
-                                    <button id="dayplan-delete-btn" class="calendar-danger-btn">1日タスクを削除</button>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- 未設定／設定済みタスク（既定は折りたたみ） -->
-                        <details class="expander calendar-sub-expander">
-                            <summary class="expander-title">未設定/設定済みタスク<span id="calendar-todo-dayplan-count" class="expander-count"></span></summary>
-                            <div class="calendar-unscheduled-section">
-                                <p class="calendar-section-label">未設定タスク</p>
-                                <div id="calendar-unscheduled-list" class="calendar-unscheduled-list"></div>
-                                <p class="calendar-section-label calendar-section-label--sub">設定済みタスク</p>
-                                <div id="calendar-dayplan-added-list" class="calendar-unscheduled-list"></div>
-                            </div>
-                        </details>
-
-                        <!-- 開始予定・終了予定のいずれかが空欄のタスク（既定は折りたたみ） -->
-                        <details class="expander calendar-sub-expander">
-                            <summary class="expander-title">日付未確定のタスク<span id="calendar-incomplete-count" class="expander-count"></span></summary>
-                            <p class="calendar-dayplan-hint">開始予定・終了予定のいずれかが空欄のタスクです。</p>
-                            <div class="calendar-unscheduled-section">
-                                <div id="calendar-incomplete-date-list" class="calendar-unscheduled-list"></div>
-                            </div>
-                        </details>
-
-                        <!-- カテゴリ／ステータス／優先度／プロジェクトのいずれかが未設定のタスク（既定は折りたたみ） -->
-                        <details class="expander calendar-sub-expander">
-                            <summary class="expander-title">属性未設定タスク<span id="calendar-unset-total-count" class="expander-count"></span></summary>
-                            <p class="calendar-dayplan-hint">カテゴリ・ステータス・優先度・プロジェクトのいずれかが未入力のタスクです（複数の領域に重複して表示される場合があります）。</p>
-
-                            <div class="calendar-unscheduled-section">
-                                <p class="calendar-section-label calendar-section-label--accent">カテゴリ<span id="calendar-unset-category-count" class="expander-count"></span></p>
-                                <div id="calendar-unset-category-list" class="calendar-unscheduled-list"></div>
-                            </div>
-                            <div class="calendar-unscheduled-section">
-                                <p class="calendar-section-label calendar-section-label--accent">ステータス<span id="calendar-unset-status-count" class="expander-count"></span></p>
-                                <div id="calendar-unset-status-list" class="calendar-unscheduled-list"></div>
-                            </div>
-                            <div class="calendar-unscheduled-section">
-                                <p class="calendar-section-label calendar-section-label--accent">優先度<span id="calendar-unset-priority-count" class="expander-count"></span></p>
-                                <div id="calendar-unset-priority-list" class="calendar-unscheduled-list"></div>
-                            </div>
-                            <div class="calendar-unscheduled-section">
-                                <p class="calendar-section-label calendar-section-label--accent">プロジェクト<span id="calendar-unset-project-count" class="expander-count"></span></p>
-                                <div id="calendar-unset-project-list" class="calendar-unscheduled-list"></div>
-                            </div>
-                        </details>
-
-                        <!-- ステータスが「中断」のタスク（既定は折りたたみ） -->
-                        <details class="expander calendar-sub-expander">
-                            <summary class="expander-title">中断タスク<span id="calendar-suspended-count" class="expander-count"></span></summary>
-                            <div class="calendar-unscheduled-section">
-                                <div id="calendar-suspended-list" class="calendar-unscheduled-list"></div>
-                            </div>
-                        </details>
-                    </div>
-
-                    <div class="calendar-edit-col">
-                        <!-- 編集（未選択時は新規登録、選択時はその行の編集） -->
-                        <div id="calendar-task-edit" class="calendar-task-edit">
-                            <div class="calendar-edit-toolbar">
-                                <button type="button" id="calendar-quick-new-btn" class="calendar-add-btn">新規登録</button>
-                            </div>
-                            <p class="calendar-section-label">編集</p>
-                            <div class="calendar-edit-row">
-                                <label>ID</label>
-                                <input type="text" id="dayedit-id" readonly placeholder="（新規登録時は未採番）">
-                            </div>
-                            <div class="calendar-edit-row">
-                                <label>タイトル</label>
-                                <input type="text" id="dayedit-title">
-                            </div>
-                            <div class="calendar-edit-row calendar-edit-row--top">
-                                <label>内容</label>
-                                <textarea id="dayedit-content" class="calendar-edit-textarea" rows="4"></textarea>
-                            </div>
-                            <div class="calendar-edit-row">
-                                <label>備考</label>
-                                <input type="text" id="dayedit-biko">
-                            </div>
-                            <div class="calendar-edit-row">
-                                <label>ステータス</label>
-                                <select id="dayedit-status"></select>
-                            </div>
-                            <div class="calendar-edit-row">
-                                <label>繰り返し</label>
-                                <label class="calendar-checkbox-label">
-                                    <input type="checkbox" id="dayedit-recurring-parent">
-                                </label>
-                            </div>
-                            <div id="dayedit-freq-section" style="display:none">
-                                <div class="calendar-edit-row calendar-edit-row--top">
-                                    <label>頻度（月）</label>
-                                    <div id="dayedit-freq-month" class="calendar-multi-filter"></div>
-                                </div>
-                                <div class="calendar-edit-row calendar-edit-row--top">
-                                    <label>頻度（日）</label>
-                                    <div id="dayedit-freq-day" class="calendar-multi-filter"></div>
-                                </div>
-                                <div class="calendar-edit-row calendar-edit-row--top">
-                                    <label>頻度（曜日）</label>
-                                    <div id="dayedit-freq-weekday" class="calendar-multi-filter"></div>
-                                </div>
-                                <p class="calendar-dayplan-hint">頻度は何も選択しなければ「全て対象」になります（月・日・曜日はAND条件）。自動生成はされません。「実行タスク生成」ボタンから任意のタイミングで子タスクを生成してください。</p>
-                            </div>
-                            <div class="calendar-edit-row">
-                                <label>優先度</label>
-                                <select id="dayedit-priority"></select>
-                            </div>
-                            <div class="calendar-edit-row">
-                                <label>見積時間（分）</label>
-                                <input type="number" id="dayedit-estimate" min="0" step="1" placeholder="（省略可）">
-                            </div>
-                            <div class="calendar-edit-row">
-                                <label>実績時間（分）</label>
-                                <input type="text" id="dayedit-actual" readonly>
-                            </div>
-                            <div class="calendar-edit-row">
-                                <label>開始予定</label>
-                                <input type="date" id="dayedit-start-date">
-                                <input type="number" id="dayedit-start-hour" class="calendar-time-num" min="0" max="23" placeholder="時">
-                                <span>:</span>
-                                <input type="number" id="dayedit-start-minute" class="calendar-time-num" min="0" max="59" step="15" placeholder="分">
-                            </div>
-                            <div class="calendar-edit-row">
-                                <label>終了予定</label>
-                                <input type="date" id="dayedit-end-date">
-                                <input type="number" id="dayedit-end-hour" class="calendar-time-num" min="0" max="23" placeholder="時">
-                                <span>:</span>
-                                <input type="number" id="dayedit-end-minute" class="calendar-time-num" min="0" max="59" step="15" placeholder="分">
-                            </div>
-                            <div class="calendar-edit-row">
-                                <label>完了日</label>
-                                <input type="date" id="dayedit-complete-date">
-                                <button type="button" id="dayedit-fill-date-from-complete-btn" class="calendar-add-btn">開始/終了に反映</button>
-                            </div>
-                            <div class="calendar-edit-row">
-                                <label>カテゴリ</label>
-                                <select id="dayedit-category"></select>
-                            </div>
-                            <div class="calendar-edit-row">
-                                <label>タグ</label>
-                                <select id="dayedit-tag"></select>
-                            </div>
-                            <div class="calendar-edit-row">
-                                <label>プロジェクト</label>
-                                <select id="dayedit-project"></select>
-                            </div>
-                            <div class="calendar-edit-toolbar">
-                                <button id="dayedit-new-btn" class="calendar-add-btn">新規</button>
-                                <button id="dayedit-apply-btn">適用</button>
-                                <button id="dayedit-delete-btn" class="calendar-danger-btn">削除</button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- タスクの一覧（カレンダー／ガントチャート共通、常に画面下部） -->
-                <div id="taskorg-tasklist-calendar" class="table-wrapper table-wrapper--limited">
-                    <table id="calendar-task-list-table" class="calendar-task-list-table"></table>
-                </div>
-                <div id="taskorg-tasklist-gantt" class="table-wrapper table-wrapper--limited" style="display:none">
-                    <table id="gantt-task-list-table" class="calendar-task-list-table"></table>
-                </div>
-            </div>
-        </div>
-
-        <!-- 新タスク整理（親ID方式：月間カレンダー＋ガントチャート＋日別タイムライン＋1日タスク＋未設定タスク一覧＋一覧＋編集フォーム。旧タスク整理の機能は全て移行済み、Summaryページ「新タスク整理」タブに表示） -->
+        <!-- タスク整理（親ID方式：月間カレンダー＋ガントチャート＋日別タイムライン＋1日タスク＋未設定タスク一覧＋一覧＋編集フォーム。Summaryページ「タスク整理」タブに表示） -->
         <div id="taskorg2-anchor-home" style="display:none">
             <div id="taskorg2-details">
 
-                <!-- タグ／ステータスのフィルタ -->
+                <!-- タグ／ステータスのフィルタ（複数選択）＋その他フィルタ（プロジェクト／繰返し親タスク／繰返し子タスクの表示ON/OFF） -->
                 <details class="expander calendar-sub-expander">
                     <summary class="expander-title">フィルタ</summary>
                     <div id="calendar2-filter-area" class="triage-filter-area"></div>
@@ -412,6 +171,27 @@
                             <div class="calendar-edit-row">
                                 <label>ステータス</label>
                                 <select id="dayedit2-status"></select>
+                            </div>
+                            <div class="calendar-edit-row">
+                                <label>繰り返し</label>
+                                <label class="calendar-checkbox-label">
+                                    <input type="checkbox" id="dayedit2-recurring-parent">
+                                </label>
+                            </div>
+                            <div id="dayedit2-freq-section" style="display:none">
+                                <div class="calendar-edit-row calendar-edit-row--top">
+                                    <label>頻度（月）</label>
+                                    <div id="dayedit2-freq-month" class="calendar-multi-filter"></div>
+                                </div>
+                                <div class="calendar-edit-row calendar-edit-row--top">
+                                    <label>頻度（日）</label>
+                                    <div id="dayedit2-freq-day" class="calendar-multi-filter"></div>
+                                </div>
+                                <div class="calendar-edit-row calendar-edit-row--top">
+                                    <label>頻度（曜日）</label>
+                                    <div id="dayedit2-freq-weekday" class="calendar-multi-filter"></div>
+                                </div>
+                                <p class="calendar-dayplan-hint">頻度は何も選択しなければ「全て対象」になります（月・日・曜日はAND条件）。自動生成はされません。繰返しタブの「実行タスク生成」ボタンから任意のタイミングで子タスクを生成してください。</p>
                             </div>
                             <div class="calendar-edit-row">
                                 <label>優先度</label>
@@ -678,8 +458,7 @@
 
             <!-- 表示切り替え（タスク整理／繰返し／タスク実行／INBOX／編集／プロジェクト／データ） -->
             <div class="taskorg-view-toggle summary-main-tabs">
-                <button type="button" id="summary-tab-taskorg" class="taskorg-view-btn taskorg-view-btn--active" data-view="taskorg">旧タスク整理</button>
-                <button type="button" id="summary-tab-taskorg2" class="taskorg-view-btn" data-view="taskorg2">新タスク整理</button>
+                <button type="button" id="summary-tab-taskorg2" class="taskorg-view-btn taskorg-view-btn--active" data-view="taskorg2">タスク整理</button>
                 <button type="button" id="summary-tab-recurring" class="taskorg-view-btn" data-view="recurring">繰返し</button>
                 <button type="button" id="summary-tab-runner" class="taskorg-view-btn" data-view="runner">タスク実行</button>
                 <button type="button" id="summary-tab-top" class="taskorg-view-btn" data-view="top">INBOX</button>
@@ -703,11 +482,6 @@
             </div>
 
             <!-- タスク整理（表示切り替え時に本体を移動して表示） -->
-            <div id="summary-view-taskorg" class="summary-view-panel" style="display:none">
-                <div id="taskorg-anchor-summary"></div>
-            </div>
-
-            <!-- 新タスク整理（表示切り替え時に本体を移動して表示） -->
             <div id="summary-view-taskorg2" class="summary-view-panel" style="display:none">
                 <div id="taskorg2-anchor-summary"></div>
             </div>
