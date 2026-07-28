@@ -1031,6 +1031,12 @@ details[open] > .expander-title::after { transform: rotate(90deg); }
     color: #8b949e;
 }
 
+.calendar-divider {
+    border: none;
+    border-top: 1px solid #30363d;
+    margin: 20px 0;
+}
+
 .recurring-chart-header {
     display: flex;
     align-items: center;
@@ -1054,6 +1060,14 @@ details[open] > .expander-title::after { transform: rotate(90deg); }
 .calendar-section-label--nested {
     margin: 10px 0 4px 10px;
     font-size: 12px;
+    flex-basis: 100%;
+}
+
+/* ステータスごとにグループ化されたチップ一覧（calendar-unscheduled-list内に入れ子で追加される）は、
+   親がflexの折返しコンテナのため、見出し・一覧ともflex-basis:100%で強制的に改行させる。 */
+.calendar-unscheduled-list > .calendar-section-label--nested,
+.calendar-unscheduled-list > .calendar-unscheduled-list {
+    flex-basis: 100%;
 }
 
 /* --- タグ／プロジェクト／ステータス マルチセレクトフィルタ --- */
@@ -1275,6 +1289,21 @@ details[open] > .expander-title::after { transform: rotate(90deg); }
 
 .calendar-edit-row--top {
     align-items: flex-start;
+}
+
+/* プロジェクトフィルタ下のPJ(n層)ドリルダウン: 親の折返しコンテナのstretch有無に関わらず、
+   常に同じ狭い幅で揃える（上部フィルタ・タスク一覧上の複製フィルタで幅が食い違わないようにする）。 */
+.calendar-project-drilldown {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    width: 260px;
+    max-width: 100%;
+}
+.calendar-project-drilldown .calendar-edit-row select {
+    flex: 0 1 auto;
+    width: 200px;
+    max-width: 100%;
 }
 
 .calendar-checkbox-label {
@@ -1502,6 +1531,15 @@ details[open] > .expander-title::after { transform: rotate(90deg); }
 .recurring-table-btn--add:hover { background: #1e7e34; }
 .recurring-table-btn--done { background: #28a745; }
 .recurring-table-btn--done:hover { background: #1e7e34; }
+
+/* タスク整理の進行中タイマー▷／■ボタン: グリフの見た目の大きさが違っても箱のサイズを揃える */
+.dayedit2-timer-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 30px;
+    font-size: 13px;
+}
 
 .calendar-danger-btn { background: #d73a49 !important; }
 .calendar-danger-btn:hover { background: #b0202f !important; }

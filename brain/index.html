@@ -20,6 +20,10 @@
         <div id="taskorg2-anchor-home" style="display:none">
             <div id="taskorg2-details">
 
+              <!-- フィルタ～カレンダー～1日タスク～タスク一覧までをまとめた「タスク整理」本体（既定で開く） -->
+              <details class="expander" open>
+                <summary class="expander-title">タスク整理</summary>
+
                 <!-- タグ／ステータスのフィルタ（複数選択）＋その他フィルタ（プロジェクト／繰返し親タスク／繰返し子タスクの表示ON/OFF） -->
                 <details class="expander calendar-sub-expander">
                     <summary class="expander-title">フィルタ</summary>
@@ -95,7 +99,8 @@
 
                         <!-- 未設定／設定済みタスク（既定は折りたたみ） -->
                         <details class="expander calendar-sub-expander">
-                            <summary class="expander-title">未設定/設定済みタスク<span id="calendar2-todo-dayplan-count" class="expander-count"></span></summary>
+                            <summary class="expander-title">対応中タスク（期間内）<span id="calendar2-todo-dayplan-count" class="expander-count"></span></summary>
+                            <p class="calendar-dayplan-hint">期間：開始予定～終了予定。未設定タスク＝開始予定・終了予定に時刻が入っていないタスク、設定済みタスク＝その日の1日タスクに参照されているタスク。対象ステータス：未着手／進行中／中断／連絡待ち／報告待ちは対象期間内の1日のみ表示、完了は完了日に合致する日のみ表示。</p>
                             <div class="calendar-unscheduled-section">
                                 <p class="calendar-section-label">未設定タスク</p>
                                 <div id="calendar2-unscheduled-list" class="calendar-unscheduled-list"></div>
@@ -104,19 +109,29 @@
                             </div>
                         </details>
 
-                        <!-- 開始予定・終了予定のいずれかが空欄のタスク（既定は折りたたみ） -->
+                        <!-- ステータスが「連絡待ち」「報告待ち」「中断」のタスク（既定は折りたたみ） -->
                         <details class="expander calendar-sub-expander">
-                            <summary class="expander-title">日付未確定のタスク<span id="calendar2-incomplete-count" class="expander-count"></span></summary>
-                            <p class="calendar-dayplan-hint">開始予定・終了予定のいずれかが空欄のタスクです。</p>
+                            <summary class="expander-title">対応待ちタスク（期間外）<span id="calendar2-waiting-total-count" class="expander-count"></span></summary>
+                            <p class="calendar-dayplan-hint">連絡待ち／報告待ち／中断のうち、開始予定・終了予定がともに入力済みで、かつ今日がその期間内ではない（＝対応中タスクに該当しない）タスクのみを表示します。開始予定・終了予定の少なくとも一方が未入力のタスクは属性未設定タスク側に表示されます。</p>
+
                             <div class="calendar-unscheduled-section">
-                                <div id="calendar2-incomplete-date-list" class="calendar-unscheduled-list"></div>
+                                <p class="calendar-section-label calendar-section-label--accent">連絡待ち<span id="calendar2-waitingcontact-count" class="expander-count"></span></p>
+                                <div id="calendar2-waitingcontact-list" class="calendar-unscheduled-list"></div>
+                            </div>
+                            <div class="calendar-unscheduled-section">
+                                <p class="calendar-section-label calendar-section-label--accent">報告待ち<span id="calendar2-waitingreport-count" class="expander-count"></span></p>
+                                <div id="calendar2-waitingreport-list" class="calendar-unscheduled-list"></div>
+                            </div>
+                            <div class="calendar-unscheduled-section">
+                                <p class="calendar-section-label calendar-section-label--accent">中断<span id="calendar2-suspended-count" class="expander-count"></span></p>
+                                <div id="calendar2-suspended-list" class="calendar-unscheduled-list"></div>
                             </div>
                         </details>
 
-                        <!-- カテゴリ／ステータス／優先度／プロジェクト（親ID）のいずれかが未設定のタスク（既定は折りたたみ） -->
+                        <!-- カテゴリ／ステータス／優先度／プロジェクト（親ID）／日付のいずれかが未設定のタスク（既定は折りたたみ） -->
                         <details class="expander calendar-sub-expander">
                             <summary class="expander-title">属性未設定タスク<span id="calendar2-unset-total-count" class="expander-count"></span></summary>
-                            <p class="calendar-dayplan-hint">カテゴリ・ステータス・優先度・プロジェクト（親ID）のいずれかが未入力のタスクです（複数の領域に重複して表示される場合があります）。</p>
+                            <p class="calendar-dayplan-hint">カテゴリ・ステータス・優先度・プロジェクト（親ID）・日付（開始予定／終了予定）のいずれかが未入力のタスクです（複数の領域に重複して表示される場合があります）。</p>
 
                             <div class="calendar-unscheduled-section">
                                 <p class="calendar-section-label calendar-section-label--accent">カテゴリ<span id="calendar2-unset-category-count" class="expander-count"></span></p>
@@ -134,13 +149,9 @@
                                 <p class="calendar-section-label calendar-section-label--accent">プロジェクト（親ID）<span id="calendar2-unset-project-count" class="expander-count"></span></p>
                                 <div id="calendar2-unset-project-list" class="calendar-unscheduled-list"></div>
                             </div>
-                        </details>
-
-                        <!-- ステータスが「中断」のタスク（既定は折りたたみ） -->
-                        <details class="expander calendar-sub-expander">
-                            <summary class="expander-title">中断タスク<span id="calendar2-suspended-count" class="expander-count"></span></summary>
                             <div class="calendar-unscheduled-section">
-                                <div id="calendar2-suspended-list" class="calendar-unscheduled-list"></div>
+                                <p class="calendar-section-label calendar-section-label--accent">日付（開始予定／終了予定）<span id="calendar2-incomplete-count" class="expander-count"></span></p>
+                                <div id="calendar2-incomplete-date-list" class="calendar-unscheduled-list"></div>
                             </div>
                         </details>
                     </div>
@@ -152,6 +163,25 @@
                                 <button type="button" id="calendar2-quick-new-btn" class="calendar-add-btn">新規登録</button>
                             </div>
                             <p class="calendar-section-label">編集</p>
+
+                            <!-- ステータスが「進行中」のタスクを選択中のみ表示するタイマー操作エリア -->
+                            <div id="dayedit2-timer-section" style="display:none">
+                                <div class="calendar-edit-row">
+                                    <label>タイマー</label>
+                                    <button type="button" id="dayedit2-timer-start-btn" class="recurring-table-btn dayedit2-timer-btn">▷</button>
+                                    <button type="button" id="dayedit2-timer-stop-btn" class="recurring-table-btn dayedit2-timer-btn">■</button>
+                                </div>
+                                <div class="calendar-edit-row">
+                                    <label>累計時間</label>
+                                    <span id="dayedit2-timer-elapsed" class="runner-elapsed-display"></span>
+                                    <input type="number" id="dayedit2-timer-adjust" class="runner-adj-input" step="1" placeholder="補正時間(分,±)">
+                                </div>
+                                <div class="calendar-edit-row calendar-edit-row--top">
+                                    <label>タイムスタンプログ</label>
+                                    <textarea id="dayedit2-timer-log" class="calendar-edit-textarea" rows="3"></textarea>
+                                </div>
+                            </div>
+
                             <div class="calendar-edit-row">
                                 <label>ID</label>
                                 <input type="text" id="dayedit2-id" readonly placeholder="（新規登録時は未採番）">
@@ -246,14 +276,66 @@
                     </div>
                 </div>
 
-                <!-- タスク一覧（カレンダー・編集エリアの下、常に画面下部） -->
+                <!-- タスク一覧（カレンダー・編集エリアの下、常に画面下部）。上部のフィルタと同期して動作する複製フィルタを一覧の直上に配置する（既定は折りたたみ） -->
                 <div id="taskorg2-tasklist" class="table-wrapper table-wrapper--limited">
+                    <details class="expander calendar-sub-expander">
+                        <summary class="expander-title">フィルタ</summary>
+                        <div id="calendar2-filter-area-bottom" class="triage-filter-area"></div>
+                    </details>
                     <table id="calendar2-task-list-table" class="calendar-task-list-table"></table>
                 </div>
+
+              </details>
+
+                <!-- 繰返しタスク（繰返しタブ廃止に伴いここへ移動。既定は折りたたみ） -->
+                <details class="expander calendar-sub-expander">
+                    <summary class="expander-title">繰返し</summary>
+                    <div id="taskorg2-recurring-anchor"></div>
+                </details>
+
+                <!-- プロジェクトタブの中身を動作確認用にここへ移動（中身自体に「プロジェクト編集」Expanderを持つため、二重にExpanderで囲まない。確認後にプロジェクトタブ自体を削除予定） -->
+                <div id="taskorg2-project2-anchor"></div>
+
+                <!-- 勤務カレンダー（勤務タブ廃止に伴いここへ移動。既定は折りたたみ） -->
+                <details class="expander calendar-sub-expander">
+                    <summary class="expander-title">勤務</summary>
+                    <div class="work-cal-section">
+
+                        <div class="work-cal-nav-row">
+                            <button id="work-cal-prev-year" class="calendar-nav-btn">‹ 年</button>
+                            <span id="work-cal-year-label" class="calendar-month-label"></span>
+                            <button id="work-cal-next-year" class="calendar-nav-btn">年 ›</button>
+                            <button id="work-cal-prev-month" class="calendar-nav-btn" style="margin-left:16px">‹</button>
+                            <span id="work-cal-month-label" class="calendar-month-label"></span>
+                            <button id="work-cal-next-month" class="calendar-nav-btn">›</button>
+                        </div>
+
+                        <div class="work-cal-legend">
+                            <span class="work-cal-legend-item"><span class="work-cal-swatch work-cal--出勤日"></span>出勤日</span>
+                            <span class="work-cal-legend-item"><span class="work-cal-swatch work-cal--休日"></span>休日</span>
+                            <span class="work-cal-legend-item"><span class="work-cal-swatch work-cal--有給"></span>有給</span>
+                            <span class="work-cal-legend-item"><span class="work-cal-swatch work-cal--特別休暇"></span>特別休暇</span>
+                            <span class="work-cal-legend-item"><span class="work-cal-swatch work-cal-swatch--exception"></span>例外設定あり</span>
+                        </div>
+
+                        <div id="work-cal-grid" class="work-cal-grid"></div>
+
+                        <div id="work-cal-stats" class="work-cal-stats"></div>
+
+                        <!-- 月一括編集フォーム（JSで描画） -->
+                        <div class="table-wrapper table-wrapper--limited">
+                            <table id="work-cal-month-table"></table>
+                        </div>
+                        <div class="calendar-edit-toolbar">
+                            <button id="work-cal-month-apply-btn" class="calendar-add-btn">月一括適用</button>
+                        </div>
+
+                    </div>
+                </details>
             </div>
         </div>
 
-        <!-- 繰り返しタスク（Summaryページ「繰返しタスク」タブに表示） -->
+        <!-- 繰り返しタスク（繰返しタブ廃止に伴い、タスク管理タブ下部へ移動して表示） -->
         <div id="recurring-anchor-home" style="display:none">
             <div id="recurring-details">
                 <!-- タグ／プロジェクト／ステータスのフィルタ -->
@@ -458,15 +540,10 @@
 
             <!-- 表示切り替え（タスク整理／繰返し／タスク実行／INBOX／編集／プロジェクト／データ） -->
             <div class="taskorg-view-toggle summary-main-tabs">
-                <button type="button" id="summary-tab-taskorg2" class="taskorg-view-btn taskorg-view-btn--active" data-view="taskorg2">タスク整理</button>
-                <button type="button" id="summary-tab-recurring" class="taskorg-view-btn" data-view="recurring">繰返し</button>
-                <button type="button" id="summary-tab-runner" class="taskorg-view-btn" data-view="runner">タスク実行</button>
+                <button type="button" id="summary-tab-taskorg2" class="taskorg-view-btn taskorg-view-btn--active" data-view="taskorg2">タスク管理</button>
                 <button type="button" id="summary-tab-top" class="taskorg-view-btn" data-view="top">INBOX</button>
-                <button type="button" id="summary-tab-edit2" class="taskorg-view-btn" data-view="edit2">編集</button>
+                <button type="button" id="summary-tab-edit2" class="taskorg-view-btn" data-view="edit2">データ編集</button>
                 <button type="button" id="summary-tab-knowledge" class="taskorg-view-btn" data-view="knowledge">ナレッジ</button>
-                <button type="button" id="summary-tab-project2" class="taskorg-view-btn" data-view="project2">プロジェクト</button>
-                <button type="button" id="summary-tab-data" class="taskorg-view-btn" data-view="data">データ</button>
-                <button type="button" id="summary-tab-work" class="taskorg-view-btn" data-view="work">勤務</button>
             </div>
 
             <!-- INBOX -->
@@ -486,16 +563,6 @@
                 <div id="taskorg2-anchor-summary"></div>
             </div>
 
-            <!-- タスク実行 -->
-            <div id="summary-view-runner" class="summary-view-panel" style="display:none">
-                <div id="task-runner-summary" class="task-runner-container"></div>
-            </div>
-
-            <!-- 繰返し（表示切り替え時に本体を移動して表示） -->
-            <div id="summary-view-recurring" class="summary-view-panel" style="display:none">
-                <div id="recurring-anchor-summary"></div>
-            </div>
-
             <!-- 編集（表示切り替え時に本体を移動して表示） -->
             <div id="summary-view-edit2" class="summary-view-panel" style="display:none">
                 <div id="edit2-anchor-summary"></div>
@@ -506,55 +573,11 @@
                 <div id="knowledge-list-summary"></div>
             </div>
 
-            <!-- プロジェクト（表示切り替え時に本体を移動して表示） -->
-            <div id="summary-view-project2" class="summary-view-panel" style="display:none">
-                <div id="project2-anchor-summary"></div>
-            </div>
-
-            <!-- データ（表示切り替え時に本体を移動して表示） -->
-            <div id="summary-view-data" class="summary-view-panel" style="display:none">
-                <div id="data-anchor-summary"></div>
-            </div>
-
-            <!-- 勤務カレンダー -->
-            <div id="summary-view-work" class="summary-view-panel" style="display:none">
-                <div class="work-cal-section">
-
-                    <div class="work-cal-nav-row">
-                        <button id="work-cal-prev-year" class="calendar-nav-btn">‹ 年</button>
-                        <span id="work-cal-year-label" class="calendar-month-label"></span>
-                        <button id="work-cal-next-year" class="calendar-nav-btn">年 ›</button>
-                        <button id="work-cal-prev-month" class="calendar-nav-btn" style="margin-left:16px">‹</button>
-                        <span id="work-cal-month-label" class="calendar-month-label"></span>
-                        <button id="work-cal-next-month" class="calendar-nav-btn">›</button>
-                    </div>
-
-                    <div class="work-cal-legend">
-                        <span class="work-cal-legend-item"><span class="work-cal-swatch work-cal--出勤日"></span>出勤日</span>
-                        <span class="work-cal-legend-item"><span class="work-cal-swatch work-cal--休日"></span>休日</span>
-                        <span class="work-cal-legend-item"><span class="work-cal-swatch work-cal--有給"></span>有給</span>
-                        <span class="work-cal-legend-item"><span class="work-cal-swatch work-cal--特別休暇"></span>特別休暇</span>
-                        <span class="work-cal-legend-item"><span class="work-cal-swatch work-cal-swatch--exception"></span>例外設定あり</span>
-                    </div>
-
-                    <div id="work-cal-grid" class="work-cal-grid"></div>
-
-                    <div id="work-cal-stats" class="work-cal-stats"></div>
-
-                    <!-- 月一括編集フォーム（JSで描画） -->
-                    <div class="table-wrapper table-wrapper--limited">
-                        <table id="work-cal-month-table"></table>
-                    </div>
-                    <div class="calendar-edit-toolbar">
-                        <button id="work-cal-month-apply-btn" class="calendar-add-btn">月一括適用</button>
-                    </div>
-
-                </div>
-            </div>
         </div>
 
         <!-- 編集（親ID方式、INBOX／タスク／ナレッジ 統合編集・新規登録、Summaryページ「編集」タブに表示） -->
         <div id="edit2-anchor-home" style="display:none">
+          <div id="edit2-group">
             <details id="edit2-details" class="expander" open>
                 <summary class="expander-title" id="summary-edit2">編集</summary>
 
@@ -652,9 +675,13 @@
                     </div>
                 </div>
             </details>
+
+            <!-- データ（メインデータ一覧／マスタデータ一覧のExpander。データタブ廃止に伴い、編集Expanderの外側・データ編集タブ下部へ移動して表示） -->
+            <div id="edit2-data-anchor"></div>
+          </div>
         </div>
 
-        <!-- データ（メインデータ一覧／マスタデータ一覧、Summaryページ「データ」タブに表示） -->
+        <!-- データ（メインデータ一覧／マスタデータ一覧、データ編集タブ下部へ移動して表示） -->
         <div id="data-anchor-home" style="display:none">
             <div id="data-group">
                 <details class="expander">
@@ -683,12 +710,12 @@
             </div>
         </div>
 
-        <!-- プロジェクト（親子ブラウザ形式・親ID方式、Summaryページ「プロジェクト」タブに表示） -->
+        <!-- プロジェクト（親子ブラウザ形式・親ID方式。プロジェクトタブ廃止に伴い、タスク整理タブ下部へ移動して表示） -->
         <div id="project2-anchor-home" style="display:none">
             <div id="project2-group">
 
-                <!-- プロジェクト編集（デフォルトで開く） -->
-                <details class="expander" open>
+                <!-- プロジェクト編集（デフォルトで閉じる） -->
+                <details class="expander">
                     <summary class="expander-title" id="summary-project2-admin">プロジェクト編集</summary>
 
                     <p class="calendar-section-label">プロジェクト管理</p>

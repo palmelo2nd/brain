@@ -11,8 +11,8 @@ export function isDayPlanRow(row) {
     return row['データ区分'] === DAYPLAN_KUBUN && row['PARA区分'] === DAYPLAN_PARA;
 }
 
-// 完了・中断・報告待ち・連絡待ちのステータスなら「残務なし（緑）」扱いとする。
-const CALENDAR_DONE_STATUSES = ['完了', '中断', '報告待ち', '連絡待ち'];
+// 完了のステータスなら「残務なし（緑）」扱いとする。未着手・進行中・中断・連絡待ち・報告待ちは残務ありとして期間内の1日を表示する。
+const CALENDAR_DONE_STATUSES = ['完了'];
 
 // タスク一覧のステータス表示順（この順に並べ、リストに無いステータスは末尾、空欄は最後尾）。
 const CALENDAR_TASK_LIST_STATUS_ORDER = ['完了', '報告待ち', '連絡待ち', '中断', '進行中', '未着手'];
@@ -32,15 +32,15 @@ export function matchesMultiFilter(selectedSet, value) {
     return selectedSet.has(value);
 }
 
-/** 完了・中断・報告待ち・連絡待ちのいずれかのステータスかどうかを判定する。 */
+/** ステータスが「完了」かどうかを判定する。 */
 export function isTaskDoneForCalendar(row) {
     return CALENDAR_DONE_STATUSES.includes(row['ステータス']);
 }
 
 /**
  * タスクの●印を出す日を1日だけ決定する。
- * 残務なし（完了・中断・報告待ち・連絡待ち）: 完了日があればその日、無ければ印なし（null）。
- * 残務あり: today を 開始予定〜終了予定 の範囲にクランプした日（未来なら開始予定、期間内なら today、過ぎていたら終了予定）。
+ * 残務なし（完了）: 完了日があればその日、無ければ印なし（null）。
+ * 残務あり（未着手・進行中・中断・連絡待ち・報告待ち）: today を 開始予定〜終了予定 の範囲にクランプした日（未来なら開始予定、期間内なら today、過ぎていたら終了予定）。
  */
 export function getCalendarMarkDate(row, todayJP) {
     const start = jpDateOnly(row['開始予定']) || jpDateOnly(row['終了予定']);
@@ -337,17 +337,36 @@ export function getUnsetAttributeGroups(mainData, category) {
     };
 }
 
+/** 開始予定・終了予定がともに入力されており、かつ todayJP がその期間内（＝対応中タスクとして表示される）かどうかを判定する。 */
+function isActiveTodayPeriod(row, todayJP) {
+    const start = jpDateOnly(row['開始予定']);
+    const end   = jpDateOnly(row['終了予定']);
+    if (!start || !end) return false;
+    return start <= todayJP && todayJP <= end;
+}
+
 /** ステータスが「中断」のタスクを、終了予定が近い順（空欄は最後）に並べて返す。 */
-export function getSuspendedTasks(mainData, category) {
+export function getSuspendedTasks(mainData, category, todayJP) {
+    return getTasksByStatus(mainData, category, '中断', todayJP);
+}
+
+/**
+ * 指定ステータスのタスクを、終了予定が近い順（空欄は最後）に並べて返す（対応待ちタスク用）。
+ * 開始予定・終了予定の少なくとも一方が未入力のタスクは対象外（属性未設定タスク側に表示するため）。
+ * 開始予定〜終了予定の期間に todayJP が含まれるタスク（＝対応中タスクに表示される）も対象外。
+ */
+export function getTasksByStatus(mainData, category, status, todayJP) {
     return unsetTaskPool(mainData)
-        .filter(r => r['ステータス'] === '中断' && matchesCategoryOrUnset(r, category))
+        .filter(r => r['ステータス'] === status && matchesCategoryOrUnset(r, category))
+        .filter(r => r['開始予定'] && r['終了予定'])
+        .filter(r => !isActiveTodayPeriod(r, todayJP))
         .sort((a, b) => compareDateAscEmptyLast(a['終了予定'], b['終了予定']));
 }
 
 // タスク整理系リストの整理表示順（この順にグループ化し、リストに無いステータス・空欄は最後尾）。
-const TASK_ORGANIZE_STATUS_ORDER = ['未着手', '進行中', '中断', '連絡待ち', '報告待ち', '完了'];
+const TASK_ORGANIZE_STATUS_ORDER = ['未着手', '進行中', '連絡待ち', '報告待ち', '中断', '完了'];
 
-/** ステータス名の整理表示順ランクを返す（未着手→進行中→中断→連絡待ち→報告待ち→完了→その他の順）。 */
+/** ステータス名の整理表示順ランクを返す（未着手→進行中→連絡待ち→報告待ち→中断→完了→その他の順）。 */
 export function taskOrganizeStatusRank(status) {
     const idx = TASK_ORGANIZE_STATUS_ORDER.indexOf(status);
     return idx !== -1 ? idx : TASK_ORGANIZE_STATUS_ORDER.length;
