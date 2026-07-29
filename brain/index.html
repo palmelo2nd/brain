@@ -20,10 +20,7 @@
         <div id="taskorg2-anchor-home" style="display:none">
             <div id="taskorg2-details">
 
-              <!-- フィルタ～カレンダー～1日タスク～タスク一覧までをまとめた「タスク整理」本体（既定で開く） -->
-              <details class="expander" open>
-                <summary class="expander-title">タスク整理</summary>
-
+              <!-- フィルタ～カレンダー～1日タスク～タスク一覧までをまとめた「タスク整理」本体（常時表示） -->
                 <!-- タグ／ステータスのフィルタ（複数選択）＋その他フィルタ（プロジェクト／繰返し親タスク／繰返し子タスクの表示ON/OFF） -->
                 <details class="expander calendar-sub-expander">
                     <summary class="expander-title">フィルタ</summary>
@@ -75,9 +72,11 @@
                     <div class="gantt-unit-toggle">
                         <button type="button" id="calendar2-habit-unit-week" class="gantt-unit-btn gantt-unit-btn--active" data-unit="week">週</button>
                         <button type="button" id="calendar2-habit-unit-month" class="gantt-unit-btn" data-unit="month">月</button>
+                        <button type="button" id="calendar2-habit-unit-daily" class="gantt-unit-btn" data-unit="daily">毎日</button>
                     </div>
 
-                    <!-- 週: 「頻度（曜日）」を設定している親タスクだけを、月～日の固定表（曜日名の一致のみで判定、日付非依存）で表示する -->
+                    <!-- 週: 「頻度（曜日）」を設定している親タスクだけを、月～日の固定表（曜日名の一致のみで判定、日付非依存）で表示する。
+                         ただし頻度（曜日）が全選択されている（＝実質「毎日」指定）ものは毎日タブに表示し、ここには表示しない -->
                     <div id="calendar2-habit-week-panel">
                         <div id="calendar2-habit-week" class="recurring-weekboard"></div>
 
@@ -85,8 +84,15 @@
                         <div id="calendar2-habit-week-unset" class="calendar-unscheduled-list calendar-unscheduled-list--grid7"></div>
                     </div>
 
+                    <!-- 毎日: 繰返し親タスクのうち、頻度（曜日）または頻度（日）が全選択されている（＝実質「毎日」指定）ものを、
+                         週タブ・月タブから外してここに表示する -->
+                    <div id="calendar2-habit-daily" style="display:none">
+                        <div id="calendar2-habit-daily-list" class="calendar-unscheduled-list calendar-unscheduled-list--grid7"></div>
+                    </div>
+
                     <!-- 月: 「頻度（日）」「頻度（月）」を設定している親タスクを対象にする。
-                         日・月の両方設定＝カレンダーの該当日に表示／日のみ設定＝毎月その日に表示／月のみ設定＝日付指定なしタスクとしてカレンダー下に表示 -->
+                         日・月の両方設定＝カレンダーの該当日に表示／日のみ設定＝毎月その日に表示／月のみ設定＝日付指定なしタスクとしてカレンダー下に表示。
+                         ただし頻度（曜日）または頻度（日）が全選択されているものは「毎日」タブに表示し、ここには表示しない -->
                     <div id="calendar2-habit-month" style="display:none">
                         <div class="calendar-header">
                             <button id="calendar2-habit-month-prev-btn" class="calendar-nav-btn">‹</button>
@@ -407,15 +413,17 @@
                     <div id="calendar2-filter-area-bottom" class="triage-filter-area"></div>
                 </details>
 
+                <!-- PJ一括編集（タスク一覧などでチェックボックス選択中の全タスクの親ID＝PJ階層だけを一括変更する。
+                     タイトル・ステータスなど他の属性には一切触れない） -->
+                <div class="calendar-bulk-pj-section">
+                    <div id="calendar2-bulk-pj-dropdowns" class="calendar-bulk-pj-dropdowns"></div>
+                    <button type="button" id="calendar2-bulk-pj-apply-btn" class="calendar-add-btn">PJ一括編集</button>
+                </div>
+
                 <!-- タスク一覧（カレンダー・編集エリアの下、常に画面下部） -->
                 <div id="taskorg2-tasklist" class="table-wrapper table-wrapper--limited">
                     <table id="calendar2-task-list-table" class="calendar-task-list-table"></table>
                 </div>
-
-              </details>
-
-                <!-- プロジェクトタブの中身を動作確認用にここへ移動（中身自体に「プロジェクト編集」Expanderを持つため、二重にExpanderで囲まない。確認後にプロジェクトタブ自体を削除予定） -->
-                <div id="taskorg2-project2-anchor"></div>
 
             </div>
         </div>
@@ -467,12 +475,13 @@
                 <button type="button" id="summary-tab-knowledge" class="taskorg-view-btn" data-view="knowledge">ナレッジ</button>
             </div>
 
-            <!-- INBOX -->
+            <!-- INBOX（既定はデータ区分＝INBOX。タスク／ナレッジを選んだ場合も、生成される行はタイトル・内容以外は空欄にする） -->
             <div id="summary-view-top" class="summary-view-panel">
                 <div class="inbox-form">
                     <textarea id="inbox-content-summary" class="inbox-textarea js-inbox-content"
                               placeholder="内容を入力してください..." rows="4"></textarea>
                     <div class="inbox-toolbar">
+                        <select id="inbox-kubun-summary" class="js-inbox-kubun"></select>
                         <span id="inbox-category-badge-summary" class="inbox-category-badge js-inbox-badge"></span>
                         <button id="inbox-submit-btn-summary" class="inbox-btn js-inbox-submit">登録</button>
                     </div>
@@ -631,122 +640,6 @@
             </div>
         </div>
 
-        <!-- プロジェクト（親子ブラウザ形式・親ID方式。プロジェクトタブ廃止に伴い、タスク整理タブ下部へ移動して表示） -->
-        <div id="project2-anchor-home" style="display:none">
-            <div id="project2-group">
-
-                <!-- プロジェクト編集（デフォルトで閉じる。パフォーマンスのため開いている時だけ再描画する。
-                     「プロジェクト管理」表は、タスク整理エリアの1列表示部分（フィルタの上）へ移設済み） -->
-                <details id="project2-admin-toggle" class="expander">
-                    <summary class="expander-title" id="summary-project2-admin">プロジェクト編集</summary>
-
-                    <div class="calendar-day-section">
-                        <!-- 左: 階層プルダウン（必要な階層数だけ表示）＋ 下階層の一覧 -->
-                        <div class="calendar-timeline-col">
-                            <div id="project2-edit-dropdowns"></div>
-
-                            <p class="calendar-section-label calendar-section-label--sub">下階層の一覧</p>
-                            <div class="table-wrapper table-wrapper--limited">
-                                <table id="project2-browser-child-table"></table>
-                            </div>
-
-                            <p class="calendar-section-label calendar-section-label--sub">階層整理</p>
-                            <div class="table-wrapper table-wrapper--limited">
-                                <table id="project2-sibling-table"></table>
-                            </div>
-                            <div class="calendar-edit-toolbar">
-                                <button id="project2-sibling-move-btn" class="calendar-add-btn">階層を移動</button>
-                            </div>
-                        </div>
-
-                        <!-- 右: 現在選択中の行の属性編集エリアのみ -->
-                        <div class="calendar-edit-col">
-                            <div id="project2-task-edit" class="calendar-task-edit">
-                                <p class="calendar-section-label">編集</p>
-                                <div class="calendar-edit-row">
-                                    <label>ID</label>
-                                    <input type="text" id="projtask2-id" readonly placeholder="（新規登録時は未採番）">
-                                </div>
-                                <div class="calendar-edit-row">
-                                    <label>データ区分</label>
-                                    <select id="projtask2-kubun"></select>
-                                </div>
-                                <div class="calendar-edit-row">
-                                    <label>タイトル</label>
-                                    <input type="text" id="projtask2-title">
-                                </div>
-                                <div class="calendar-edit-row calendar-edit-row--top">
-                                    <label>内容</label>
-                                    <textarea id="projtask2-content" class="calendar-edit-textarea" rows="4"></textarea>
-                                </div>
-                                <div class="calendar-edit-row">
-                                    <label>備考</label>
-                                    <input type="text" id="projtask2-biko">
-                                </div>
-                                <div class="calendar-edit-row">
-                                    <label>ステータス</label>
-                                    <select id="projtask2-status"></select>
-                                </div>
-                                <div class="calendar-edit-row">
-                                    <label>優先度</label>
-                                    <select id="projtask2-priority"></select>
-                                </div>
-                                <div class="calendar-edit-row">
-                                    <label>見積時間（分）</label>
-                                    <input type="number" id="projtask2-estimate" min="0" step="1" placeholder="（省略可）">
-                                </div>
-                                <div class="calendar-edit-row">
-                                    <label>実績時間（h）</label>
-                                    <input type="text" id="projtask2-actual" readonly>
-                                </div>
-                                <div class="calendar-edit-row">
-                                    <label>開始予定</label>
-                                    <input type="date" id="projtask2-start-date">
-                                    <input type="number" id="projtask2-start-hour" class="calendar-time-num" min="0" max="23" placeholder="時">
-                                    <span>:</span>
-                                    <input type="number" id="projtask2-start-minute" class="calendar-time-num" min="0" max="59" step="15" placeholder="分">
-                                </div>
-                                <div class="calendar-edit-row">
-                                    <label>終了予定</label>
-                                    <input type="date" id="projtask2-end-date">
-                                    <input type="number" id="projtask2-end-hour" class="calendar-time-num" min="0" max="23" placeholder="時">
-                                    <span>:</span>
-                                    <input type="number" id="projtask2-end-minute" class="calendar-time-num" min="0" max="59" step="15" placeholder="分">
-                                </div>
-                                <div class="calendar-edit-row">
-                                    <label>完了日</label>
-                                    <input type="date" id="projtask2-complete-date">
-                                </div>
-                                <div class="calendar-edit-row">
-                                    <label>カテゴリ</label>
-                                    <select id="projtask2-category"></select>
-                                </div>
-                                <div class="calendar-edit-row">
-                                    <label>タグ</label>
-                                    <select id="projtask2-tag"></select>
-                                </div>
-                                <div class="calendar-edit-row">
-                                    <label>上階層</label>
-                                    <input type="text" id="projtask2-parent-search" list="projtask2-parent-list" placeholder="ID・タイトルで検索">
-                                    <datalist id="projtask2-parent-list"></datalist>
-                                    <input type="hidden" id="projtask2-parent-id">
-                                    <button type="button" id="projtask2-parent-clear-btn" class="calendar-add-btn">解除</button>
-                                </div>
-                                <div class="calendar-edit-toolbar">
-                                    <button type="button" id="projtask2-insert-parent-btn" class="calendar-add-btn">上階層を挿入</button>
-                                    <button id="projtask2-new-btn" class="calendar-add-btn">下階層に追加</button>
-                                    <button id="projtask2-apply-btn">適用</button>
-                                    <button id="projtask2-delete-btn" class="calendar-danger-btn">削除</button>
-                                </div>
-                                <div class="calendar-edit-toolbar">
-                                    <button type="button" id="projtask2-new-project-btn" class="calendar-add-btn">新規プロジェクト登録</button>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </details>
-            </div>
-        </div>
 
     </main>
 

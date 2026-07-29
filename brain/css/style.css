@@ -1392,6 +1392,21 @@ details[open] > .expander-title::after { transform: rotate(90deg); }
     max-width: 100%;
 }
 
+/* PJ一括編集（タスク一覧下）: PJ(n層)プルダウン群を左、適用ボタンを右に並べる */
+.calendar-bulk-pj-section {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    margin-top: 10px;
+}
+.calendar-bulk-pj-dropdowns {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    flex: 1 1 auto;
+    max-width: 320px;
+}
+
 .calendar-checkbox-label {
     display: inline-flex;
     align-items: center;
