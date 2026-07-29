@@ -634,25 +634,22 @@ details[open] > .expander-title::after { transform: rotate(90deg); }
     font-size: 13px;
 }
 
-/* タスク整理のタグ／プロジェクト／ステータスフィルタを点線で区切る（新タスク整理・旧繰返しも同様） */
+/* タスク整理のタグ／プロジェクト／ステータスフィルタを点線で区切る */
 #calendar-filter-area.triage-filter-area,
-#calendar2-filter-area.triage-filter-area,
-#recurring-filter-area.triage-filter-area {
+#calendar2-filter-area.triage-filter-area {
     flex-direction: column;
     align-items: stretch;
 }
 
 #calendar-filter-area .triage-filter-row,
-#calendar2-filter-area .triage-filter-row,
-#recurring-filter-area .triage-filter-row {
+#calendar2-filter-area .triage-filter-row {
     flex-wrap: wrap;
     padding-bottom: 8px;
     border-bottom: 1px dashed #d0d7de;
 }
 
 #calendar-filter-area .triage-filter-row:last-child,
-#calendar2-filter-area .triage-filter-row:last-child,
-#recurring-filter-area .triage-filter-row:last-child {
+#calendar2-filter-area .triage-filter-row:last-child {
     border-bottom: none;
     padding-bottom: 0;
 }
@@ -830,15 +827,6 @@ details[open] > .expander-title::after { transform: rotate(90deg); }
 
 /* ===== 繰り返しタスク ===== */
 
-.recurring-parent-row { cursor: pointer; }
-.recurring-parent-row:hover td { background: #eef5ff; }
-
-.recurring-manual-btn {
-    flex-shrink: 0;
-    font-size: 12px;
-    padding: 5px 12px;
-}
-
 .recurring-chart-wrap {
     position: relative;
     height: 200px;
@@ -1010,6 +998,18 @@ details[open] > .expander-title::after { transform: rotate(90deg); }
     line-height: 1;
 }
 .calendar-day-badge--green { color: #28a745; }
+
+/* 習慣（月表示）: カレンダー内のタスクは通常のチップの小型版で、日付ボタン内に縦に並べる */
+.calendar-day-tasks {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin-top: 2px;
+}
+.calendar-unscheduled-chip--mini {
+    padding: 1px 6px;
+    font-size: 10.5px;
+}
 .calendar-day-badge--red   { color: #dc3545; }
 
 .calendar-detail-title {
@@ -1036,13 +1036,6 @@ details[open] > .expander-title::after { transform: rotate(90deg); }
     border-top: 1px solid #30363d;
     margin: 20px 0;
 }
-
-.recurring-chart-header {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-}
-.recurring-chart-header .calendar-section-label { margin: 12px 0 6px; }
 
 .calendar-section-label--sub {
     margin-top: 16px;
@@ -1103,6 +1096,84 @@ details[open] > .expander-title::after { transform: rotate(90deg); }
     flex-wrap: wrap;
     gap: 6px;
 }
+/* 繰返しタスク（親／子）一覧: ボタンを1列（縦）に並べる */
+.calendar-unscheduled-list--column {
+    flex-direction: column;
+    align-items: flex-start;
+}
+.calendar-unscheduled-list--column > .calendar-unscheduled-chip-wrap,
+.calendar-unscheduled-list--column .calendar-unscheduled-chip-line {
+    width: 100%;
+}
+.calendar-unscheduled-list--column .calendar-unscheduled-chip-wrap .calendar-unscheduled-chip,
+.calendar-unscheduled-list--column > .calendar-unscheduled-chip {
+    width: 100%;
+    flex: 1 1 auto;
+    text-align: left;
+}
+/* 対応中／対応待ち／属性未設定／繰返しタスクの一覧: タスクが多くても見やすいよう、
+   ボタンの横幅を固定した2列のグリッドで並べる（items are stretched to fill the grid cell by default） */
+.calendar-unscheduled-list--grid2 {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+}
+.calendar-unscheduled-list--grid2 > .calendar-unscheduled-chip-line,
+.calendar-unscheduled-list--grid2 > .calendar-unscheduled-chip-wrap {
+    width: 100%;
+}
+/* wrapをinline-flexのままにすると、内側のチップへのwidth:100%解決がブラウザによって不安定になり、
+   文字数が短いタスクのボタンだけ縮んで見えることがあるため、grid2内ではflex（ブロック）に統一する */
+.calendar-unscheduled-list--grid2 > .calendar-unscheduled-chip-wrap {
+    display: flex;
+}
+.calendar-unscheduled-list--grid2 .calendar-unscheduled-chip-wrap > .calendar-unscheduled-chip,
+.calendar-unscheduled-list--grid2 > .calendar-unscheduled-chip {
+    flex: 1 1 auto;
+    width: auto;
+    text-align: left;
+}
+/* グリッド表示の一覧を上位10件程度が収まる高さ（2列×5行）に制限し、それ以上はスクロールで見る */
+.calendar-unscheduled-list--grid2.calendar-unscheduled-list--scroll {
+    max-height: 180px;
+}
+/* 習慣（月表示）の「日付指定なしタスク」: 7列構成で並べ、収まりきらない分は2行目以降に折り返す */
+.calendar-unscheduled-list--grid7 {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    gap: 6px;
+}
+.calendar-unscheduled-list--grid7 > .calendar-unscheduled-chip-wrap {
+    display: flex;
+    width: 100%;
+}
+.calendar-unscheduled-list--grid7 > .calendar-unscheduled-chip-wrap > .calendar-unscheduled-chip,
+.calendar-unscheduled-list--grid7 > .calendar-unscheduled-chip {
+    flex: 1 1 auto;
+    width: auto;
+    text-align: left;
+}
+/* 繰返しタスクの「＋（子タスク生成）」ボタン */
+.calendar-unscheduled-chip-add--green { background: #28a745; }
+.calendar-unscheduled-chip-add--green:hover { background: #1e7e34; }
+/* 繰返しタスク：子タスクの行（チェックボックス＋チップ）。チェックボックスはチップ側のoverflow:hidden
+   （角丸クリップ）の外に置くことで見切れないようにする */
+.calendar-unscheduled-chip-line {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.calendar-unscheduled-chip-line .calendar-unscheduled-chip-wrap { flex: 1 1 auto; min-width: 0; }
+/* input[type="checkbox"]の全体ルール（transform: scale(1.2)）は中心基準で拡大されるため、
+   左端に隙間が無いと拡大分が周囲のoverflow:hiddenに切り取られて見切れる。左に余白を確保する */
+.calendar-unscheduled-chip-checkbox { flex: 0 0 auto; cursor: pointer; margin: 0 0 0 4px; }
+/* 繰返しタスクの子タスク一覧: 上位10件程度が収まる高さに制限し、それ以上はスクロールで見る */
+.calendar-unscheduled-list--scroll {
+    max-height: 320px;
+    overflow-y: auto;
+    overflow-x: hidden; /* overflow-yをautoにすると横方向も自動でスクロール対象になり、左端（チェックボックス）が隠れることがあるため明示的に禁止する */
+    flex-wrap: nowrap;
+}
 
 .calendar-unscheduled-chip-wrap {
     display: inline-flex;
@@ -1113,14 +1184,29 @@ details[open] > .expander-title::after { transform: rotate(90deg); }
 
 .calendar-unscheduled-chip {
     border: 1px solid transparent;
-    border-radius: 14px 0 0 14px;
+    border-radius: 14px 0 0 14px; /* 右側の＋ボタンと接続するため右側は角ばっている */
     padding: 4px 12px;
     font-size: 12px;
     cursor: pointer;
     color: #fff; /* .calendar-time-block--todo/doing/waiting/done が背景色を提供する */
+    max-width: 100%;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
-.calendar-unscheduled-chip--selected {
-    outline: 2px solid #fd7e14;
+/* 隣に＋ボタンなどが無く単独で使うチップ（例: 繰返しタスクの子タスク）は右側も丸くする */
+.calendar-unscheduled-chip--solo {
+    border-radius: 14px;
+}
+/* 繰返しタスクの頻度が今日に該当する親タスクを強調する */
+.calendar-unscheduled-chip--today-match {
+    border: 2px solid #dc3545;
+}
+/* 編集エリアのアクティブ対象になっている親・子タスクを太い黒枠で強調する。
+   outlineは.calendar-unscheduled-chip-wrapのoverflow:hiddenで見切れることがあるため、
+   要素内側に描画されるinset box-shadowを使う */
+.calendar-unscheduled-chip--active-outline {
+    box-shadow: inset 0 0 0 3px #000;
 }
 
 .calendar-unscheduled-chip-add {
@@ -1346,28 +1432,38 @@ details[open] > .expander-title::after { transform: rotate(90deg); }
     font-family: inherit;
 }
 
-/* ===== 繰り返しタスク：子タスクテンプレート編集 ===== */
-.recur-template-row {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    margin-bottom: 6px;
+/* ===== 繰り返しタスク：実行タスクテンプレート編集（タスク一覧と同じ .data-table の見た目を流用した表形式） ===== */
+/* .data-table のセルはmax-width/ellipsis/nowrapで文字列表示用に最適化されているため、
+   入力欄（input）を自然な幅で収められるよう、このテーブルに限り解除する */
+.recur-template-table td {
+    max-width: none;
+    overflow: visible;
+    white-space: normal;
+    padding: 4px 6px;
+}
+.recur-template-table th:nth-child(1),
+.recur-template-table th:nth-child(2),
+.recur-template-table td:nth-child(1),
+.recur-template-table td:nth-child(2) {
+    width: 90px;
+}
+.recur-template-table th:nth-child(3),
+.recur-template-table td:nth-child(3) {
+    width: 130px;
 }
 
-.recur-template-row input {
+.recur-template-table input {
+    width: 100%;
+    box-sizing: border-box;
     padding: 5px 7px;
     font-size: 12.5px;
     border: 1px solid #ced4da;
     border-radius: 5px;
     min-width: 0;
 }
-
-.recur-template-row .recur-template-offset { flex: 0 0 64px; text-align: center; }
-.recur-template-row .recur-template-suffix { flex: 0 0 110px; }
-.recur-template-row .recur-template-content { flex: 1 1 auto; }
+.recur-template-table input[type="number"] { text-align: center; }
 
 .recur-template-remove-btn {
-    flex: 0 0 auto;
     padding: 3px 8px;
     border: 1px solid #d0d7de;
     border-radius: 10px;
@@ -1375,6 +1471,7 @@ details[open] > .expander-title::after { transform: rotate(90deg); }
     color: #a8071a;
     font-size: 11px;
     cursor: pointer;
+    white-space: nowrap;
 }
 .recur-template-remove-btn:hover { background: #ffccc7; }
 
@@ -1395,13 +1492,6 @@ details[open] > .expander-title::after { transform: rotate(90deg); }
     color: #fff;
 }
 .calendar-edit-toolbar button:hover { background: #0b5ed7; }
-
-.recurring-manual-date {
-    padding: 5px 7px;
-    font-size: 12.5px;
-    border: 1px solid #ced4da;
-    border-radius: 5px;
-}
 
 /* ===== 繰り返しタスク：週間ボード ===== */
 .recurring-weekboard {
@@ -1457,12 +1547,7 @@ details[open] > .expander-title::after { transform: rotate(90deg); }
     outline-offset: -2px;
 }
 
-/* ===== 繰り返しタスク：タスク一覧（左）の実行/編集タブ・親子分割 ===== */
-.recurring-tasklist-tabs .taskorg-view-btn {
-    padding: 4px 14px;
-    font-size: 12px;
-}
-
+/* ===== 繰り返しタスク：親子分割 ===== */
 .recurring-tasklist-split {
     display: flex;
     gap: 14px;
@@ -1478,39 +1563,15 @@ details[open] > .expander-title::after { transform: rotate(90deg); }
     flex: 1 1 0;
     min-width: 0;
 }
+/* タスク整理「繰返しタスク」Expander: 親タスク3・子タスク7の割合で分割する */
+.recurring-child-col--parent { flex: 3 1 0; }
+.recurring-child-col--child  { flex: 7 1 0; }
 
-/* ===== 繰り返しタスク：タスク一覧・子タスク一覧（タイトルのみの表） ===== */
-.recurring-list-table {
-    width: 100%;
-    table-layout: fixed;
-    border-collapse: separate;
-    border-spacing: 0 3px;
-}
-
-.recurring-list-title {
-    color: #fff;
-    font-size: 12px;
-    line-height: 1.3;
-    padding: 4px 10px;
-    border-radius: 4px;
-    cursor: pointer;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    max-width: 0; /* table-layout: fixed の列幅に収めて text-overflow を効かせる */
-}
-
-/* 実行タブの2列表示: 1列目=タイトル（幅可変）、2列目=操作ボタン（幅固定） */
-.recurring-list-table--2col .recurring-list-title { width: auto; }
+/* ===== タスク実行タブ・タスク一覧の操作ボタン列 ===== */
 .recurring-list-action {
     width: 108px;
     padding: 4px 0 4px 6px;
     white-space: nowrap;
-}
-
-.recurring-list-row--selected .recurring-list-title {
-    outline: 2px solid #fd7e14;
-    outline-offset: -2px;
 }
 
 .recurring-table-btn {
@@ -1527,8 +1588,6 @@ details[open] > .expander-title::after { transform: rotate(90deg); }
 .recurring-table-btn:last-child { margin-right: 0; }
 .recurring-table-btn:hover:not(:disabled) { background: rgba(0, 0, 0, 0.5); }
 .recurring-table-btn:disabled { cursor: default; opacity: 0.4; }
-.recurring-table-btn--add { background: #28a745; font-size: 13px; }
-.recurring-table-btn--add:hover { background: #1e7e34; }
 .recurring-table-btn--done { background: #28a745; }
 .recurring-table-btn--done:hover { background: #1e7e34; }
 

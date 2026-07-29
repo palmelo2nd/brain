@@ -26,10 +26,10 @@ export function matchesSchedule(parent, date) {
     return monthOK && dayOK && weekdayOK;
 }
 
-/** date を YYYYMMDD 形式の文字列で返す */
+/** date を YYMMDD 形式の文字列で返す（子タスクタイトルの日付表記に使用） */
 export function formatYYYYMMDD(date) {
     const pad = n => String(n).padStart(2, '0');
-    return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}`;
+    return `${pad(date.getFullYear() % 100)}${pad(date.getMonth() + 1)}${pad(date.getDate())}`;
 }
 
 /** date を "YYYY/MM/DD" 形式の文字列で返す（開始予定・重複判定キーに使用） */
@@ -82,14 +82,16 @@ function childAlreadyGenerated(mainData, generated, parentId, matchedDateSlash, 
     return mainData.some(match) || generated.some(match);
 }
 
-const DEFAULT_TEMPLATES = [{ offsetDays: 0, titleSuffix: '', content: '' }];
+const DEFAULT_TEMPLATES = [{ startOffsetDays: 0, endOffsetDays: 0, titleSuffix: '', content: '' }];
 
 /**
- * 親タスクの備考欄から子タスクテンプレート配列を読み取る。
+ * 親タスクの備考欄から実行タスクテンプレート配列を読み取る。
  * 空・パース不可の場合は「オフセット0の1件のみ」（従来動作）を返す。
+ * 旧形式（offsetDaysのみ・開始予定と終了予定が同じ扱い）のデータが残っていた場合は、
+ * startOffsetDays・endOffsetDaysの両方にoffsetDaysの値を引き継いで読み込む。
  *
  * (2) インプット: remarksText — 親タスクの備考欄の文字列
- * (4) アウトプット: Array<{ offsetDays: number, titleSuffix: string, content: string }>
+ * (4) アウトプット: Array<{ startOffsetDays: number, endOffsetDays: number, titleSuffix: string, content: string }>
  */
 export function parseChildTemplates(remarksText) {
     if (!remarksText || !remarksText.trim()) return DEFAULT_TEMPLATES;
@@ -97,11 +99,15 @@ export function parseChildTemplates(remarksText) {
     try {
         const parsed = JSON.parse(remarksText);
         if (!Array.isArray(parsed) || parsed.length === 0) return DEFAULT_TEMPLATES;
-        return parsed.map(t => ({
-            offsetDays:  Number.isFinite(t.offsetDays) ? t.offsetDays : 0,
-            titleSuffix: typeof t.titleSuffix === 'string' ? t.titleSuffix : '',
-            content:     typeof t.content === 'string' ? t.content : ''
-        }));
+        return parsed.map(t => {
+            const legacyOffset = Number.isFinite(t.offsetDays) ? t.offsetDays : 0;
+            return {
+                startOffsetDays: Number.isFinite(t.startOffsetDays) ? t.startOffsetDays : legacyOffset,
+                endOffsetDays:   Number.isFinite(t.endOffsetDays)   ? t.endOffsetDays   : legacyOffset,
+                titleSuffix: typeof t.titleSuffix === 'string' ? t.titleSuffix : '',
+                content:     typeof t.content === 'string' ? t.content : ''
+            };
+        });
     } catch {
         return DEFAULT_TEMPLATES;
     }
@@ -125,8 +131,8 @@ function buildChildTitle(parent, dateStr, template) {
 }
 
 /**
- * 子タスクを1件組み立てる。
- * 開始予定はバッチ内で共通の日付（最も早いオフセットの日）、終了予定はこのテンプレート自身のオフセット日を使う。
+ * 実行タスクを1件組み立てる。開始予定・終了予定は、いずれもこのテンプレート自身の
+ * startOffsetDays／endOffsetDaysを基準日に加えた日付を個別に使う。
  */
 function buildChild(parent, template, matchedDate, startDate, targetDate, id, ts) {
     const dateStr = formatYYYYMMDD(matchedDate);
@@ -152,14 +158,14 @@ function buildChild(parent, template, matchedDate, startDate, targetDate, id, ts
 // (3) メイン機能
 
 /**
- * 親タスクから子タスクを任意タイミングで生成する（手動生成）。指定した日（省略時は今日）を基準日として、
- * 親の備考欄で定義された子タスクテンプレート（複数可）をすべて生成する。頻度条件はチェックしない。
- * 全テンプレートのうち最もオフセットが早い日を、生成する全タスクの開始予定に共通で適用する。
- * 終了予定は各テンプレート自身のオフセット日（基準日＋offsetDays）を使う。
+ * 親タスクから実行タスクを任意タイミングで生成する（手動生成）。指定した日（省略時は今日）を基準日として、
+ * 親の備考欄で定義された実行タスクテンプレート（複数可）をすべて生成する。頻度条件はチェックしない。
+ * 開始予定・終了予定は、テンプレートごとに個別のオフセット日数（startOffsetDays／endOffsetDays）を
+ * 基準日に加えた日付をそれぞれ使う。
  * 生成対象が1件も無かった場合（全テンプレートが基準日分生成済み）は空配列を返す。
  *
  * (2) インプット: parent, mainData, baseDate — 基準日（省略時は今日）
- * (4) アウトプット: 生成した子タスクオブジェクトの配列（0件の場合は空配列）
+ * (4) アウトプット: 生成した実行タスクオブジェクトの配列（0件の場合は空配列）
  */
 export function generateChildManually(parent, mainData, baseDate = new Date()) {
     const matchedDate  = baseDate;
@@ -168,14 +174,13 @@ export function generateChildManually(parent, mainData, baseDate = new Date()) {
     const generated      = [];
 
     const templates = parseChildTemplates(parent['備考']);
-    const minOffsetDays = Math.min(...templates.map(t => t.offsetDays));
-    const startDate = new Date(
-        matchedDate.getFullYear(), matchedDate.getMonth(), matchedDate.getDate() + minOffsetDays
-    );
 
     templates.forEach(template => {
+        const startDate = new Date(
+            matchedDate.getFullYear(), matchedDate.getMonth(), matchedDate.getDate() + template.startOffsetDays
+        );
         const targetDate = new Date(
-            matchedDate.getFullYear(), matchedDate.getMonth(), matchedDate.getDate() + template.offsetDays
+            matchedDate.getFullYear(), matchedDate.getMonth(), matchedDate.getDate() + template.endOffsetDays
         );
         const dateStr = formatYYYYMMDD(matchedDate);
         const title   = buildChildTitle(parent, dateStr, template);
