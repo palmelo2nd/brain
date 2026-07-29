@@ -52,14 +52,17 @@ export async function fetchFile(token, owner, repo, path) {
 }
 
 /**
- * GitHub上のディレクトリの内容一覧を取得する。
+ * リポジトリ内の指定ディレクトリ配下（サブディレクトリ含む）の全ファイルを列挙する。
+ * ディレクトリ一覧取得にはContents API（GET /contents/{path}）ではなくGit Trees APIを使う。
+ * Contents APIは1ディレクトリ最大1,000件で打ち切られてしまい、stock/prices/のような数千件規模の
+ * ディレクトリでは実際より大幅に少ない件数しか返らない（＝取得済みなのに未取得と誤判定される）ため。
  *
- * (2) インプット: token, owner, repo, path（ディレクトリのパス）
- * (3) メイン: GET /repos/{owner}/{repo}/contents/{path}
- * (4) アウトプット: Array<{ name, path, type, ... }>（ディレクトリが空/存在しない場合は空配列）
+ * (2) インプット: token, owner, repo, ref（ブランチ名など）, dirPath（列挙したいディレクトリのパス、末尾スラッシュ無し）
+ * (3) メイン: GET /repos/{owner}/{repo}/git/trees/{ref}?recursive=1 のtreeから、dirPath配下のblob（ファイル）だけを抽出
+ * (4) アウトプット: Array<{ path, name }>（path=リポジトリルートからの相対パス、name=dirPathを除いたファイル名）。ディレクトリが空/存在しない場合は空配列
  */
-export async function listDirectory(token, owner, repo, path) {
-    const url = `${API_BASE}/repos/${owner}/${repo}/contents/${path}`;
+export async function listFilesRecursive(token, owner, repo, ref, dirPath) {
+    const url = `${API_BASE}/repos/${owner}/${repo}/git/trees/${encodeURIComponent(ref)}?recursive=1`;
 
     const response = await fetch(url, {
         headers: {
@@ -71,5 +74,13 @@ export async function listDirectory(token, owner, repo, path) {
     if (response.status === 404) return [];
     if (!response.ok) throw new Error(`一覧取得に失敗しました (${response.status})`);
 
-    return response.json();
+    const data = await response.json();
+    if (data.truncated) {
+        console.warn(`リポジトリ全体のファイル数が多すぎて、Git Trees APIの結果が打ち切られました（${dirPath} 配下の件数が正しく取得できていない可能性があります）。`);
+    }
+
+    const prefix = `${dirPath}/`;
+    return (data.tree || [])
+        .filter(entry => entry.type === 'blob' && entry.path.startsWith(prefix))
+        .map(entry => ({ path: entry.path, name: entry.path.slice(prefix.length) }));
 }

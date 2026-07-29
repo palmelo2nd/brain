@@ -1,11 +1,12 @@
 import { loadToken, saveToken } from './modules/storage.js';
-import { dispatchWorkflow, fetchFile, listDirectory } from './modules/github.js';
+import { dispatchWorkflow, fetchFile, listFilesRecursive } from './modules/github.js';
 import { parseCsv } from './modules/csv.js';
 
 const OWNER              = 'palmelo2nd';
 const CODE_REPO          = 'brain';        // ワークフローファイルが置かれているコードリポジトリ
 const DATA_REPO          = 'brain_data';   // 銘柄マスタ・株価データが置かれているデータリポジトリ
 const CODE_REPO_BRANCH   = 'main';
+const DATA_REPO_BRANCH   = 'main';
 const PRICE_WORKFLOW_FILE      = 'fetch-stock-prices.yml';
 const PRICE_BULK_WORKFLOW_FILE = 'fetch-stock-prices-bulk.yml';
 const VALIDATE_WORKFLOW_FILE   = 'validate-stock-prices.yml';
@@ -119,22 +120,26 @@ document.getElementById('bulk-update-check-btn')?.addEventListener('click', asyn
             r.status === 'listed' && BULK_ASSET_TYPES.includes(r.asset_type)
         );
 
-        const files = await listDirectory(token, OWNER, DATA_REPO, PRICES_DIR);
+        // Contents API（ディレクトリ一覧）は1,000件で打ち切られるため、Git Trees APIで漏れなく列挙する
+        // （stock/prices/は数千件規模になるため必須。旧実装のContents API版だと大部分が「未取得」に誤判定されていた）
+        const files = await listFilesRecursive(token, OWNER, DATA_REPO, DATA_REPO_BRANCH, PRICES_DIR);
         const existingCodes = new Set(
-            files.filter(f => f.type === 'file' && f.name.endsWith('.csv'))
+            files.filter(f => f.name.endsWith('.csv'))
                  .map(f => f.name.replace(/\.csv$/, ''))
         );
 
-        const doneCount = targetRows.filter(r => existingCodes.has(r.code)).length;
-        const nextIndex = targetRows.findIndex(r => !existingCodes.has(r.code));
+        const doneCount   = targetRows.filter(r => existingCodes.has(r.code)).length;
+        const remaining   = targetRows.length - doneCount;
+        const nextIndex   = targetRows.findIndex(r => !existingCodes.has(r.code));
 
         if (nextIndex === -1) {
             progressEl.textContent = `対象 ${targetRows.length}件のうち ${doneCount}件取得済み。すべて完了しています。`;
         } else {
             if (offsetInput) offsetInput.value = nextIndex;
             progressEl.textContent =
-                `対象 ${targetRows.length}件のうち ${doneCount}件取得済み。` +
-                `次の開始位置候補: ${nextIndex}（自動入力しました）`;
+                `対象 ${targetRows.length}件のうち ${doneCount}件取得済み（残り ${remaining}件）。` +
+                `次の開始位置候補: ${nextIndex}（未取得の中で最も番号が小さい位置。自動入力しました。` +
+                `途中を何度か再取得している場合、この位置より後にも未取得が飛び飛びで残っている可能性があります）`;
         }
     } catch (error) {
         console.error(error);
