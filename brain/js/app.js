@@ -2197,9 +2197,31 @@ function getTaskorg2BaseFilteredList() {
  * 1日タスク（DAYPLAN）除外は行わないが、データ区分がタスクの行のみを対象とするため、データ区分「ナレッジ」のDAYPLAN器行は結果的に含まれない。
  * ソート順: ステータス（完了・報告待ち・連絡待ち・中断・進行中・未着手・空欄の順）→ 完了日 昇順 → 開始予定 昇順 → 終了予定 昇順。
  */
+function matchesTaskorg2ListFilters(r) {
+    if (!matchesFilterValue(taskorg2Filters.tag, r['タグ'])) return false;
+    if (!matchesFilterValue(taskorg2Filters.status, r['ステータス'])) return false;
+    if (!matchesProjectRootFilter(r, taskorg2Filters.project)) return false;
+    if (!matchesProjectDrilldownFilter(r, taskorg2ProjectDrilldownPath)) return false;
+
+    if (isRecurringParentRow(r) && !taskorg2Filters.showRecurringParent) return false;
+    if (isRecurringChildRow(currentMainData, r) && !taskorg2Filters.showRecurringChild) return false;
+
+    if (taskorg2ProjectDrilldownPath.length > 0) {
+        // PJ(n層)を選択中は、選択階層を親IDとする直接の子タスクのみ表示する（孫以降は非表示）
+        const targetId = taskorg2ProjectDrilldownPath[taskorg2ProjectDrilldownPath.length - 1];
+        if (String(r['親ID'] || '') !== targetId) return false;
+    }
+    // showProjectがOFFならプロジェクト行（さらに子を持つ親行）を除外し、最下層タスクのみ表示（ドリルダウン選択中も同様に適用）
+    if (!taskorg2Filters.showProject && !isRecurringParentRow(r) && isParentRowM(currentMainData, r['ID'])) return false;
+    return true;
+}
+
+/** 選択中カテゴリ・タグ／ステータス／プロジェクト（最上位の親ID）フィルタ＋その他フィルタで絞り込んだ、データ区分がタスクの行一覧を返す（日付を問わず全件、旧タスク整理と同一仕様）。
+ * PJ(n層)ドリルダウン選択中は、選択階層の直接の子タスクのみに絞り込む（孫は非表示）。
+ */
 function getTaskorg2FilteredList() {
     const tasks = filterMainDataByCategory(currentMainData, currentCategory)
-        .filter(r => r['データ区分'] === 'タスク' && matchesTaskorg2CommonFilters(r));
+        .filter(r => r['データ区分'] === 'タスク' && matchesTaskorg2ListFilters(r));
 
     tasks.sort((a, b) => {
         const rankDiff = calendarTaskListStatusRank(a['ステータス']) - calendarTaskListStatusRank(b['ステータス']);
@@ -3516,7 +3538,9 @@ function renderTaskorg2ProjectDrilldown(container, rootProjectRowsSorted) {
     let level = 0;
     let parentId = ''; // 空文字ならこのレベルはルート階層（チェック済みPJ一覧）の選択肢を出す
     for (;;) {
-        const options = level === 0 ? rootProjectRowsSorted : getChildrenM(currentMainData, parentId);
+        const options = level === 0
+            ? rootProjectRowsSorted
+            : sortProject2OptionsByDescendantCountDesc(getChildrenM(currentMainData, parentId));
         const currentValue = taskorg2ProjectDrilldownPath[level] || '';
         const levelForClosure = level;
 
@@ -3610,9 +3634,9 @@ function renderTaskorg2BulkPjDropdowns() {
     let level = 0;
     let parentId = ''; // 空文字ならこのレベルはルート階層（親ID空欄）の選択肢を出す
     for (;;) {
-        const options = level === 0
+        const options = sortProject2OptionsByDescendantCountDesc(level === 0
             ? eligibleRows.filter(r => !r['親ID'] && (isParentRowM(currentMainData, r['ID']) || String(r['ID']) === taskorg2BulkPjPath[0]))
-            : getChildrenM(eligibleRows, parentId);
+            : getChildrenM(eligibleRows, parentId));
 
         const currentValue = taskorg2BulkPjPath[level] || '';
         const levelForClosure = level;
@@ -5138,6 +5162,11 @@ function summarizeChildStatuses(children) {
         counts[s] = (counts[s] || 0) + 1;
     });
     return Object.entries(counts).map(([k, v]) => `${k}:${v}`).join(' ');
+}
+
+/** PJ(n層)階層プルダウンの選択肢を、配下の子孫（子・孫…全階層）の総数が多い順にソートする（フィルタ・PJ一括編集の階層プルダウン共通）。 */
+function sortProject2OptionsByDescendantCountDesc(rows) {
+    return [...rows].sort((a, b) => collectProject2Descendants(b['ID']).length - collectProject2Descendants(a['ID']).length);
 }
 
 /** rootId 配下の全階層の子孫を { row, depth } の配列（深さ優先、親の直後にその子が続く順）で返す。「新規プロジェクトの追加」の付け替え候補一覧に使用する。 */
