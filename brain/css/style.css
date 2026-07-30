@@ -1324,6 +1324,12 @@ details[open] > .expander-title::after { transform: rotate(90deg); }
     outline: 2px solid #fd7e14;
 }
 
+/* ドラッグ中に他ブロックと重なっている間だけ、掴んでいるブロック自身に付く（他ブロックは動かさず視覚的に知らせる） */
+.calendar-time-block--overlapping {
+    outline: 2px solid #dc3545;
+    z-index: 10;
+}
+
 /* --- 1日タスク（1日の予定を文法で記述する編集エリア） --- */
 .calendar-dayplan-section { margin-bottom: 14px; }
 

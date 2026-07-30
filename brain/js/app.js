@@ -2888,32 +2888,6 @@ function renderTaskorg2Timeline() {
 
     const blockBySeg = new Map();
 
-    /**
-     * ドラッグ中のプレビュー位置（previewStart/End）で仮にレーンを再計算し、影響する全ブロックの
-     * 左位置・幅をその場で更新する（保存を待たずに重なりを見た目に反映するため）。
-     * activeSeg の startMin/endMin は計算後に元へ戻すため、確定前のデータは書き換わらない。
-     */
-    function relayoutLanes(activeSeg, previewStart, previewEnd) {
-        const origStart = activeSeg.startMin;
-        const origEnd   = activeSeg.endMin;
-        activeSeg.startMin = previewStart;
-        activeSeg.endMin   = previewEnd;
-
-        const sorted = [...timed].sort((a, b) => a.startMin - b.startMin);
-        assignCalendarLanes(sorted);
-
-        timed.forEach(seg => {
-            const el = blockBySeg.get(seg);
-            if (!el) return;
-            const laneWidthPct = 100 / seg.laneCount;
-            el.style.left  = `${seg.lane * laneWidthPct}%`;
-            el.style.width = `calc(${laneWidthPct}% - 4px)`;
-        });
-
-        activeSeg.startMin = origStart;
-        activeSeg.endMin   = origEnd;
-    }
-
     timed.forEach(seg => {
         const laneWidthPct = 100 / seg.laneCount;
         const block = document.createElement('div');
@@ -2934,7 +2908,7 @@ function renderTaskorg2Timeline() {
         block.appendChild(handle);
 
         blockBySeg.set(seg, block);
-        attachTaskorg2TimelineDragHandlers(block, handle, labelSpan, seg, dateJP, pxPerMin, hasLinkedTask, relayoutLanes);
+        attachTaskorg2TimelineDragHandlers(block, handle, labelSpan, seg, dateJP, pxPerMin, hasLinkedTask, timed);
         lanesEl.appendChild(block);
     });
 
@@ -2954,10 +2928,12 @@ function snapTimelineMinutes(min) {
 
 /**
  * タイムラインのブロックへ「移動」「リサイズ」操作を付与する（旧タスク整理と同じドラッグ挙動）。
- * relayoutLanes が渡されている場合、ドラッグ中も他の重なるブロックを含めてレーン幅をその場で再計算する
- * （保存前でも重なりが分かるようにするため）。
+ * ドラッグ中は自分自身の位置・高さのみを更新し、他ブロックのレーン再配置は行わない
+ * （ドラッグ中に他ブロックまで位置が飛んで見づらくなるのを防ぐため）。レーンの再計算は
+ * ドラッグ確定後の再描画時にまとめて行われる。他ブロックと重なっている間は、掴んでいる
+ * ブロック自身に重なり中クラス（calendar-time-block--overlapping）を付けて視覚的に知らせる。
  */
-function attachTaskorg2TimelineDragHandlers(block, handle, labelSpan, seg, dateJP, pxPerMin, hasLinkedTask, relayoutLanes) {
+function attachTaskorg2TimelineDragHandlers(block, handle, labelSpan, seg, dateJP, pxPerMin, hasLinkedTask, siblingSegs) {
     const fmt = m => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
     let dragMode  = null; // 'move' | 'resize'
     let pointerId = null;
@@ -2973,7 +2949,11 @@ function attachTaskorg2TimelineDragHandlers(block, handle, labelSpan, seg, dateJ
         block.style.top    = `${newStart * pxPerMin}px`;
         block.style.height = `${(newEnd - newStart) * pxPerMin}px`;
         labelSpan.textContent = `${fmt(newStart)}–${fmt(newEnd)} ${seg.row['タイトル'] || '（無題）'}`;
-        relayoutLanes?.(seg, newStart, newEnd);
+        // ドラッグ中は他ブロックのレーン再配置をしない（他ブロックがコロコロ動いて見づらくなるため）。
+        // レーンの再計算は commitTaskorg2TimelineDrag 後の再描画時にまとめて行う。代わりに、
+        // 重なっている間は掴んでいるブロック自身の枠色だけを変えて重なりを知らせる。
+        const overlapping = (siblingSegs || []).some(other => other !== seg && newStart < other.endMin && newEnd > other.startMin);
+        block.classList.toggle('calendar-time-block--overlapping', overlapping);
     }
 
     function onPointerMove(e) {
