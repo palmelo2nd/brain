@@ -33,6 +33,12 @@ import {
     getAllKnownColumns as getAllKnownColumnsM, computeMasterWarnings as computeMasterWarningsM,
     createEmptyMasterRow as createEmptyMasterRowM
 } from './modules/master.js';
+import {
+    RECIPE_SECTIONS, isRecipeRow, isPermanentRecipe, parseRecipeContent, buildRecipeContent
+} from './modules/recipe.js';
+import {
+    isBookRow, isQaCardRow, isChapterRow, getChapters, getQaCards, getQaParaMarker, shuffleArray
+} from './modules/reading.js';
 
 const OWNER = 'palmelo2nd';
 const REPO  = 'brain_data';
@@ -74,6 +80,14 @@ let taskorg2View = 'calendar';      // 新タスク整理の表示ビュー（'c
 let dayedit2ParentPath = [];        // 新タスク整理・編集フォームの親（プロジェクト）階層プルダウンで選択中のID列（ルート→現在選択中の階層の順）
 let taskorg2BulkPjPath = [];        // タスク整理「PJ一括編集」の階層プルダウンで選択中のID列（個別編集フォームのdayedit2ParentPathとは独立）
 let selectedEdit2Ids = new Set();   // 新編集で選択中の行ID
+let selectedRecipeId = null;        // 料理ビューアで選択中のレシピ行ID
+let knowledgeViewer  = null;        // ナレッジタブ「専用ビューア」で開いているビューア（null | 'recipe' | 'reading'）
+let selectedBookId    = null;       // 読書ビューアで選択中の本ID
+let selectedChapterId = null;       // 読書ビューアで選択中の章メモID
+let readingQuizCards      = [];     // 暗記モード中の出題カード配列（シャッフル済み）
+let readingQuizIndex      = 0;      // 暗記モード中の現在の出題インデックス
+let readingQuizShowAnswer = false;  // 暗記モード中、答えを表示中かどうか
+let selectedQaId = null;            // 読書ビューアで選択中のQAカードID
 let edit2Filters = {};              // 新編集のフィルタ値
 let edit2Kubun   = 'INBOX';         // 新編集の対象データ区分
 let project2AdminDeletePending = null;      // プロジェクト管理表で「削除」を押して再割り当て/未割り当ての選択待ちになっている行ID
@@ -156,7 +170,7 @@ function renderSummary() {
     renderTaskRunner();
     if (summaryView === 'taskorg2')  renderCalendar2();
     if (summaryView === 'edit2')     renderEdit2();
-    if (summaryView === 'knowledge') renderKnowledgeList();
+    if (summaryView === 'knowledge') { renderKnowledgeList(); renderKnowledgeViewers(); }
     // データ編集タブ下部に埋め込んだメインデータ・マスタデータ一覧も、データ編集と合わせて再描画する
     if (summaryView === 'edit2') {
         renderDataTable('table-main',   'summary-main',   getFilteredMainData(),   MAIN_DATA_COLUMNS,   'メインデータ',   { editable: true, idColumn: 'ID' });
@@ -796,6 +810,780 @@ function renderKnowledgeList() {
     table.append(thead, tbody);
     wrap.appendChild(table);
     container.appendChild(wrap);
+}
+
+// ===== 「料理」タブ（タグ＝料理のナレッジ行専用ビューア） =====
+
+/** タグ＝料理のナレッジ行を更新日時の新しい順に返す（トップバーのカテゴリ絞り込みに従う）。 */
+function getRecipeRows() {
+    return getFilteredMainData()
+        .filter(isRecipeRow)
+        .sort((a, b) => (b['更新日時'] || '').localeCompare(a['更新日時'] || ''));
+}
+
+/** 「料理」タブ: カテゴリ・ステータスの<select>をマスタの選択肢で再構築する。 */
+function renderRecipeSelects() {
+    const categoryEl = document.getElementById('recipe-category');
+    if (categoryEl) {
+        const prev = categoryEl.value;
+        const categories = [...new Set(currentMasterData.map(r => r['(M)カテゴリ']).filter(Boolean))];
+        populateSelectOptions(categoryEl, categories, '（選択してください）');
+        categoryEl.value = categories.includes(prev) ? prev : '';
+    }
+    const statusEl = document.getElementById('recipe-status');
+    if (statusEl) {
+        const prev = statusEl.value;
+        const statuses = [...new Set(
+            currentMasterData.filter(r => r['(M)ステータス_親'] === 'ナレッジ')
+                .map(r => r['(M)ステータス_子']).filter(Boolean)
+        )];
+        populateSelectOptions(statusEl, statuses, '（選択してください）');
+        statusEl.value = statuses.includes(prev) ? prev : '';
+    }
+}
+
+/** 「料理」タブ: ステータス値に応じて、一時メモ欄／構造化フォームの表示を切り替える。 */
+function updateRecipeConditionalFields(status) {
+    const memoRow    = document.getElementById('recipe-memo-row');
+    const structured = document.getElementById('recipe-structured-fields');
+    const permanent  = status === '永久保存';
+    if (memoRow)    memoRow.style.display    = permanent ? 'none' : '';
+    if (structured) structured.style.display = permanent ? '' : 'none';
+}
+
+document.getElementById('recipe-status')?.addEventListener('change', (e) => {
+    updateRecipeConditionalFields(e.target.value);
+});
+
+/** 「料理」タブ: 一覧テーブルを描画する。行クリックで選択・フォームへ読み込む。 */
+function renderRecipeList() {
+    const table = document.getElementById('recipe-list-table');
+    if (!table) return;
+
+    const rows = getRecipeRows();
+
+    const thead = document.createElement('thead');
+    const hRow  = document.createElement('tr');
+    ['料理名', 'ステータス', 'カテゴリ', '更新日時'].forEach(col => {
+        const th = document.createElement('th');
+        th.textContent = col;
+        hRow.appendChild(th);
+    });
+    thead.appendChild(hRow);
+
+    const tbody = document.createElement('tbody');
+    if (rows.length === 0) {
+        const tr = document.createElement('tr');
+        const td = document.createElement('td');
+        td.colSpan = 4;
+        td.className = 'empty-cell';
+        td.textContent = '該当するレシピがありません';
+        tr.appendChild(td);
+        tbody.appendChild(tr);
+    } else {
+        rows.forEach(row => {
+            const tr = document.createElement('tr');
+            const id = String(row['ID']);
+            if (id === selectedRecipeId) tr.classList.add('selected-row');
+            tr.addEventListener('click', () => {
+                selectedRecipeId = id;
+                loadRecipeForm(row);
+                renderRecipeList();
+            });
+            [row['タイトル'] || '（無題）', row['ステータス'] || '', row['カテゴリ'] || '', row['更新日時'] || '']
+                .forEach(val => {
+                    const td = document.createElement('td');
+                    td.textContent = val;
+                    tr.appendChild(td);
+                });
+            tbody.appendChild(tr);
+        });
+    }
+    table.className = 'data-table';
+    table.replaceChildren(thead, tbody);
+}
+
+/** 「料理」タブ: フォームへ選択行の値を読み込む。 */
+function loadRecipeForm(row) {
+    document.getElementById('recipe-title').value    = row['タイトル']    || '';
+    document.getElementById('recipe-category').value = row['カテゴリ']    || '';
+    document.getElementById('recipe-status').value    = row['ステータス'] || '';
+    updateRecipeConditionalFields(row['ステータス']);
+
+    if (isPermanentRecipe(row)) {
+        const sections = parseRecipeContent(row['内容']);
+        document.getElementById('recipe-servings').value     = sections['想定人数'];
+        document.getElementById('recipe-ingredients').value  = sections['材料'];
+        document.getElementById('recipe-prep').value         = sections['前処理'];
+        document.getElementById('recipe-steps').value        = sections['作り方'];
+        document.getElementById('recipe-improvements').value = sections['改善点'];
+        document.getElementById('recipe-memo').value = '';
+    } else {
+        document.getElementById('recipe-memo').value = row['内容'] || '';
+        ['recipe-servings', 'recipe-ingredients', 'recipe-prep', 'recipe-steps', 'recipe-improvements']
+            .forEach(id => { document.getElementById(id).value = ''; });
+    }
+
+    updateRecipeSelectionInfo();
+}
+
+/** 「料理」タブ: フォームをクリアし、選択状態を解除する。 */
+function clearRecipeForm() {
+    selectedRecipeId = null;
+    ['recipe-title', 'recipe-memo', 'recipe-servings', 'recipe-ingredients',
+     'recipe-prep', 'recipe-steps', 'recipe-improvements'].forEach(id => {
+        document.getElementById(id).value = '';
+    });
+    document.getElementById('recipe-category').value = '';
+    document.getElementById('recipe-status').value = '';
+    updateRecipeConditionalFields('');
+    updateRecipeSelectionInfo();
+}
+
+/** 「料理」タブ: フォーム値を mainData 行へ組み立てて返す（ID・作成日時・データ区分・タグ・親IDは呼び出し側で付与）。 */
+function readRecipeFormContent() {
+    const status = document.getElementById('recipe-status').value;
+    if (status === '永久保存') {
+        return buildRecipeContent({
+            '想定人数': document.getElementById('recipe-servings').value,
+            '材料':     document.getElementById('recipe-ingredients').value,
+            '前処理':   document.getElementById('recipe-prep').value,
+            '作り方':   document.getElementById('recipe-steps').value,
+            '改善点':   document.getElementById('recipe-improvements').value,
+        });
+    }
+    return document.getElementById('recipe-memo').value.trim();
+}
+
+/** 「料理」タブ: 選択件数・状態の表示を更新する。 */
+function updateRecipeSelectionInfo() {
+    const info = document.getElementById('recipe-selection-info');
+    if (!info) return;
+    info.textContent = selectedRecipeId ? `選択中: ID ${selectedRecipeId}` : '未選択（新規登録）';
+}
+
+document.getElementById('recipe-new-btn')?.addEventListener('click', () => {
+    const title  = document.getElementById('recipe-title').value.trim();
+    if (!title) { alert('料理名を入力してください'); return; }
+    const status = document.getElementById('recipe-status').value;
+    if (!status) { alert('ステータスを選択してください'); return; }
+
+    const maxId = currentMainData.reduce((max, row) => {
+        const id = parseInt(row['ID'], 10);
+        return isNaN(id) ? max : Math.max(max, id);
+    }, 0);
+    const ts = formatJpDatetime(new Date());
+
+    const entry = Object.fromEntries(MAIN_DATA_COLUMNS.map(col => [col, '']));
+    entry['ID']        = String(maxId + 1);
+    entry['データ区分'] = 'ナレッジ';
+    entry['タグ']       = '料理';
+    entry['タイトル']   = title;
+    entry['カテゴリ']   = document.getElementById('recipe-category').value || (currentCategory === 'すべて' ? '' : currentCategory);
+    entry['ステータス'] = status;
+    entry['内容']       = readRecipeFormContent();
+    entry['作成日時']   = ts;
+    entry['更新日時']   = ts;
+
+    currentMainData.push(entry);
+    persistLocalCache();
+
+    selectedRecipeId = entry['ID'];
+    renderRecipeList();
+    updateRecipeSelectionInfo();
+});
+
+document.getElementById('recipe-apply-btn')?.addEventListener('click', () => {
+    if (!selectedRecipeId) { alert('更新するレシピを選択してください'); return; }
+    const row = currentMainData.find(r => String(r['ID']) === selectedRecipeId);
+    if (!row) return;
+
+    const title  = document.getElementById('recipe-title').value.trim();
+    if (!title) { alert('料理名を入力してください'); return; }
+    const status = document.getElementById('recipe-status').value;
+    if (!status) { alert('ステータスを選択してください'); return; }
+
+    row['タイトル']   = title;
+    row['カテゴリ']   = document.getElementById('recipe-category').value;
+    row['ステータス'] = status;
+    row['内容']       = readRecipeFormContent();
+    row['更新日時']   = formatJpDatetime(new Date());
+
+    persistLocalCache();
+    renderRecipeList();
+});
+
+document.getElementById('recipe-delete-btn')?.addEventListener('click', () => {
+    if (!selectedRecipeId) { alert('削除するレシピを選択してください'); return; }
+    if (!confirm('選択したレシピを削除します。よろしいですか？（この操作は取り消せません）')) return;
+
+    currentMainData = currentMainData.filter(r => String(r['ID']) !== selectedRecipeId);
+    clearRecipeForm();
+    persistLocalCache();
+    renderRecipeList();
+});
+
+/** 料理ビューア（一覧＋フォーム）を描画する。 */
+function renderRecipeView() {
+    renderRecipeSelects();
+    renderRecipeList();
+    updateRecipeSelectionInfo();
+}
+
+/** 指定タグの (M)タグ_親（カテゴリ）を調べ、現在選択中のカテゴリと一致するかどうかを返す。 */
+function isKnowledgeViewerTagCategoryMatched(tag) {
+    const tagCategory = currentMasterData.find(r => r['(M)タグ_子'] === tag)?.['(M)タグ_親'] || '';
+    return tagCategory !== '' && tagCategory === currentCategory;
+}
+
+/**
+ * ナレッジタブ「専用ビューア」を描画する。
+ * マスタの (M)タグ_子＝各ビューア対象タグ の行から (M)タグ_親（カテゴリ）を調べ、
+ * 現在選択中のカテゴリと一致する場合のみ対応するボタンを表示する。
+ * ボタン押下時は表示中のビューアを開閉トグルする。
+ */
+function renderKnowledgeViewers() {
+    const recipeVisible  = isKnowledgeViewerTagCategoryMatched('料理');
+    const readingVisible = isKnowledgeViewerTagCategoryMatched('読書');
+
+    const recipeBtn = document.getElementById('knowledge-viewer-btn-recipe');
+    if (recipeBtn) {
+        recipeBtn.style.display = recipeVisible ? '' : 'none';
+        recipeBtn.classList.toggle('taskorg-view-btn--active', knowledgeViewer === 'recipe');
+        if (!recipeVisible && knowledgeViewer === 'recipe') knowledgeViewer = null;
+    }
+    const readingBtn = document.getElementById('knowledge-viewer-btn-reading');
+    if (readingBtn) {
+        readingBtn.style.display = readingVisible ? '' : 'none';
+        readingBtn.classList.toggle('taskorg-view-btn--active', knowledgeViewer === 'reading');
+        if (!readingVisible && knowledgeViewer === 'reading') knowledgeViewer = null;
+    }
+
+    const recipePanel = document.getElementById('knowledge-viewer-panel-recipe');
+    if (recipePanel) recipePanel.style.display = knowledgeViewer === 'recipe' ? '' : 'none';
+    if (knowledgeViewer === 'recipe') renderRecipeView();
+
+    const readingPanel = document.getElementById('knowledge-viewer-panel-reading');
+    if (readingPanel) readingPanel.style.display = knowledgeViewer === 'reading' ? '' : 'none';
+    if (knowledgeViewer === 'reading') renderReadingView();
+}
+
+document.getElementById('knowledge-viewer-btn-recipe')?.addEventListener('click', () => {
+    knowledgeViewer = knowledgeViewer === 'recipe' ? null : 'recipe';
+    renderKnowledgeViewers();
+});
+
+document.getElementById('knowledge-viewer-btn-reading')?.addEventListener('click', () => {
+    knowledgeViewer = knowledgeViewer === 'reading' ? null : 'reading';
+    selectedBookId = null;
+    selectedChapterId = null;
+    selectedQaId = null;
+    readingQuizCards = [];
+    readingQuizIndex = 0;
+    readingQuizShowAnswer = false;
+    const quizPanel = document.getElementById('reading-quiz-panel');
+    if (quizPanel) quizPanel.style.display = 'none';
+    renderKnowledgeViewers();
+});
+
+// ===== 読書ビューア（本→章メモ→QAカードの親ID階層） =====
+
+/** タグ＝読書の本行を更新日時の新しい順に返す（トップバーのカテゴリ絞り込みに従う）。 */
+function getBookRows() {
+    return getFilteredMainData()
+        .filter(isBookRow)
+        .sort((a, b) => (b['更新日時'] || '').localeCompare(a['更新日時'] || ''));
+}
+
+/** ナレッジ用ステータス選択肢（一時メモ／永久保存等）を返す。 */
+function getKnowledgeStatusOptions() {
+    return [...new Set(
+        currentMasterData.filter(r => r['(M)ステータス_親'] === 'ナレッジ')
+            .map(r => r['(M)ステータス_子']).filter(Boolean)
+    )];
+}
+
+/** 読書ビューア: 本フォームのカテゴリ・ステータス<select>を再構築する。 */
+function renderReadingBookSelects() {
+    const categoryEl = document.getElementById('reading-book-category');
+    if (categoryEl) {
+        const categories = [...new Set(currentMasterData.map(r => r['(M)カテゴリ']).filter(Boolean))];
+        rebuildSelectById('reading-book-category', categories, '（選択してください）');
+    }
+    rebuildSelectById('reading-book-status', getKnowledgeStatusOptions(), '（選択してください）');
+}
+
+/** 読書ビューア: 本一覧テーブルを描画する。行クリックで選択・フォームへ読み込む。 */
+function renderReadingBookList() {
+    const table = document.getElementById('reading-book-list-table');
+    if (!table) return;
+
+    const rows = getBookRows();
+
+    const thead = document.createElement('thead');
+    const hRow  = document.createElement('tr');
+    ['書名', 'ステータス', 'カテゴリ', '更新日時'].forEach(col => {
+        const th = document.createElement('th');
+        th.textContent = col;
+        hRow.appendChild(th);
+    });
+    thead.appendChild(hRow);
+
+    const tbody = document.createElement('tbody');
+    if (rows.length === 0) {
+        const tr = document.createElement('tr');
+        const td = document.createElement('td');
+        td.colSpan = 4;
+        td.className = 'empty-cell';
+        td.textContent = '該当する本がありません';
+        tr.appendChild(td);
+        tbody.appendChild(tr);
+    } else {
+        rows.forEach(row => {
+            const tr = document.createElement('tr');
+            const id = String(row['ID']);
+            if (id === selectedBookId) tr.classList.add('selected-row');
+            tr.addEventListener('click', () => {
+                selectedBookId = id;
+                selectedChapterId = null;
+                clearQaForm();
+                loadBookForm(row);
+                renderReadingView();
+            });
+            [row['タイトル'] || '（無題）', row['ステータス'] || '', row['カテゴリ'] || '', row['更新日時'] || '']
+                .forEach(val => {
+                    const td = document.createElement('td');
+                    td.textContent = val;
+                    tr.appendChild(td);
+                });
+            tbody.appendChild(tr);
+        });
+    }
+    table.className = 'data-table';
+    table.replaceChildren(thead, tbody);
+}
+
+/** 読書ビューア: 本フォームへ選択行の値を読み込む。 */
+function loadBookForm(row) {
+    document.getElementById('reading-book-title').value    = row['タイトル']    || '';
+    document.getElementById('reading-book-category').value = row['カテゴリ']    || '';
+    document.getElementById('reading-book-status').value   = row['ステータス'] || '';
+    document.getElementById('reading-book-memo').value     = row['内容']       || '';
+    updateReadingBookSelectionInfo();
+}
+
+/** 読書ビューア: 本フォームをクリアし、選択状態を解除する。 */
+function clearBookForm() {
+    selectedBookId = null;
+    selectedChapterId = null;
+    ['reading-book-title', 'reading-book-memo'].forEach(id => { document.getElementById(id).value = ''; });
+    document.getElementById('reading-book-category').value = '';
+    document.getElementById('reading-book-status').value = '';
+    updateReadingBookSelectionInfo();
+}
+
+function updateReadingBookSelectionInfo() {
+    const info = document.getElementById('reading-book-selection-info');
+    if (info) info.textContent = selectedBookId ? `選択中: ID ${selectedBookId}` : '未選択（新規登録）';
+}
+
+document.getElementById('reading-book-new-btn')?.addEventListener('click', () => {
+    const title  = document.getElementById('reading-book-title').value.trim();
+    if (!title) { alert('書名を入力してください'); return; }
+    const status = document.getElementById('reading-book-status').value;
+    if (!status) { alert('ステータスを選択してください'); return; }
+
+    const maxId = currentMainData.reduce((max, row) => {
+        const id = parseInt(row['ID'], 10);
+        return isNaN(id) ? max : Math.max(max, id);
+    }, 0);
+    const ts = formatJpDatetime(new Date());
+
+    const entry = Object.fromEntries(MAIN_DATA_COLUMNS.map(col => [col, '']));
+    entry['ID']        = String(maxId + 1);
+    entry['データ区分'] = 'ナレッジ';
+    entry['タグ']       = '読書';
+    entry['タイトル']   = title;
+    entry['カテゴリ']   = document.getElementById('reading-book-category').value || (currentCategory === 'すべて' ? '' : currentCategory);
+    entry['ステータス'] = status;
+    entry['内容']       = document.getElementById('reading-book-memo').value.trim();
+    entry['作成日時']   = ts;
+    entry['更新日時']   = ts;
+
+    currentMainData.push(entry);
+    persistLocalCache();
+
+    selectedBookId = entry['ID'];
+    selectedChapterId = null;
+    renderReadingView();
+});
+
+document.getElementById('reading-book-apply-btn')?.addEventListener('click', () => {
+    if (!selectedBookId) { alert('更新する本を選択してください'); return; }
+    const row = currentMainData.find(r => String(r['ID']) === selectedBookId);
+    if (!row) return;
+
+    const title  = document.getElementById('reading-book-title').value.trim();
+    if (!title) { alert('書名を入力してください'); return; }
+    const status = document.getElementById('reading-book-status').value;
+    if (!status) { alert('ステータスを選択してください'); return; }
+
+    row['タイトル']   = title;
+    row['カテゴリ']   = document.getElementById('reading-book-category').value;
+    row['ステータス'] = status;
+    row['内容']       = document.getElementById('reading-book-memo').value.trim();
+    row['更新日時']   = formatJpDatetime(new Date());
+
+    persistLocalCache();
+    renderReadingView();
+});
+
+document.getElementById('reading-book-delete-btn')?.addEventListener('click', () => {
+    if (!selectedBookId) { alert('削除する本を選択してください'); return; }
+    if (!confirm('選択した本を削除します。配下の章メモ・QAカードは親IDが解除され孤立します。よろしいですか？（この操作は取り消せません）')) return;
+
+    currentMainData.forEach(r => { if (String(r['親ID'] || '') === selectedBookId) r['親ID'] = ''; });
+    currentMainData = currentMainData.filter(r => String(r['ID']) !== selectedBookId);
+    clearBookForm();
+    persistLocalCache();
+    renderReadingView();
+});
+
+/** 読書ビューア: 章メモセクションの表示/非表示、フォームselect、一覧を描画する。 */
+function renderReadingChapterSection() {
+    const section = document.getElementById('reading-chapter-section');
+    if (section) section.style.display = selectedBookId ? '' : 'none';
+    if (!selectedBookId) return;
+
+    rebuildSelectById('reading-chapter-status', getKnowledgeStatusOptions(), '（選択してください）');
+    rebuildSelectById('reading-chapter-para', [...new Set(currentMasterData.map(r => r['(M)PARA区分']).filter(Boolean))], '（選択してください）');
+    renderReadingChapterList();
+}
+
+/** 読書ビューア: 選択中の本に属する章メモ一覧テーブルを描画する。 */
+function renderReadingChapterList() {
+    const table = document.getElementById('reading-chapter-list-table');
+    if (!table) return;
+
+    const rows = getChapters(currentMainData, selectedBookId);
+
+    const thead = document.createElement('thead');
+    const hRow  = document.createElement('tr');
+    ['章タイトル', 'ステータス', 'PARA区分', '更新日時'].forEach(col => {
+        const th = document.createElement('th');
+        th.textContent = col;
+        hRow.appendChild(th);
+    });
+    thead.appendChild(hRow);
+
+    const tbody = document.createElement('tbody');
+    if (rows.length === 0) {
+        const tr = document.createElement('tr');
+        const td = document.createElement('td');
+        td.colSpan = 4;
+        td.className = 'empty-cell';
+        td.textContent = '該当する章メモがありません';
+        tr.appendChild(td);
+        tbody.appendChild(tr);
+    } else {
+        rows.forEach(row => {
+            const tr = document.createElement('tr');
+            const id = String(row['ID']);
+            if (id === selectedChapterId) tr.classList.add('selected-row');
+            tr.addEventListener('click', () => {
+                selectedChapterId = id;
+                clearQaForm();
+                loadChapterForm(row);
+                renderReadingView();
+            });
+            [row['タイトル'] || '（無題）', row['ステータス'] || '', row['PARA区分'] || '', row['更新日時'] || '']
+                .forEach(val => {
+                    const td = document.createElement('td');
+                    td.textContent = val;
+                    tr.appendChild(td);
+                });
+            tbody.appendChild(tr);
+        });
+    }
+    table.className = 'data-table';
+    table.replaceChildren(thead, tbody);
+}
+
+/** 読書ビューア: 章メモフォームへ選択行の値を読み込む。 */
+function loadChapterForm(row) {
+    document.getElementById('reading-chapter-title').value   = row['タイトル']   || '';
+    document.getElementById('reading-chapter-status').value  = row['ステータス'] || '';
+    document.getElementById('reading-chapter-para').value    = row['PARA区分']   || '';
+    document.getElementById('reading-chapter-content').value = row['内容']       || '';
+    updateReadingChapterSelectionInfo();
+}
+
+/** 読書ビューア: 章メモフォームをクリアし、選択状態を解除する。 */
+function clearChapterForm() {
+    selectedChapterId = null;
+    ['reading-chapter-title', 'reading-chapter-content'].forEach(id => { document.getElementById(id).value = ''; });
+    document.getElementById('reading-chapter-status').value = '';
+    document.getElementById('reading-chapter-para').value = '';
+    updateReadingChapterSelectionInfo();
+}
+
+function updateReadingChapterSelectionInfo() {
+    const info = document.getElementById('reading-chapter-selection-info');
+    if (info) info.textContent = selectedChapterId ? `選択中: ID ${selectedChapterId}` : '未選択（新規登録）';
+}
+
+document.getElementById('reading-chapter-new-btn')?.addEventListener('click', () => {
+    if (!selectedBookId) { alert('本を選択してください'); return; }
+    const title = document.getElementById('reading-chapter-title').value.trim();
+    if (!title) { alert('章タイトルを入力してください'); return; }
+
+    const maxId = currentMainData.reduce((max, row) => {
+        const id = parseInt(row['ID'], 10);
+        return isNaN(id) ? max : Math.max(max, id);
+    }, 0);
+    const ts = formatJpDatetime(new Date());
+
+    const entry = Object.fromEntries(MAIN_DATA_COLUMNS.map(col => [col, '']));
+    entry['ID']        = String(maxId + 1);
+    entry['データ区分'] = 'ナレッジ';
+    entry['親ID']       = selectedBookId;
+    entry['タイトル']   = title;
+    entry['ステータス'] = document.getElementById('reading-chapter-status').value;
+    entry['PARA区分']   = document.getElementById('reading-chapter-para').value;
+    entry['内容']       = document.getElementById('reading-chapter-content').value.trim();
+    entry['作成日時']   = ts;
+    entry['更新日時']   = ts;
+
+    currentMainData.push(entry);
+    persistLocalCache();
+
+    selectedChapterId = entry['ID'];
+    renderReadingView();
+});
+
+document.getElementById('reading-chapter-apply-btn')?.addEventListener('click', () => {
+    if (!selectedChapterId) { alert('更新する章メモを選択してください'); return; }
+    const row = currentMainData.find(r => String(r['ID']) === selectedChapterId);
+    if (!row) return;
+
+    const title = document.getElementById('reading-chapter-title').value.trim();
+    if (!title) { alert('章タイトルを入力してください'); return; }
+
+    row['タイトル']   = title;
+    row['ステータス'] = document.getElementById('reading-chapter-status').value;
+    row['PARA区分']   = document.getElementById('reading-chapter-para').value;
+    row['内容']       = document.getElementById('reading-chapter-content').value.trim();
+    row['更新日時']   = formatJpDatetime(new Date());
+
+    persistLocalCache();
+    renderReadingView();
+});
+
+document.getElementById('reading-chapter-delete-btn')?.addEventListener('click', () => {
+    if (!selectedChapterId) { alert('削除する章メモを選択してください'); return; }
+    if (!confirm('選択した章メモを削除します。配下のQAカードも削除されます。よろしいですか？（この操作は取り消せません）')) return;
+
+    const deleteIds = new Set([selectedChapterId, ...getQaCards(currentMainData, selectedChapterId).map(r => String(r['ID']))]);
+    currentMainData = currentMainData.filter(r => !deleteIds.has(String(r['ID'])));
+    clearChapterForm();
+    persistLocalCache();
+    renderReadingView();
+});
+
+/** 読書ビューア: QAカードセクションの表示/非表示、一覧を描画する。 */
+function renderReadingQaSection() {
+    const section = document.getElementById('reading-qa-section');
+    if (section) section.style.display = selectedChapterId ? '' : 'none';
+    if (!selectedChapterId) return;
+    renderReadingQaList();
+}
+
+/** 読書ビューア: 選択中の章メモに属するQAカード一覧テーブルを描画する。 */
+function renderReadingQaList() {
+    const table = document.getElementById('reading-qa-list-table');
+    if (!table) return;
+
+    const rows = getQaCards(currentMainData, selectedChapterId);
+
+    const thead = document.createElement('thead');
+    const hRow  = document.createElement('tr');
+    ['問題', '答え', '更新日時'].forEach(col => {
+        const th = document.createElement('th');
+        th.textContent = col;
+        hRow.appendChild(th);
+    });
+    thead.appendChild(hRow);
+
+    const tbody = document.createElement('tbody');
+    if (rows.length === 0) {
+        const tr = document.createElement('tr');
+        const td = document.createElement('td');
+        td.colSpan = 3;
+        td.className = 'empty-cell';
+        td.textContent = '該当するQAカードがありません';
+        tr.appendChild(td);
+        tbody.appendChild(tr);
+    } else {
+        rows.forEach(row => {
+            const tr = document.createElement('tr');
+            const id = String(row['ID']);
+            if (id === selectedQaId) tr.classList.add('selected-row');
+            tr.addEventListener('click', () => {
+                selectedQaId = id;
+                loadQaForm(row);
+                renderReadingQaList();
+            });
+            [row['タイトル'] || '', row['内容'] || '', row['更新日時'] || '']
+                .forEach(val => {
+                    const td = document.createElement('td');
+                    td.textContent = val;
+                    tr.appendChild(td);
+                });
+            tbody.appendChild(tr);
+        });
+    }
+    table.className = 'data-table';
+    table.replaceChildren(thead, tbody);
+}
+
+/** 読書ビューア: QAフォームへ選択行の値を読み込む。 */
+function loadQaForm(row) {
+    document.getElementById('reading-qa-question').value = row['タイトル'] || '';
+    document.getElementById('reading-qa-answer').value   = row['内容']    || '';
+    updateReadingQaSelectionInfo();
+}
+
+/** 読書ビューア: QAフォームをクリアし、選択状態を解除する。 */
+function clearQaForm() {
+    selectedQaId = null;
+    document.getElementById('reading-qa-question').value = '';
+    document.getElementById('reading-qa-answer').value   = '';
+    updateReadingQaSelectionInfo();
+}
+
+function updateReadingQaSelectionInfo() {
+    const info = document.getElementById('reading-qa-selection-info');
+    if (info) info.textContent = selectedQaId ? `選択中: ID ${selectedQaId}` : '未選択（新規登録）';
+}
+
+document.getElementById('reading-qa-new-btn')?.addEventListener('click', () => {
+    if (!selectedChapterId) { alert('章メモを選択してください'); return; }
+    const question = document.getElementById('reading-qa-question').value.trim();
+    const answer   = document.getElementById('reading-qa-answer').value.trim();
+    if (!question || !answer) { alert('問題・答えの両方を入力してください'); return; }
+
+    const maxId = currentMainData.reduce((max, row) => {
+        const id = parseInt(row['ID'], 10);
+        return isNaN(id) ? max : Math.max(max, id);
+    }, 0);
+    const ts = formatJpDatetime(new Date());
+
+    const entry = Object.fromEntries(MAIN_DATA_COLUMNS.map(col => [col, '']));
+    entry['ID']        = String(maxId + 1);
+    entry['データ区分'] = 'ナレッジ';
+    entry['親ID']       = selectedChapterId;
+    entry['PARA区分']   = getQaParaMarker();
+    entry['タイトル']   = question;
+    entry['内容']       = answer;
+    entry['作成日時']   = ts;
+    entry['更新日時']   = ts;
+
+    currentMainData.push(entry);
+    persistLocalCache();
+
+    selectedQaId = entry['ID'];
+    renderReadingQaList();
+    updateReadingQaSelectionInfo();
+});
+
+document.getElementById('reading-qa-apply-btn')?.addEventListener('click', () => {
+    if (!selectedQaId) { alert('更新するQAカードを選択してください'); return; }
+    const row = currentMainData.find(r => String(r['ID']) === selectedQaId);
+    if (!row) return;
+
+    const question = document.getElementById('reading-qa-question').value.trim();
+    const answer   = document.getElementById('reading-qa-answer').value.trim();
+    if (!question || !answer) { alert('問題・答えの両方を入力してください'); return; }
+
+    row['タイトル']   = question;
+    row['内容']       = answer;
+    row['更新日時']   = formatJpDatetime(new Date());
+
+    persistLocalCache();
+    renderReadingQaList();
+});
+
+document.getElementById('reading-qa-delete-btn')?.addEventListener('click', () => {
+    if (!selectedQaId) { alert('削除するQAカードを選択してください'); return; }
+    if (!confirm('選択したQAカードを削除します。よろしいですか？（この操作は取り消せません）')) return;
+
+    currentMainData = currentMainData.filter(r => String(r['ID']) !== selectedQaId);
+    clearQaForm();
+    persistLocalCache();
+    renderReadingQaList();
+});
+
+// ----- 暗記モード（QAカードのシャッフル出題） -----
+
+/** 暗記モード: 進捗・問題・答えの表示を現在の出題状態に合わせて更新する。 */
+function renderReadingQuiz() {
+    const total = readingQuizCards.length;
+    const progressEl = document.getElementById('reading-quiz-progress');
+    const questionEl = document.getElementById('reading-quiz-question');
+    const answerEl   = document.getElementById('reading-quiz-answer');
+    if (!progressEl || !questionEl || !answerEl) return;
+
+    if (total === 0) {
+        progressEl.textContent = '';
+        questionEl.textContent = '';
+        answerEl.style.display = 'none';
+        return;
+    }
+
+    const card = readingQuizCards[readingQuizIndex];
+    progressEl.textContent = `${readingQuizIndex + 1} / ${total}`;
+    questionEl.textContent = `Q. ${card['タイトル'] || ''}`;
+    answerEl.textContent   = `A. ${card['内容'] || ''}`;
+    answerEl.style.display = readingQuizShowAnswer ? '' : 'none';
+}
+
+document.getElementById('reading-quiz-start-btn')?.addEventListener('click', () => {
+    const cards = getQaCards(currentMainData, selectedChapterId);
+    if (cards.length === 0) { alert('この章にはQAカードがありません'); return; }
+
+    readingQuizCards = shuffleArray(cards);
+    readingQuizIndex = 0;
+    readingQuizShowAnswer = false;
+    document.getElementById('reading-quiz-panel').style.display = '';
+    renderReadingQuiz();
+});
+
+document.getElementById('reading-quiz-reveal-btn')?.addEventListener('click', () => {
+    readingQuizShowAnswer = true;
+    renderReadingQuiz();
+});
+
+document.getElementById('reading-quiz-next-btn')?.addEventListener('click', () => {
+    if (readingQuizCards.length === 0) return;
+    readingQuizIndex = (readingQuizIndex + 1) % readingQuizCards.length;
+    readingQuizShowAnswer = false;
+    renderReadingQuiz();
+});
+
+document.getElementById('reading-quiz-end-btn')?.addEventListener('click', () => {
+    readingQuizCards = [];
+    readingQuizIndex = 0;
+    readingQuizShowAnswer = false;
+    document.getElementById('reading-quiz-panel').style.display = 'none';
+});
+
+/** 読書ビューア（本・章メモ・QAカードの3階層）全体を描画する。 */
+function renderReadingView() {
+    renderReadingBookSelects();
+    renderReadingBookList();
+    updateReadingBookSelectionInfo();
+    renderReadingChapterSection();
+    renderReadingQaSection();
 }
 
 /**
