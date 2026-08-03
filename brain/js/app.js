@@ -588,8 +588,8 @@ document.querySelectorAll('.js-save-btn').forEach(btn => {
     });
 });
 
-// ===== 自動保存（5分ごと。変更がある場合のみGitHubへ保存し、変更が無ければ何もしない） =====
-const AUTO_SAVE_INTERVAL_MS = 5 * 60 * 1000;
+// ===== 自動保存（1分ごと。変更がある場合のみGitHubへ保存し、変更が無ければ何もしない） =====
+const AUTO_SAVE_INTERVAL_MS = 1 * 60 * 1000;
 setInterval(() => {
     const token = getTokenValue();
     if (!token || !currentSha) return; // 未読み込み・未認証時は自動保存の対象外
@@ -5920,16 +5920,6 @@ function getProject2AllProjectRowsFlat() {
     let rows = currentMainData.filter(r => isParentRowM(currentMainData, r['ID']) && !isRecurringParentRow(r));
     if (currentCategory !== 'すべて') rows = rows.filter(r => r['カテゴリ'] === currentCategory);
     return rows;
-}
-
-/** 子行配列のステータス内訳を "ステータス:件数" の並びで返す。 */
-function summarizeChildStatuses(children) {
-    const counts = {};
-    children.forEach(c => {
-        const s = c['ステータス'] || '（未設定）';
-        counts[s] = (counts[s] || 0) + 1;
-    });
-    return Object.entries(counts).map(([k, v]) => `${k}:${v}`).join(' ');
 }
 
 /** PJ(n層)階層プルダウンの選択肢を、配下の子孫（子・孫…全階層）の総数が多い順にソートする（フィルタ・PJ一括編集の階層プルダウン共通）。 */

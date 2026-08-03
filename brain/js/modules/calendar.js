@@ -189,68 +189,6 @@ export function extractTimeOnDate(value, dateJP) {
     return { hasTime: true, minutes: h * 60 + m };
 }
 
-/**
- * dateJP のタスクを「時間帯が決まっているもの（timed）」「時間帯未定（unscheduled）」
- * 「1日タスクに既に追加済み（referenced）」に分ける。
- * timed の各要素は { row, startMin, endMin }（分単位、0〜1440）。
- * referenced は1日タスクの内容欄で#ID参照されているタスク（元タスク側では時間帯ブロックを表示しないため別枠で返す）。
- * 1日タスクでの記載順（startMin昇順）で並べる。
- */
-export function getCalendarSegmentsForDate(mainData, category, calendarFilters, dateJP) {
-    const dayPlanTask   = getDayPlanTask(mainData, dateJP);
-    const dayPlanBlocks = dayPlanTask ? parseDayPlanContent(dayPlanTask['内容']) : [];
-    const referencedIds = new Set(dayPlanBlocks.map(b => b.refId).filter(Boolean));
-
-    const timed = [];
-    const unscheduled = [];
-    const referencedRows = [];
-
-    getTasksAvailableForDayPlan(mainData, category, calendarFilters, dateJP).forEach(row => {
-        if (referencedIds.has(String(row['ID']))) {
-            referencedRows.push(row);
-            return;
-        }
-
-        const startInfo = extractTimeOnDate(row['開始予定'], dateJP);
-        const endInfo   = extractTimeOnDate(row['終了予定'], dateJP);
-        const hasStartTime = !!(startInfo && startInfo.hasTime);
-        const hasEndTime   = !!(endInfo && endInfo.hasTime);
-
-        if (!hasStartTime && !hasEndTime) {
-            unscheduled.push(row);
-            return;
-        }
-
-        let startMin = hasStartTime ? startInfo.minutes : endInfo.minutes - 30;
-        let endMin   = hasEndTime   ? endInfo.minutes   : startInfo.minutes + 30;
-        if (endMin <= startMin) endMin = startMin + 30;
-        startMin = Math.max(0, Math.min(1439, startMin));
-        endMin   = Math.max(startMin + 15, Math.min(1440, endMin));
-
-        timed.push({ row, startMin, endMin });
-    });
-
-    dayPlanBlocks.forEach((b, dayPlanBlockIndex) => {
-        const linkedRow = b.refId ? mainData.find(r => String(r['ID']) === b.refId) : null;
-        timed.push({
-            row: linkedRow || { ID: null, タイトル: b.label || '（ラベルなし）', ステータス: null },
-            startMin: b.startMin,
-            endMin: b.endMin,
-            isDayPlanBlock: true,
-            dayPlanBlockIndex
-        });
-    });
-
-    timed.sort((a, b) => a.startMin - b.startMin);
-
-    const blockStartById = new Map(dayPlanBlocks.filter(b => b.refId).map(b => [b.refId, b.startMin]));
-    const referenced = referencedRows.sort((a, b) =>
-        (blockStartById.get(String(a['ID'])) ?? 0) - (blockStartById.get(String(b['ID'])) ?? 0)
-    );
-
-    return { timed, unscheduled, referenced };
-}
-
 /** 時間帯が重なるタスクを横に並べるためのレーン番号を割り振る（timed配列に lane / laneCount を直接付与する）。 */
 export function assignCalendarLanes(timed) {
     const laneEnds = [];
@@ -370,36 +308,6 @@ const TASK_ORGANIZE_STATUS_ORDER = ['未着手', '進行中', '連絡待ち', '�
 export function taskOrganizeStatusRank(status) {
     const idx = TASK_ORGANIZE_STATUS_ORDER.indexOf(status);
     return idx !== -1 ? idx : TASK_ORGANIZE_STATUS_ORDER.length;
-}
-
-/**
- * タスク一覧を、ステータス（未着手→進行中→中断→連絡待ち→報告待ち→完了→その他の順）でグループ化し、
- * 各グループ内は終了予定が近い順（空欄は最後）に並べて返す。
- * @returns {Array<{status: string, rows: Array}>}
- */
-export function groupUnsetTasksByStatus(rows) {
-    const groups = new Map();
-    rows.forEach(row => {
-        const status = row['ステータス'] || '（未設定）';
-        if (!groups.has(status)) groups.set(status, []);
-        groups.get(status).push(row);
-    });
-
-    const sortedStatuses = [...groups.keys()].sort((a, b) => taskOrganizeStatusRank(a) - taskOrganizeStatusRank(b));
-
-    return sortedStatuses.map(status => ({
-        status,
-        rows: [...groups.get(status)].sort((a, b) => compareDateAscEmptyLast(a['終了予定'], b['終了予定']))
-    }));
-}
-
-/** 開始予定・終了予定の少なくとも一方が空欄のタスク（フィルタ適用済み、繰返し親は除外）を返す。 */
-export function getIncompleteDateTasks(mainData, category, calendarFilters) {
-    return filterCalendarTasks(mainData, category, calendarFilters).filter(r => {
-        if (isRecurringParentRow(r)) return false; // 繰返しタスクの親は対象外
-        if (r['開始予定'] && r['終了予定']) return false; // 両方入力済みは対象外
-        return true;
-    });
 }
 
 // (3)〜(4) メイン機能・アウトプット
