@@ -62,6 +62,13 @@
             <div class="update-form">
                 <p class="update-form-title">株価一括取得（銘柄マスタ master.csv から範囲指定）</p>
                 <p class="placeholder-text">対象: 内国株式＋ETF・ETN。20件処理するごとに自動でコミットされるため、途中で失敗しても20件分より多くは失われません。</p>
+                <div class="update-form-row">
+                    <label>モード</label>
+                    <select id="bulk-update-mode">
+                        <option value="initial">初回取得（未取得銘柄向け・全期間）</option>
+                        <option value="update">差分更新（既存銘柄を最新に）</option>
+                    </select>
+                </div>
                 <button type="button" id="bulk-update-check-btn" class="run-btn run-btn--secondary">取得状況を確認</button>
                 <p id="bulk-update-progress" class="update-status"></p>
                 <div class="update-form-row">
@@ -74,6 +81,14 @@
                 </div>
                 <button type="button" id="bulk-update-run-btn" class="run-btn">一括取得を実行</button>
                 <p id="bulk-update-status" class="update-status"></p>
+            </div>
+
+            <div class="update-form">
+                <p class="update-form-title">データ鮮度チェック（全銘柄の最新日付を集計）</p>
+                <p class="placeholder-text">各銘柄のデータが何日時点まで取得できているかを一覧で確認します。欠損・重複などの詳細な検証は下の「データ品質チェック」で行います。</p>
+                <button type="button" id="freshness-run-btn" class="run-btn">鮮度チェックを実行</button>
+                <button type="button" id="freshness-check-btn" class="run-btn run-btn--secondary">結果を確認</button>
+                <p id="freshness-status" class="update-status"></p>
             </div>
 
             <div class="update-form">

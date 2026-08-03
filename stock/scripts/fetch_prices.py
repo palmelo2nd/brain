@@ -16,6 +16,7 @@ Yahoo Finance側への負荷・アクセス制限を避けるため、銘柄ご�
 import argparse
 import sys
 import time
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -42,6 +43,26 @@ def fetch_close_prices(code: str, start_date: str, period: str | None):
     closes.index = closes.index.tz_localize(None).normalize()  # タイムゾーン・時刻を落として日付のみにする
     closes.index.name = "date"
     return closes
+
+
+def load_existing(output_dir: Path, code: str):
+    """既存の保存済みCSVを読み込んで返す（無ければNone）。"""
+    path = output_dir / f"{code}.csv"
+    if not path.exists():
+        return None
+    df = pd.read_csv(path, parse_dates=["date"])
+    return df.set_index("date")
+
+
+def merge_prices(existing_df, new_df):
+    """既存データと新規取得データを日付でマージする（重複日付は新データを優先し、日付昇順で返す）。"""
+    if existing_df is None or existing_df.empty:
+        return new_df
+    if new_df is None or new_df.empty:
+        return existing_df
+    combined = pd.concat([existing_df, new_df])
+    combined = combined[~combined.index.duplicated(keep="last")]
+    return combined.sort_index()
 
 
 def save_to_csv(df, output_dir: Path, code: str) -> Path:
@@ -76,6 +97,12 @@ def main():
     parser.add_argument("--limit", type=int, default=None, help="--master指定時、対象銘柄一覧を何件処理するか（省略時は末尾まで）")
     parser.add_argument("--start-date", default="2013-01-01", help="取得開始日（YYYY-MM-DD）。--period未指定時に使用")
     parser.add_argument("--period", default=None, help="相対期間指定（yfinance形式。例: 5d, 1mo）。指定時は--start-dateより優先")
+    parser.add_argument(
+        "--mode", choices=["full", "update"], default="full",
+        help="full: --period/--start-dateに従って取得（既定）。"
+             "update: 既存CSVがあればその最終日付の翌日〜今日のみ取得（--period/--start-dateは無視）。"
+             "既存CSVが無い銘柄はどちらのモードでも--start-dateから全期間取得する",
+    )
     parser.add_argument("--sleep", type=float, default=2.0, help="銘柄ごとの取得間隔（秒）。アクセス制限回避のため")
     parser.add_argument(
         "--output-dir",
@@ -94,29 +121,48 @@ def main():
         print("対象の証券コードが0件でした（--codes/--masterの指定を確認してください）", file=sys.stderr)
         sys.exit(1)
 
-    print(f"対象: {len(codes)}銘柄")
+    print(f"対象: {len(codes)}銘柄（モード: {args.mode}）")
 
+    output_dir = Path(args.output_dir)
     succeeded = 0
+    skipped = 0
     failed = []
     for i, code in enumerate(codes):
+        called_api = False
         try:
-            df = fetch_close_prices(code, args.start_date, args.period)
-            if df.empty:
+            existing_df = load_existing(output_dir, code)
+
+            if args.mode == "update" and existing_df is not None and not existing_df.empty:
+                last_date = existing_df.index.max()
+                fetch_start = last_date + timedelta(days=1)
+                if fetch_start.date() > datetime.now().date():
+                    print(f"既に最新のためスキップしました（コード: {code}, 最終日付: {last_date.date()}）")
+                    skipped += 1
+                    continue
+                new_df = fetch_close_prices(code, fetch_start.strftime("%Y-%m-%d"), None)
+                called_api = True
+            else:
+                new_df = fetch_close_prices(code, args.start_date, args.period)
+                called_api = True
+
+            merged = merge_prices(existing_df, new_df)
+            if merged is None or merged.empty:
                 print(f"データが取得できませんでした（コード: {code}）", file=sys.stderr)
                 failed.append(code)
             else:
-                output_path = save_to_csv(df, Path(args.output_dir), code)
-                print(f"保存しました: {output_path}（{len(df)}件）")
+                added = len(new_df) if new_df is not None else 0
+                output_path = save_to_csv(merged, output_dir, code)
+                print(f"保存しました: {output_path}（合計{len(merged)}件 / 差分{added}件）")
                 succeeded += 1
         except Exception as e:
             # 1銘柄の例外（通信エラー・想定外のティッカー形式等）で全体を止めない
             print(f"エラーが発生しました（コード: {code}）: {e}", file=sys.stderr)
             failed.append(code)
 
-        if i < len(codes) - 1:
+        if called_api and i < len(codes) - 1:
             time.sleep(args.sleep)
 
-    print(f"完了: 成功 {succeeded}件 / 失敗 {len(failed)}件")
+    print(f"完了: 成功 {succeeded}件 / スキップ {skipped}件 / 失敗 {len(failed)}件")
     if failed:
         print(f"取得失敗: {', '.join(failed)}", file=sys.stderr)
         sys.exit(1)

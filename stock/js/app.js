@@ -10,9 +10,11 @@ const DATA_REPO_BRANCH   = 'main';
 const PRICE_WORKFLOW_FILE      = 'fetch-stock-prices.yml';
 const PRICE_BULK_WORKFLOW_FILE = 'fetch-stock-prices-bulk.yml';
 const VALIDATE_WORKFLOW_FILE   = 'validate-stock-prices.yml';
+const FRESHNESS_WORKFLOW_FILE  = 'check-price-freshness.yml';
 const MASTER_PATH   = 'stock/master.csv';
 const PRICES_DIR    = 'stock/prices';
 const VALIDATION_REPORT_PATH = 'stock/validation_report.json';
+const FRESHNESS_REPORT_PATH  = 'stock/freshness_report.json';
 const BULK_ASSET_TYPES = ['内国株式', 'ETF・ETN']; // fetch_prices.pyの--asset-types既定値と揃えている
 
 // ===== PW（GitHub PAT）入力欄 =====
@@ -80,22 +82,25 @@ document.getElementById('price-update-run-btn')?.addEventListener('click', async
 // ===== データ更新：銘柄マスタ（master.csv）から範囲指定して一括取得するワークフローを起動 =====
 document.getElementById('bulk-update-run-btn')?.addEventListener('click', async () => {
     const statusEl     = document.getElementById('bulk-update-status');
+    const modeInput    = document.getElementById('bulk-update-mode');
     const offsetInput  = document.getElementById('bulk-update-offset');
     const limitInput   = document.getElementById('bulk-update-limit');
 
     const token  = getTokenValue();
+    const mode   = modeInput.value;
     const offset = offsetInput.value.trim() || '0';
     const limit  = limitInput.value.trim();
 
     if (!token) { alert('PWを入力してください'); return; }
     if (!limit) { alert('件数を入力してください'); return; }
 
+    const modeLabel = mode === 'update' ? '差分更新' : '初回取得';
     statusEl.textContent = '実行をリクエスト中...';
 
     try {
-        await dispatchWorkflow(token, OWNER, CODE_REPO, PRICE_BULK_WORKFLOW_FILE, CODE_REPO_BRANCH, { offset, limit });
+        await dispatchWorkflow(token, OWNER, CODE_REPO, PRICE_BULK_WORKFLOW_FILE, CODE_REPO_BRANCH, { offset, limit, mode });
         statusEl.textContent =
-            `実行をリクエストしました（開始位置: ${offset} / 件数: ${limit}）。` +
+            `実行をリクエストしました（モード: ${modeLabel} / 開始位置: ${offset} / 件数: ${limit}）。` +
             `20件処理するごとにデータリポジトリへ自動コミットされます。` +
             `GitHubの Actions タブから進捗を確認できます。`;
     } catch (error) {
@@ -144,6 +149,48 @@ document.getElementById('bulk-update-check-btn')?.addEventListener('click', asyn
     } catch (error) {
         console.error(error);
         progressEl.textContent = `確認に失敗しました: ${error.message}`;
+    }
+});
+
+// ===== データ更新：データ鮮度チェック（check_freshness.py）のGitHub Actionsワークフローを起動 =====
+document.getElementById('freshness-run-btn')?.addEventListener('click', async () => {
+    const statusEl = document.getElementById('freshness-status');
+    const token = getTokenValue();
+    if (!token) { alert('PWを入力してください'); return; }
+
+    statusEl.textContent = '実行をリクエスト中...';
+
+    try {
+        await dispatchWorkflow(token, OWNER, CODE_REPO, FRESHNESS_WORKFLOW_FILE, CODE_REPO_BRANCH, {});
+        statusEl.textContent =
+            `鮮度チェックの実行をリクエストしました。数分後にデータリポジトリの ${FRESHNESS_REPORT_PATH} が更新されます。` +
+            `完了後「結果を確認」で表示できます。`;
+    } catch (error) {
+        console.error(error);
+        statusEl.textContent = `失敗しました: ${error.message}`;
+    }
+});
+
+// ===== データ更新：データ鮮度チェックの結果（freshness_report.json）を取得して表示 =====
+document.getElementById('freshness-check-btn')?.addEventListener('click', async () => {
+    const statusEl = document.getElementById('freshness-status');
+    const token = getTokenValue();
+    if (!token) { alert('PWを入力してください'); return; }
+
+    statusEl.textContent = '確認中...';
+
+    try {
+        const reportText = await fetchFile(token, OWNER, DATA_REPO, FRESHNESS_REPORT_PATH);
+        const report = JSON.parse(reportText);
+
+        statusEl.textContent =
+            `チェック日時: ${report.checked_at} / 対象: ${report.total_files}銘柄 / ` +
+            `全体の最新日付: ${report.latest_date} / ` +
+            `最も遅れている銘柄: ${report.oldest_last_date_code}（${report.oldest_last_date}） / ` +
+            `要更新（${report.stale_days}日超過）: ${report.stale_count}件`;
+    } catch (error) {
+        console.error(error);
+        statusEl.textContent = `確認に失敗しました: ${error.message}`;
     }
 });
 

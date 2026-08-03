@@ -18,6 +18,14 @@ on:
         description: "対象とするasset_type（カンマ区切り）"
         required: false
         default: "内国株式,ETF・ETN"
+      mode:
+        description: "initial: 全期間取得（未取得銘柄向け）。update: 既存データの最終日付の翌日〜今日だけ差分取得"
+        required: true
+        type: choice
+        options:
+          - initial
+          - update
+        default: initial
 
 jobs:
   fetch:
@@ -70,6 +78,7 @@ jobs:
               --asset-types "${{ inputs.asset_types }}" \
               --offset "$start" \
               --limit "$count" \
+              --mode "${{ inputs.mode }}" \
               --output-dir "${{ github.workspace }}/data-repo/stock/prices" \
               || echo "一部の銘柄で取得に失敗しましたが、成功分のコミットは継続します"
 
@@ -78,7 +87,7 @@ jobs:
             if git diff --cached --quiet; then
               echo "変更なし（offset=$start〜$((start + count - 1))）"
             else
-              git commit -m "chore: 株価データ一括更新（offset=${start}, count=${count}）"
+              git commit -m "chore: 株価データ一括更新（mode=${{ inputs.mode }}, offset=${start}, count=${count}）"
               # 他のワークフロー実行と同時にpushして拒否された場合に備え、pull --rebaseしてから再試行する
               for i in 1 2 3 4 5; do
                 if git push; then

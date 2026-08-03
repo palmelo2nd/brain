@@ -1,0 +1,67 @@
+name: Check Price Freshness
+
+# stock/prices/配下のCSVの最終日付だけを集計し、データ全体の鮮度サマリーを
+# JSONレポートとしてデータリポジトリにコミットする（validate-stock-prices.ymlの軽量版）。
+on:
+  workflow_dispatch:
+    inputs:
+      stale_days:
+        description: "最終日付からこれを超える日数が経っている銘柄を「要更新」とみなす"
+        required: false
+        default: "10"
+
+jobs:
+  check-freshness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: コードリポジトリをチェックアウト
+        uses: actions/checkout@v4
+        with:
+          path: code-repo
+
+      - name: データリポジトリをチェックアウト
+        uses: actions/checkout@v4
+        with:
+          repository: palmelo2nd/brain_data
+          token: ${{ secrets.DATA_REPO_TOKEN }}
+          path: data-repo
+
+      - name: Python セットアップ
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 依存パッケージをインストール
+        run: pip install -r code-repo/stock/scripts/requirements.txt
+
+      - name: Git ユーザー設定
+        working-directory: data-repo
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: 鮮度チェックを実行
+        run: |
+          python code-repo/stock/scripts/check_freshness.py \
+            --dir "${{ github.workspace }}/data-repo/stock/prices" \
+            --stale-days "${{ inputs.stale_days }}" \
+            --report "${{ github.workspace }}/data-repo/stock/freshness_report.json"
+
+      - name: レポートをコミット
+        working-directory: data-repo
+        run: |
+          git add stock/freshness_report.json
+          if git diff --cached --quiet; then
+            echo "変更なし"
+          else
+            git commit -m "chore: 株価データ鮮度チェックのレポート更新"
+            # 他のワークフロー実行と同時にpushして拒否された場合に備え、pull --rebaseしてから再試行する
+            for i in 1 2 3 4 5; do
+              if git push; then
+                break
+              fi
+              echo "pushに失敗しました。リモートの変更を取り込んで再試行します（${i}回目）"
+              git pull --rebase origin main
+            done
+          fi
