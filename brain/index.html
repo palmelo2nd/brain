@@ -33,6 +33,7 @@
                     <button type="button" id="taskorg2-tab-gantt" class="taskorg-view-btn" data-view="gantt">ガントチャート</button>
                     <button type="button" id="taskorg2-tab-weekboard" class="taskorg-view-btn" data-view="weekboard">習慣</button>
                     <button type="button" id="taskorg2-tab-workcal" class="taskorg-view-btn" data-view="workcal">勤務歴</button>
+                    <button type="button" id="taskorg2-tab-project" class="taskorg-view-btn" data-view="project">プロジェクト</button>
                 </div>
 
                 <!-- カレンダービュー（日をクリックするとその日を選択し、下の日別タイムラインにも反映する） -->
@@ -142,6 +143,18 @@
                             <button id="work-cal-month-apply-btn" class="calendar-add-btn">月一括適用</button>
                         </div>
 
+                    </div>
+                </div>
+
+                <!-- プロジェクト（親ID方式の階層を折りたたみ可能なインデント付きツリーで一覧表示。行クリックで下の編集フォームに読み込む） -->
+                <div id="taskorg2-view-project" class="calendar-panel calendar-panel--full" style="display:none">
+                    <div id="calendar2-project-tree" class="project-tree"></div>
+
+                    <!-- PJ一括編集（ツリーでチェックボックス選択中の全行の親ID＝PJ階層だけを一括変更する。
+                         タイトル・ステータスなど他の属性には一切触れない） -->
+                    <div class="calendar-bulk-pj-section">
+                        <div id="calendar2-bulk-pj-dropdowns" class="calendar-bulk-pj-dropdowns"></div>
+                        <button type="button" id="calendar2-bulk-pj-apply-btn" class="calendar-add-btn">PJ一括編集</button>
                     </div>
                 </div>
 
@@ -412,13 +425,6 @@
                     <summary class="expander-title">フィルタ</summary>
                     <div id="calendar2-filter-area-bottom" class="triage-filter-area"></div>
                 </details>
-
-                <!-- PJ一括編集（タスク一覧などでチェックボックス選択中の全タスクの親ID＝PJ階層だけを一括変更する。
-                     タイトル・ステータスなど他の属性には一切触れない） -->
-                <div class="calendar-bulk-pj-section">
-                    <div id="calendar2-bulk-pj-dropdowns" class="calendar-bulk-pj-dropdowns"></div>
-                    <button type="button" id="calendar2-bulk-pj-apply-btn" class="calendar-add-btn">PJ一括編集</button>
-                </div>
 
                 <!-- タスク一覧（カレンダー・編集エリアの下、常に画面下部） -->
                 <div id="taskorg2-tasklist" class="table-wrapper table-wrapper--limited">

@@ -76,7 +76,9 @@ let taskorg2CalendarMonth = new Date().getMonth();    // 新タスク整理の�
 let selectedTaskorg2Date  = jpDateOnly(formatJpDatetime(new Date())); // 新タスク整理でカレンダーの日クリックにより選択中の日付（YYYY/MM/DD）。開いた時点では常に今日を選択する
 let taskorg2GanttViewUnit = 'day';  // 新タスク整理のガントチャートの列の単位（'day' | 'week'、旧タスク整理とは独立）
 let taskorg2HabitUnit = 'week';     // 「習慣」タブの表示単位（'week' | 'month' | 'daily'）
-let taskorg2View = 'calendar';      // 新タスク整理の表示ビュー（'calendar' | 'gantt'、旧タスク整理とは独立）
+let taskorg2View = 'calendar';      // 新タスク整理の表示ビュー（'calendar' | 'gantt' | 'weekboard' | 'workcal' | 'project'、旧タスク整理とは独立）
+const taskorg2ProjectManualStateIds = new Map(); // 「プロジェクト」ツリービューでユーザーが手動で開閉した行ID→折りたたみ中か（true=折りたたみ）。既定は「完了」の親のみ折りたたみ
+const taskorg2ProjectStatusGroupManualStateIds = new Map(); // 「プロジェクト」ツリービューでユーザーが手動で開閉したステータス区切り（"親ID::ステータス"）→折りたたみ中か。既定は「完了」グループのみ折りたたみ
 let dayedit2ParentPath = [];        // 新タスク整理・編集フォームの親（プロジェクト）階層プルダウンで選択中のID列（ルート→現在選択中の階層の順）
 let taskorg2BulkPjPath = [];        // タスク整理「PJ一括編集」の階層プルダウンで選択中のID列（個別編集フォームのdayedit2ParentPathとは独立）
 let selectedEdit2Ids = new Set();   // 新編集で選択中の行ID
@@ -2846,7 +2848,7 @@ const NEW_PJ_MARK = '__new_pj__'; // 親プルダウンの「＋ 新規PJを追�
 
 /**
  * 親（プロジェクト）階層プルダウンで「＋ 新規PJを追加」を選んだ際、その場で新規プロジェクト（タスク）を作成しIDを返す。
- * ステータス=未着手・優先度=中、開始予定・終了予定・完了日は空欄とする。タイトル未入力（キャンセル含む）ならnullを返す。
+ * ステータス=進行中・優先度=中、開始予定・終了予定・完了日は空欄とする。タイトル未入力（キャンセル含む）ならnullを返す。
  * @param {string} parentId - 新規プロジェクトの親ID（空文字ならルート＝最上位プロジェクトとして作成）
  */
 function createNewProjectViaPrompt(parentId) {
@@ -2863,7 +2865,7 @@ function createNewProjectViaPrompt(parentId) {
     entry['ID']        = String(maxId + 1);
     entry['データ区分'] = 'タスク';
     entry['タイトル']   = title;
-    entry['ステータス'] = '未着手';
+    entry['ステータス'] = '進行中';
     entry['優先度']     = '中';
     entry['カテゴリ']   = currentCategory === 'すべて' ? '' : currentCategory;
     entry['親ID']       = parentId || '';
@@ -3121,26 +3123,30 @@ document.getElementById('calendar2-gantt-next-btn')?.addEventListener('click', g
 document.getElementById('calendar2-habit-month-prev-btn')?.addEventListener('click', goToPrevMonthTaskorg2);
 document.getElementById('calendar2-habit-month-next-btn')?.addEventListener('click', goToNextMonthTaskorg2);
 
-/** 新タスク整理の「カレンダー」「ガントチャート」「習慣」「勤務歴」表示切り替えボタンの状態・表示パネルを反映する。 */
+/** 新タスク整理の「カレンダー」「ガントチャート」「習慣」「勤務歴」「プロジェクト」表示切り替えボタンの状態・表示パネルを反映する。 */
 function renderTaskorg2ViewToggle() {
     document.getElementById('taskorg2-tab-calendar')?.classList.toggle('taskorg-view-btn--active', taskorg2View === 'calendar');
     document.getElementById('taskorg2-tab-gantt')?.classList.toggle('taskorg-view-btn--active', taskorg2View === 'gantt');
     document.getElementById('taskorg2-tab-weekboard')?.classList.toggle('taskorg-view-btn--active', taskorg2View === 'weekboard');
     document.getElementById('taskorg2-tab-workcal')?.classList.toggle('taskorg-view-btn--active', taskorg2View === 'workcal');
+    document.getElementById('taskorg2-tab-project')?.classList.toggle('taskorg-view-btn--active', taskorg2View === 'project');
     const calEl       = document.getElementById('taskorg2-view-calendar');
     const ganttEl     = document.getElementById('taskorg2-view-gantt');
     const weekboardEl = document.getElementById('taskorg2-view-weekboard');
     const workcalEl   = document.getElementById('taskorg2-view-workcal');
+    const projectEl   = document.getElementById('taskorg2-view-project');
     if (calEl)       calEl.style.display       = taskorg2View === 'calendar'  ? '' : 'none';
     if (ganttEl)     ganttEl.style.display     = taskorg2View === 'gantt'     ? '' : 'none';
     if (weekboardEl) weekboardEl.style.display = taskorg2View === 'weekboard' ? '' : 'none';
     if (workcalEl)   workcalEl.style.display   = taskorg2View === 'workcal'   ? '' : 'none';
+    if (projectEl)   projectEl.style.display   = taskorg2View === 'project'   ? '' : 'none';
 }
 
 document.getElementById('taskorg2-tab-calendar')?.addEventListener('click', () => { taskorg2View = 'calendar'; renderCalendar2(); });
 document.getElementById('taskorg2-tab-gantt')?.addEventListener('click', () => { taskorg2View = 'gantt'; renderCalendar2(); });
 document.getElementById('taskorg2-tab-weekboard')?.addEventListener('click', () => { taskorg2View = 'weekboard'; renderCalendar2(); });
 document.getElementById('taskorg2-tab-workcal')?.addEventListener('click', () => { taskorg2View = 'workcal'; renderCalendar2(); });
+document.getElementById('taskorg2-tab-project')?.addEventListener('click', () => { taskorg2View = 'project'; renderCalendar2(); });
 
 // ===== 新タスク整理：ガントチャート（月間カレンダーと年月・選択日を共有。旧タスク整理と同一仕様） =====
 
@@ -3272,6 +3278,209 @@ document.getElementById('calendar2-gantt-unit-week')?.addEventListener('click', 
     renderTaskorg2GanttUnitToggle();
     renderTaskorg2GanttChart();
 });
+
+// ===== 新タスク整理：プロジェクト（親ID方式の階層を折りたたみ可能なインデント付きツリーで一覧表示） =====
+
+/**
+ * 「プロジェクト」ツリービューの対象母集団を返す。カレンダー・ガントチャートと同じ taskorg2Filters
+ * （タグ／ステータス／プロジェクト／PJ(n層)ドリルダウン／繰返し親子タスク表示ON/OFF）を適用したうえで、
+ * データ区分がタスクの行に絞り込む（1日タスクは常に除外）。
+ * ただし「その他フィルタ」の“プロジェクト”表示チェック（showProject）だけは適用しない。
+ * プロジェクトタブはツリー構造そのものを見せる画面のため、他画面向けの「親（プロジェクト）行を隠す」
+ * トグルがOFF（既定）だと階層の頂点が軒並み消えて何も表示されなくなってしまうため。
+ */
+function getTaskorg2ProjectTreePool() {
+    return filterMainDataByCategory(currentMainData, currentCategory).filter(r => {
+        if (isDayPlanRow(r)) return false;
+        if (r['データ区分'] !== 'タスク') return false;
+        if (!matchesFilterValue(taskorg2Filters.tag, r['タグ'])) return false;
+        if (!matchesFilterValue(taskorg2Filters.status, r['ステータス'])) return false;
+        if (!matchesProjectRootFilter(r, taskorg2Filters.project)) return false;
+        if (!matchesProjectDrilldownFilter(r, taskorg2ProjectDrilldownPath)) return false;
+        if (isRecurringParentRow(r) && !taskorg2Filters.showRecurringParent) return false;
+        if (isRecurringChildRow(currentMainData, r) && !taskorg2Filters.showRecurringChild) return false;
+        return true;
+    });
+}
+
+// 子タスクの並び順（同じ親の配下での表示順）。この順にグループ化し、リストに無いステータス・空欄は最後尾。
+const PROJECT_TREE_CHILD_STATUS_ORDER = ['完了', '報告待ち', '連絡待ち', '中断', '進行中', '未着手'];
+
+/** ステータス名の子タスク表示順ランクを返す（完了→報告待ち→連絡待ち→中断→進行中→未着手→その他（未設定含む）の順）。 */
+function projectTreeChildStatusRank(status) {
+    const idx = PROJECT_TREE_CHILD_STATUS_ORDER.indexOf(status);
+    return idx !== -1 ? idx : PROJECT_TREE_CHILD_STATUS_ORDER.length;
+}
+
+/** 子タスク配列（表示順ソート済み）をステータスごとにグループ化し、PROJECT_TREE_CHILD_STATUS_ORDER順で返す。グループ内の順序は元の並びを維持する。 */
+function groupProjectTreeChildrenByStatus(rows) {
+    const groups = new Map();
+    rows.forEach(row => {
+        const status = row['ステータス'] || '（未設定）';
+        if (!groups.has(status)) groups.set(status, []);
+        groups.get(status).push(row);
+    });
+    return [...groups.keys()]
+        .sort((a, b) => projectTreeChildStatusRank(a) - projectTreeChildStatusRank(b))
+        .map(status => ({ status, rows: groups.get(status) }));
+}
+
+/**
+ * 新タスク整理の「プロジェクト」ツリービューを描画する。行クリックで下の編集フォームに読み込み、▶/▼クリックで子の展開・折りたたみを切り替える。
+ * 各行の左端にチェックボックスを配置し、選択中IDは selectedTaskorg2ProjectTreeIds（getTaskorg2BulkSelectedIds経由でPJ一括編集の対象）に加える。
+ * 親・子どちらの階層行でもチェック可能で、「PJ一括編集」バーのPJ(n層)プルダウンで選んだ親IDを一括適用できる。
+ * ルート階層・各親の配下いずれも、完了→報告待ち→連絡待ち→中断→進行中→未着手→（未設定）の順にステータスで
+ * グループ化するのを最優先の並び順とし、各グループ内は子孫総数（子・孫以降を含む総数）が多い順に並べる。
+ * グループ見出し行（同じ階層の行と同じインデント）をクリックしてグループ単位で開閉できる。
+ */
+function renderTaskorg2ProjectTree() {
+    const container = document.getElementById('calendar2-project-tree');
+    if (!container) return;
+    container.innerHTML = '';
+
+    const pool = getTaskorg2ProjectTreePool();
+    pruneTaskorg2Selection(selectedTaskorg2ProjectTreeIds, new Set(pool.map(r => String(r['ID']))));
+
+    // 表示対象（フィルタ適用後）の「親ID→子一覧」を1回の走査だけでインデックス化する（画面に出す階層構造用）。
+    const poolChildrenIndex = new Map();
+    pool.forEach(r => {
+        const key = String(r['親ID'] || '');
+        if (!poolChildrenIndex.has(key)) poolChildrenIndex.set(key, []);
+        poolChildrenIndex.get(key).push(r);
+    });
+
+    // 子孫総数（フィルタ非適用・全データ基準。従来のcollectProject2Descendantsと同じ集計対象）も、
+    // 「親ID→子一覧」インデックス＋メモ化で1回の走査だけで求める（並び順・件数表示の両方に使い回す）。
+    // pool.filter+collectProject2Descendantsを行ごとに呼ぶ従来実装はノード数の2乗規模で重かったための対策。
+    const allChildrenIndex = new Map();
+    currentMainData.forEach(r => {
+        const key = String(r['親ID'] || '');
+        if (!allChildrenIndex.has(key)) allChildrenIndex.set(key, []);
+        allChildrenIndex.get(key).push(r);
+    });
+    const descendantCountCache = new Map();
+    const countDescendants = (id, visited = new Set()) => {
+        const key = String(id);
+        if (descendantCountCache.has(key)) return descendantCountCache.get(key);
+        if (visited.has(key)) return 0; // 循環データ保護
+        visited.add(key);
+        const kids = allChildrenIndex.get(key) || [];
+        let total = kids.length;
+        kids.forEach(child => { total += countDescendants(child['ID'], visited); });
+        descendantCountCache.set(key, total);
+        return total;
+    };
+
+    const childrenOf = parentId => {
+        const kids = poolChildrenIndex.get(String(parentId || '')) || [];
+        return [...kids].sort((a, b) => countDescendants(b['ID']) - countDescendants(a['ID']));
+    };
+    const roots = childrenOf('');
+
+    if (roots.length === 0) {
+        container.innerHTML = '<p class="empty-cell">該当するタスクがありません</p>';
+        return;
+    }
+
+    /**
+     * rows（同じ親を持つ行の配列。事前に子孫総数の多い順にソート済み）を、完了→報告待ち→連絡待ち→中断→
+     * 進行中→未着手→（未設定）の順にステータスでグループ化し、depth階層のインデントで区切り見出し行を描画する。
+     * groupKeyPrefix はルート階層なら 'root'、子階層なら親行のIDを渡す（開閉状態のキーを親ごとに独立させるため）。
+     */
+    const renderStatusGroupedRows = (rows, groupKeyPrefix, depth, buildRow) => {
+        groupProjectTreeChildrenByStatus(rows).forEach(group => {
+            const groupKey = `${groupKeyPrefix}::${group.status}`;
+            // 既定では「完了」グループだけを折りたたんでおく。手動で開閉した場合はその状態を優先する。
+            const groupDefaultCollapsed = group.status === '完了';
+            const groupCollapsed = taskorg2ProjectStatusGroupManualStateIds.has(groupKey)
+                ? taskorg2ProjectStatusGroupManualStateIds.get(groupKey)
+                : groupDefaultCollapsed;
+
+            const groupLine = document.createElement('div');
+            groupLine.className = 'project-tree-row project-tree-status-row';
+            groupLine.style.paddingLeft = `${depth * 20}px`;
+
+            const groupToggle = document.createElement('span');
+            groupToggle.className = 'project-tree-toggle';
+            groupToggle.textContent = groupCollapsed ? '▶' : '▼';
+            groupLine.appendChild(groupToggle);
+
+            const groupLabel = document.createElement('span');
+            groupLabel.className = 'project-tree-status-label';
+            groupLabel.textContent = `${group.status} (${group.rows.length})`;
+            groupLine.appendChild(groupLabel);
+
+            groupLine.addEventListener('click', () => {
+                taskorg2ProjectStatusGroupManualStateIds.set(groupKey, !groupCollapsed);
+                renderTaskorg2ProjectTree();
+            });
+
+            container.appendChild(groupLine);
+            if (!groupCollapsed) group.rows.forEach(child => buildRow(child, depth));
+        });
+    };
+
+    const buildRow = (row, depth) => {
+        const id = String(row['ID']);
+        const kids = childrenOf(id);
+        const hasKids = kids.length > 0;
+        // 既定では「ステータス=完了」の親（プロジェクト）だけを折りたたんでおく。手動で開閉した行はその状態を優先する。
+        const defaultCollapsed = hasKids && row['ステータス'] === '完了';
+        const collapsed = taskorg2ProjectManualStateIds.has(id) ? taskorg2ProjectManualStateIds.get(id) : defaultCollapsed;
+
+        const line = document.createElement('div');
+        line.className = 'project-tree-row';
+        if (id === selectedTaskorg2Id) line.classList.add('selected-row');
+        line.style.paddingLeft = `${depth * 20}px`;
+
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.className = 'project-tree-checkbox';
+        checkbox.checked = selectedTaskorg2ProjectTreeIds.has(id);
+        checkbox.addEventListener('click', e => e.stopPropagation());
+        checkbox.addEventListener('change', () => {
+            if (checkbox.checked) {
+                selectedTaskorg2ProjectTreeIds.add(id);
+                selectedTaskorg2Id = id;
+                taskorg2QuickNewMode = false;
+                renderTaskorg2TaskChange();
+            } else {
+                selectedTaskorg2ProjectTreeIds.delete(id);
+            }
+        });
+        line.appendChild(checkbox);
+
+        const toggle = document.createElement('span');
+        toggle.className = 'project-tree-toggle';
+        toggle.textContent = hasKids ? (collapsed ? '▶' : '▼') : '';
+        if (hasKids) {
+            toggle.addEventListener('click', e => {
+                e.stopPropagation();
+                taskorg2ProjectManualStateIds.set(id, !collapsed);
+                renderTaskorg2ProjectTree();
+            });
+        }
+        line.appendChild(toggle);
+
+        const descendantCount = countDescendants(id); // 直属の子だけでなく孫以降も含めた総数（メモ化済み）
+        const label = document.createElement('span');
+        label.className = `project-tree-label ${getCalendarStatusClass(row['ステータス'])}`;
+        label.textContent = (row['タイトル'] || '（無題）') + (descendantCount > 0 ? ` (${descendantCount})` : '');
+        line.appendChild(label);
+
+        line.addEventListener('click', () => {
+            selectedTaskorg2Id = id;
+            taskorg2QuickNewMode = false;
+            renderTaskorg2TaskChange();
+        });
+
+        container.appendChild(line);
+
+        if (hasKids && !collapsed) renderStatusGroupedRows(kids, id, depth + 1, buildRow);
+    };
+
+    renderStatusGroupedRows(roots, 'root', 0, buildRow);
+}
 
 // ===== 新タスク整理：週間ボード（繰返しタスクの週表示。旧繰返しエリアの週間ボードをそのまま移植） =====
 
@@ -4441,6 +4650,7 @@ document.getElementById('calendar2-bulk-pj-apply-btn')?.addEventListener('click'
 
     const ts = formatJpDatetime(new Date());
     rows.forEach(row => { row['親ID'] = parentId; row['更新日時'] = ts; });
+    clearAllTaskorg2BulkSelections(); // 適用後はチェックボックスを解除し、次回の一括操作に前回の選択が持ち越されないようにする
     persistLocalCache();
     renderCalendar2();
     renderTaskRunner();
@@ -4491,8 +4701,10 @@ const selectedTaskorg2InProgressIds = new Set();
 const selectedTaskorg2WaitingIds    = new Set();
 const selectedTaskorg2UnsetIds      = new Set();
 const selectedTaskorg2ListIds       = new Set();
+// 「プロジェクト」ツリービューでチェックボックスにより複数選択中の行ID集合（親・子いずれの階層でも選択可）
+const selectedTaskorg2ProjectTreeIds = new Set();
 
-/** 上記5つの複数選択集合すべての和集合を返す（編集エリアの「適用」「削除」ボタンの一括操作対象の判定に使う）。 */
+/** 上記6つの複数選択集合すべての和集合を返す（編集エリアの「適用」「削除」ボタンの一括操作対象の判定に使う）。 */
 function getTaskorg2BulkSelectedIds() {
     return new Set([
         ...selectedTaskorg2RecurringChildIds,
@@ -4500,6 +4712,7 @@ function getTaskorg2BulkSelectedIds() {
         ...selectedTaskorg2WaitingIds,
         ...selectedTaskorg2UnsetIds,
         ...selectedTaskorg2ListIds,
+        ...selectedTaskorg2ProjectTreeIds,
     ]);
 }
 
@@ -5063,6 +5276,7 @@ function renderCalendar2() {
     if (taskorg2View === 'gantt') renderTaskorg2GanttChart();
     if (taskorg2View === 'weekboard') renderTaskorg2WeekBoard();
     if (taskorg2View === 'workcal') renderWorkCalendar();
+    if (taskorg2View === 'project') renderTaskorg2ProjectTree();
     renderTaskorg2Timeline();
     renderTaskorg2UnsetSection();
     renderTaskorg2List();
@@ -5092,9 +5306,10 @@ function renderTaskorg2DateChange() {
  * 選択ハイライトを持つタイムライン・一覧・未設定チップと、編集フォームのみ更新する。
  */
 function renderTaskorg2TaskChange() {
-    // ガントチャート／習慣は選択タスクの行ハイライトを持つため、表示中の場合のみ更新する
+    // ガントチャート／習慣／プロジェクトツリーは選択タスクの行ハイライトを持つため、表示中の場合のみ更新する
     if (taskorg2View === 'gantt') renderTaskorg2GanttChart();
     if (taskorg2View === 'weekboard') renderTaskorg2WeekBoard();
+    if (taskorg2View === 'project') renderTaskorg2ProjectTree();
     renderTaskorg2Timeline();
     renderTaskorg2UnsetSection();
     renderTaskorg2List();
@@ -5289,13 +5504,14 @@ function applyDayedit2BatchSync() {
 
 document.getElementById('dayedit2-batch-sync-btn')?.addEventListener('click', applyDayedit2BatchSync);
 
-/** 5つのチェックボックス複数選択集合（繰返し子・対応中・対応待ち・属性未設定・タスク一覧）をすべてクリアする。 */
+/** 6つのチェックボックス複数選択集合（繰返し子・対応中・対応待ち・属性未設定・タスク一覧・プロジェクトツリー）をすべてクリアする。 */
 function clearAllTaskorg2BulkSelections() {
     selectedTaskorg2RecurringChildIds.clear();
     selectedTaskorg2InProgressIds.clear();
     selectedTaskorg2WaitingIds.clear();
     selectedTaskorg2UnsetIds.clear();
     selectedTaskorg2ListIds.clear();
+    selectedTaskorg2ProjectTreeIds.clear();
 }
 
 /**
@@ -6217,9 +6433,9 @@ function deleteProject2(projectId, reassignToId) {
 function decorateProjectDropdownOptions(options) {
     return options
         .map(r => {
-            const childCount = getChildrenM(currentMainData, r['ID']).length;
-            return childCount > 0
-                ? { ...r, 'タイトル': `【PJ】${r['タイトル'] || ''}`, __childCount: childCount }
+            const descendantCount = collectProject2Descendants(r['ID']).length; // 子だけでなく孫以降も含めた総階層数
+            return descendantCount > 0
+                ? { ...r, 'タイトル': `【PJ】${r['タイトル'] || ''}`, __childCount: descendantCount }
                 : { ...r, __childCount: 0 };
         })
         .sort((a, b) => b.__childCount - a.__childCount);
