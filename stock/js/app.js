@@ -231,10 +231,20 @@ document.getElementById('validate-check-btn')?.addEventListener('click', async (
             `チェック日時: ${report.checked_at} / 対象: ${report.total_files}銘柄 / 問題: ${report.issue_count}件`;
 
         if (report.issue_count > 0) {
-            const list = document.createElement('ul');
+            // 同一内容（type+detail）の問題は銘柄をまたいで多発しやすい（例: 特定期間の連休による欠損）ため、
+            // 件数付きのサマリーとしてまとめて表示する（個々の銘柄コードの列挙はしない）
+            const groups = new Map();
             report.issues.forEach(issue => {
+                const key = `${issue.type}::${issue.detail}`;
+                if (!groups.has(key)) groups.set(key, { detail: issue.detail, count: 0 });
+                groups.get(key).count += 1;
+            });
+            const sortedGroups = Array.from(groups.values()).sort((a, b) => b.count - a.count);
+
+            const list = document.createElement('ul');
+            sortedGroups.forEach(group => {
                 const li = document.createElement('li');
-                li.textContent = `[${issue.code}] ${issue.detail}`;
+                li.textContent = `${group.count}件：${group.detail}`;
                 list.appendChild(li);
             });
             reportEl.appendChild(list);
