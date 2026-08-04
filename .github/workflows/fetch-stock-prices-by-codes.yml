@@ -1,0 +1,87 @@
+name: Fetch Stock Prices (By Codes)
+
+# データ品質チェック（validate_prices.py）で問題が検出された銘柄コードのリストなど、
+# 任意の証券コード一覧をまとめて再取得する（2013年以降の全期間を取得し直すことで欠損も穴埋めする想定）。
+# 20件処理するごとに自動でコミット・プッシュするため、途中で失敗してもそれまでに取得できた分は失われない。
+on:
+  workflow_dispatch:
+    inputs:
+      codes:
+        description: "証券コード（カンマ区切り。例: 7203,9984,6758）"
+        required: true
+      mode:
+        description: "full: --start-date以降の全期間を取得（欠損の穴埋めを兼ねる）。update: 既存データの最終日付の翌日〜今日だけ差分取得"
+        required: true
+        type: choice
+        options:
+          - full
+          - update
+        default: full
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 340 # GitHub Actionsのジョブ上限（360分）に収まるよう余裕を持たせる
+    steps:
+      - name: コードリポジトリをチェックアウト
+        uses: actions/checkout@v4
+        with:
+          path: code-repo
+
+      - name: データリポジトリをチェックアウト
+        uses: actions/checkout@v4
+        with:
+          repository: palmelo2nd/brain_data
+          token: ${{ secrets.DATA_REPO_TOKEN }}
+          path: data-repo
+
+      - name: Python セットアップ
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 依存パッケージをインストール
+        run: pip install -r code-repo/stock/scripts/requirements.txt
+
+      - name: Git ユーザー設定
+        working-directory: data-repo
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: 指定コードを20件のサブバッチごとに取得・コミット
+        run: |
+          IFS=',' read -ra ALL_CODES <<< "${{ inputs.codes }}"
+          SUB_BATCH=20
+          TOTAL=${#ALL_CODES[@]}
+
+          for (( start=0; start<TOTAL; start+=SUB_BATCH )); do
+            batch=("${ALL_CODES[@]:start:SUB_BATCH}")
+            batch_codes=$(IFS=,; echo "${batch[*]}")
+
+            echo "=== サブバッチ処理中: ${batch_codes} ==="
+
+            # 1銘柄の失敗でスクリプトが非ゼロ終了しても、後続のコミット処理は必ず実行する
+            python code-repo/stock/scripts/fetch_prices.py \
+              --codes "$batch_codes" \
+              --mode "${{ inputs.mode }}" \
+              --output-dir "${{ github.workspace }}/data-repo/stock/prices" \
+              || echo "一部の銘柄で取得に失敗しましたが、成功分のコミットは継続します"
+
+            cd data-repo
+            git add stock/prices
+            if git diff --cached --quiet; then
+              echo "変更なし（${batch_codes}）"
+            else
+              git commit -m "chore: 品質チェック検出銘柄の再取得（${batch_codes}）"
+              # 他のワークフロー実行と同時にpushして拒否された場合に備え、pull --rebaseしてから再試行する
+              for i in 1 2 3 4 5; do
+                if git push; then
+                  break
+                fi
+                echo "pushに失敗しました。リモートの変更を取り込んで再試行します（${i}回目）"
+                git pull --rebase origin main
+              done
+            fi
+            cd ..
+          done

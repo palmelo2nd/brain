@@ -12,8 +12,10 @@
     <main class="main-content">
         <h1 class="app-title">Stock 投資管理</h1>
 
-        <!-- 常時表示バー（PW入力。GitHub連携が必要な各ページで共通して使う） -->
+        <!-- 常時表示バー（ID/PW入力。GitHub連携が必要な各ページで共通して使う。ID=コードリポジトリ操作用、PW=データリポジトリ操作用） -->
         <div class="pw-bar">
+            <label for="id-input">ID</label>
+            <input type="password" id="id-input" class="pw-input" autocomplete="off">
             <label for="pw-input">PW</label>
             <input type="password" id="pw-input" class="pw-input" autocomplete="off">
         </div>

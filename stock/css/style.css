@@ -157,3 +157,20 @@ body {
     max-height: 300px;
     overflow-y: auto;
 }
+
+.validate-refetch-bar {
+    margin-top: 10px;
+}
+
+.validate-issue {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.approve-btn {
+    flex: 0 0 auto;
+    padding: 4px 10px;
+    font-size: 11.5px;
+}
