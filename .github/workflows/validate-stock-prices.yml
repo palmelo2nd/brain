@@ -47,6 +47,7 @@ jobs:
             --dir "${{ github.workspace }}/data-repo/stock/prices" \
             --max-gap-days "${{ inputs.max_gap_days }}" \
             --report "${{ github.workspace }}/data-repo/stock/validation_report.json" \
+            --exceptions "${{ github.workspace }}/data-repo/stock/validation_exceptions.json" \
             || echo "問題が見つかりましたが、レポートのコミットは継続します"
 
       - name: レポートをコミット
