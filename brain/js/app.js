@@ -78,7 +78,6 @@ let taskorg2GanttViewUnit = 'day';  // 新タスク整理のガントチャー�
 let taskorg2HabitUnit = 'week';     // 「習慣」タブの表示単位（'week' | 'month' | 'daily'）
 let taskorg2View = 'calendar';      // 新タスク整理の表示ビュー（'calendar' | 'gantt' | 'weekboard' | 'workcal' | 'project'、旧タスク整理とは独立）
 const taskorg2ProjectManualStateIds = new Map(); // 「プロジェクト」ツリービューでユーザーが手動で開閉した行ID→折りたたみ中か（true=折りたたみ）。既定は「完了」の親のみ折りたたみ
-const taskorg2ProjectStatusGroupManualStateIds = new Map(); // 「プロジェクト」ツリービューでユーザーが手動で開閉したステータス区切り（"親ID::ステータス"）→折りたたみ中か。既定は「完了」グループのみ折りたたみ
 let dayedit2ParentPath = [];        // 新タスク整理・編集フォームの親（プロジェクト）階層プルダウンで選択中のID列（ルート→現在選択中の階層の順）
 let taskorg2BulkPjPath = [];        // タスク整理「PJ一括編集」の階層プルダウンで選択中のID列（個別編集フォームのdayedit2ParentPathとは独立）
 let selectedEdit2Ids = new Set();   // 新編集で選択中の行ID
@@ -3330,8 +3329,8 @@ function groupProjectTreeChildrenByStatus(rows) {
  * 各行の左端にチェックボックスを配置し、選択中IDは selectedTaskorg2ProjectTreeIds（getTaskorg2BulkSelectedIds経由でPJ一括編集の対象）に加える。
  * 親・子どちらの階層行でもチェック可能で、「PJ一括編集」バーのPJ(n層)プルダウンで選んだ親IDを一括適用できる。
  * ルート階層・各親の配下いずれも、完了→報告待ち→連絡待ち→中断→進行中→未着手→（未設定）の順にステータスで
- * グループ化するのを最優先の並び順とし、各グループ内は子孫総数（子・孫以降を含む総数）が多い順に並べる。
- * グループ見出し行（同じ階層の行と同じインデント）をクリックしてグループ単位で開閉できる。
+ * グループ化するのを最優先の並び順とし、各グループ内は子孫総数（子・孫以降を含む総数）が多い順に並べる
+ * （見出し行は表示せず、並び順のみに使う）。
  */
 function renderTaskorg2ProjectTree() {
     const container = document.getElementById('calendar2-project-tree');
@@ -3387,36 +3386,9 @@ function renderTaskorg2ProjectTree() {
      * 進行中→未着手→（未設定）の順にステータスでグループ化し、depth階層のインデントで区切り見出し行を描画する。
      * groupKeyPrefix はルート階層なら 'root'、子階層なら親行のIDを渡す（開閉状態のキーを親ごとに独立させるため）。
      */
-    const renderStatusGroupedRows = (rows, groupKeyPrefix, depth, buildRow) => {
+    const renderStatusGroupedRows = (rows, depth, buildRow) => {
         groupProjectTreeChildrenByStatus(rows).forEach(group => {
-            const groupKey = `${groupKeyPrefix}::${group.status}`;
-            // 既定では「完了」グループだけを折りたたんでおく。手動で開閉した場合はその状態を優先する。
-            const groupDefaultCollapsed = group.status === '完了';
-            const groupCollapsed = taskorg2ProjectStatusGroupManualStateIds.has(groupKey)
-                ? taskorg2ProjectStatusGroupManualStateIds.get(groupKey)
-                : groupDefaultCollapsed;
-
-            const groupLine = document.createElement('div');
-            groupLine.className = 'project-tree-row project-tree-status-row';
-            groupLine.style.paddingLeft = `${depth * 20}px`;
-
-            const groupToggle = document.createElement('span');
-            groupToggle.className = 'project-tree-toggle';
-            groupToggle.textContent = groupCollapsed ? '▶' : '▼';
-            groupLine.appendChild(groupToggle);
-
-            const groupLabel = document.createElement('span');
-            groupLabel.className = 'project-tree-status-label';
-            groupLabel.textContent = `${group.status} (${group.rows.length})`;
-            groupLine.appendChild(groupLabel);
-
-            groupLine.addEventListener('click', () => {
-                taskorg2ProjectStatusGroupManualStateIds.set(groupKey, !groupCollapsed);
-                renderTaskorg2ProjectTree();
-            });
-
-            container.appendChild(groupLine);
-            if (!groupCollapsed) group.rows.forEach(child => buildRow(child, depth));
+            group.rows.forEach(child => buildRow(child, depth));
         });
     };
 
@@ -3476,10 +3448,10 @@ function renderTaskorg2ProjectTree() {
 
         container.appendChild(line);
 
-        if (hasKids && !collapsed) renderStatusGroupedRows(kids, id, depth + 1, buildRow);
+        if (hasKids && !collapsed) renderStatusGroupedRows(kids, depth + 1, buildRow);
     };
 
-    renderStatusGroupedRows(roots, 'root', 0, buildRow);
+    renderStatusGroupedRows(roots, 0, buildRow);
 }
 
 // ===== 新タスク整理：週間ボード（繰返しタスクの週表示。旧繰返しエリアの週間ボードをそのまま移植） =====
