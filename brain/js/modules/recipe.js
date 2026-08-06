@@ -68,3 +68,82 @@ export function buildRecipeContent(sections) {
         .map(s => `## ${s}\n${(sections[s] || '').trim()}`)
         .join('\n\n');
 }
+
+const INGREDIENT_FIELDS = ['name', 'qty', 'unit', 'note'];
+
+/**
+ * 材料セクションの文字列（1行1食材、"食材名|数量|単位|備考" 区切り）を行オブジェクト配列へ分解する。
+ * (2) インプット: text — 材料セクションの文字列
+ * (3) メイン: 改行で分割し、"|" 区切りで4フィールドへ分解。空行は除外
+ * (4) アウトプット: { name, qty, unit, note }[]
+ */
+export function parseIngredientText(text) {
+    if (!text) return [];
+    return text.split(/\r?\n/)
+        .map(line => line.split('|').map(s => s.trim()))
+        .filter(cols => cols.some(c => c))
+        .map(cols => Object.fromEntries(INGREDIENT_FIELDS.map((f, i) => [f, cols[i] || ''])));
+}
+
+/**
+ * 材料の行オブジェクト配列を、材料セクションに保存する文字列へ組み立てる。
+ * (2) インプット: rows — { name, qty, unit, note }[]
+ * (3) メイン: 空行（4項目とも空）を除外し、各行を "|" 区切りで連結
+ * (4) アウトプット: 材料セクションに保存する文字列
+ */
+export function buildIngredientText(rows) {
+    return (rows || [])
+        .filter(r => INGREDIENT_FIELDS.some(f => (r[f] || '').trim()))
+        .map(r => INGREDIENT_FIELDS.map(f => r[f] || '').join('|'))
+        .join('\n');
+}
+
+/**
+ * 人数を表す文字列（例: "2人分"）から先頭の数値を取り出す。
+ * (2) インプット: servingsText — 想定人数欄の文字列
+ * (3) メイン: 数値部分を正規表現で抽出
+ * (4) アウトプット: number | null（数値が見つからない場合）
+ */
+export function extractServingsNumber(servingsText) {
+    const m = String(servingsText || '').match(/[\d.]+/);
+    return m ? parseFloat(m[0]) : null;
+}
+
+/**
+ * 前処理／作り方セクションの文字列（1行1手順）を手順配列へ分解する。
+ * (2) インプット: text — セクションの文字列
+ * (3) メイン: 改行で分割し、前後空白を除去。空行は除外
+ * (4) アウトプット: string[]
+ */
+export function parseStepList(text) {
+    if (!text) return [];
+    return text.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+}
+
+/**
+ * 手順配列を、セクションに保存する文字列（1行1手順）へ組み立てる。
+ * (2) インプット: steps — string[]
+ * (3) メイン: 空行を除外し、改行で連結
+ * (4) アウトプット: セクションに保存する文字列
+ */
+export function buildStepList(steps) {
+    return (steps || []).map(s => s.trim()).filter(Boolean).join('\n');
+}
+
+/**
+ * 材料の行オブジェクト配列を、基準人数→目標人数の比率で数量換算する。
+ * (2) インプット: rows — { name, qty, unit, note }[], baseServings/targetServings — 人数欄の文字列
+ * (3) メイン: 基準・目標のいずれかが数値化できない場合は無換算。数量が数値の行のみ換算（小数点2桁まで）
+ * (4) アウトプット: 換算後の行オブジェクト配列（新規配列）
+ */
+export function scaleIngredientRows(rows, baseServings, targetServings) {
+    const base   = extractServingsNumber(baseServings);
+    const target = extractServingsNumber(targetServings);
+    if (!base || !target || base <= 0) return rows;
+    const ratio = target / base;
+    return rows.map(r => {
+        const qtyNum = parseFloat(r.qty);
+        if (isNaN(qtyNum)) return r;
+        return { ...r, qty: String(Math.round(qtyNum * ratio * 100) / 100) };
+    });
+}

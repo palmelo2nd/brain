@@ -518,60 +518,90 @@
 
                     <!-- 料理レシピ（タグ＝料理のナレッジ行を専用フォームで一覧・編集） -->
                     <div id="knowledge-viewer-panel-recipe" style="display:none">
-                        <div class="table-wrapper">
-                            <table id="recipe-list-table"></table>
+                        <div class="taskorg-view-toggle" id="recipe-mode-buttons">
+                            <button type="button" id="recipe-mode-btn-input" class="taskorg-view-btn" data-recipe-mode="input">入力</button>
+                            <button type="button" id="recipe-mode-btn-practice" class="taskorg-view-btn" data-recipe-mode="practice">実践</button>
                         </div>
 
-                        <div class="triage-form">
-                            <div class="triage-form-row">
-                                <label>料理名</label>
-                                <input type="text" id="recipe-title" placeholder="料理名を入力してください">
-                            </div>
-                            <div class="triage-form-row">
-                                <label>カテゴリ</label>
-                                <select id="recipe-category"></select>
-                            </div>
-                            <div class="triage-form-row">
-                                <label>ステータス</label>
-                                <select id="recipe-status"></select>
+                        <!-- 入力モード（レシピの新規登録・編集） -->
+                        <div id="recipe-mode-panel-input">
+                            <div class="table-wrapper">
+                                <table id="recipe-list-table"></table>
                             </div>
 
-                            <!-- 一時メモ（URLや思いつきメモなど自由記述） -->
-                            <div id="recipe-memo-row" class="triage-form-row triage-form-row--top" style="display:none">
-                                <label>メモ</label>
-                                <textarea id="recipe-memo" class="triage-textarea" rows="4" placeholder="参考URLや思いつきメモなど"></textarea>
-                            </div>
-
-                            <!-- 永久保存（構造化フォーム） -->
-                            <div id="recipe-structured-fields" style="display:none">
+                            <div class="triage-form">
                                 <div class="triage-form-row">
-                                    <label>想定人数</label>
-                                    <input type="text" id="recipe-servings" placeholder="例: 2人分">
+                                    <label>料理名</label>
+                                    <input type="text" id="recipe-title" placeholder="料理名を入力してください">
                                 </div>
-                                <div class="triage-form-row triage-form-row--top">
-                                    <label>材料</label>
-                                    <textarea id="recipe-ingredients" class="triage-textarea" rows="6" placeholder="材料を入力してください"></textarea>
+                                <div class="triage-form-row">
+                                    <label>カテゴリ</label>
+                                    <select id="recipe-category"></select>
                                 </div>
-                                <div class="triage-form-row triage-form-row--top">
-                                    <label>前処理</label>
-                                    <textarea id="recipe-prep" class="triage-textarea" rows="4" placeholder="前処理を入力してください"></textarea>
+                                <div class="triage-form-row">
+                                    <label>ステータス</label>
+                                    <select id="recipe-status"></select>
                                 </div>
-                                <div class="triage-form-row triage-form-row--top">
-                                    <label>作り方</label>
-                                    <textarea id="recipe-steps" class="triage-textarea" rows="6" placeholder="作り方を入力してください"></textarea>
-                                </div>
-                                <div class="triage-form-row triage-form-row--top">
-                                    <label>改善点</label>
-                                    <textarea id="recipe-improvements" class="triage-textarea" rows="4" placeholder="次回に向けた改善点があれば入力してください"></textarea>
-                                </div>
-                            </div>
 
-                            <div class="triage-toolbar">
-                                <span id="recipe-selection-info" class="triage-info"></span>
-                                <button id="recipe-new-btn" class="triage-btn">新規</button>
-                                <button id="recipe-apply-btn" class="triage-btn triage-btn--primary">更新</button>
-                                <button id="recipe-delete-btn" class="triage-btn triage-btn--danger">削除</button>
+                                <!-- 一時メモ（URLや思いつきメモなど自由記述） -->
+                                <div id="recipe-memo-row" class="triage-form-row triage-form-row--top" style="display:none">
+                                    <label>メモ</label>
+                                    <textarea id="recipe-memo" class="triage-textarea" rows="4" placeholder="参考URLや思いつきメモなど"></textarea>
+                                </div>
+
+                                <!-- 永久保存（構造化フォーム） -->
+                                <div id="recipe-structured-fields" style="display:none">
+                                    <div class="triage-form-row">
+                                        <label>想定人数</label>
+                                        <input type="text" id="recipe-servings" placeholder="例: 2人分">
+                                    </div>
+                                    <div class="triage-form-row triage-form-row--top">
+                                        <label>材料</label>
+                                        <div class="recipe-ingredients-editor">
+                                            <table id="recipe-ingredients-table" class="data-table"></table>
+                                            <button type="button" id="recipe-ingredient-add-btn" class="triage-btn">+ 材料を追加</button>
+                                        </div>
+                                    </div>
+                                    <div class="triage-form-row triage-form-row--top">
+                                        <label>前処理</label>
+                                        <div class="recipe-ingredients-editor">
+                                            <table id="recipe-prep-table" class="data-table"></table>
+                                            <button type="button" id="recipe-prep-add-btn" class="triage-btn">+ 前処理を追加</button>
+                                        </div>
+                                    </div>
+                                    <div class="triage-form-row triage-form-row--top">
+                                        <label>作り方</label>
+                                        <div class="recipe-ingredients-editor">
+                                            <table id="recipe-steps-table" class="data-table"></table>
+                                            <button type="button" id="recipe-steps-add-btn" class="triage-btn">+ 手順を追加</button>
+                                        </div>
+                                    </div>
+                                    <div class="triage-form-row triage-form-row--top">
+                                        <label>改善点</label>
+                                        <textarea id="recipe-improvements" class="triage-textarea" rows="4" placeholder="次回に向けた改善点があれば入力してください"></textarea>
+                                    </div>
+                                </div>
+
+                                <div class="triage-toolbar">
+                                    <span id="recipe-selection-info" class="triage-info"></span>
+                                    <button id="recipe-new-btn" class="triage-btn">新規</button>
+                                    <button id="recipe-apply-btn" class="triage-btn triage-btn--primary">更新</button>
+                                    <button id="recipe-delete-btn" class="triage-btn triage-btn--danger">削除</button>
+                                </div>
                             </div>
+                        </div>
+
+                        <!-- 実践モード（永久保存レシピを複数選択し、調理中に見やすく表示） -->
+                        <div id="recipe-mode-panel-practice" style="display:none">
+                            <div class="triage-form-row triage-form-row--top">
+                                <label>レシピを選択</label>
+                                <div id="recipe-practice-checklist" class="recipe-practice-checklist"></div>
+                            </div>
+                            <div class="triage-toolbar">
+                                <label><input type="radio" name="recipe-practice-layout" id="recipe-practice-layout-tabs" value="tabs" checked> タブ切替</label>
+                                <label><input type="radio" name="recipe-practice-layout" id="recipe-practice-layout-grid" value="grid"> 並列表示</label>
+                            </div>
+                            <div id="recipe-practice-view" class="recipe-practice-view"></div>
                         </div>
                     </div>
 

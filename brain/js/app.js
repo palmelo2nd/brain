@@ -34,7 +34,8 @@ import {
     createEmptyMasterRow as createEmptyMasterRowM
 } from './modules/master.js';
 import {
-    RECIPE_SECTIONS, isRecipeRow, isPermanentRecipe, parseRecipeContent, buildRecipeContent
+    RECIPE_SECTIONS, isRecipeRow, isPermanentRecipe, parseRecipeContent, buildRecipeContent,
+    parseIngredientText, buildIngredientText, scaleIngredientRows, parseStepList, buildStepList
 } from './modules/recipe.js';
 import {
     isBookRow, isQaCardRow, isChapterRow, getChapters, getQaCards, getQaParaMarker, shuffleArray
@@ -82,6 +83,14 @@ let dayedit2ParentPath = [];        // 新タスク整理・編集フォーム�
 let taskorg2BulkPjPath = [];        // タスク整理「PJ一括編集」の階層プルダウンで選択中のID列（個別編集フォームのdayedit2ParentPathとは独立）
 let selectedEdit2Ids = new Set();   // 新編集で選択中の行ID
 let selectedRecipeId = null;        // 料理ビューアで選択中のレシピ行ID
+let recipeMode = 'input';           // 料理ビューアの表示モード（'input' | 'practice'）
+let recipeIngredientRows = [];      // 入力モードで編集中の材料行配列（{ name, qty, unit, note }[]）
+let recipePrepRows = [];            // 入力モードで編集中の前処理・手順配列（string[]）
+let recipeStepsRows = [];           // 入力モードで編集中の作り方・手順配列（string[]）
+let recipePracticeSelectedIds = new Set(); // 実践モードで選択中の永久保存レシピID群
+let recipePracticeLayout = 'tabs';  // 実践モードの表示レイアウト（'tabs' | 'grid'）
+let recipePracticeActiveId = null;  // 実践モード・タブ切替時に表示中のレシピID
+let recipePracticeServings = {};    // 実践モードでのレシピID→表示用目標人数の上書き値
 let knowledgeViewer  = null;        // ナレッジタブ「専用ビューア」で開いているビューア（null | 'recipe' | 'reading'）
 let selectedBookId    = null;       // 読書ビューアで選択中の本ID
 let selectedChapterId = null;       // 読書ビューアで選択中の章メモID
@@ -856,6 +865,124 @@ document.getElementById('recipe-status')?.addEventListener('change', (e) => {
     updateRecipeConditionalFields(e.target.value);
 });
 
+/** 「料理」タブ・入力モード: 材料の行編集テーブルを描画する。 */
+function renderRecipeIngredientsTable() {
+    const table = document.getElementById('recipe-ingredients-table');
+    if (!table) return;
+
+    const thead = document.createElement('thead');
+    const hRow  = document.createElement('tr');
+    ['食材名', '数量', '単位', '備考', ''].forEach(text => {
+        const th = document.createElement('th');
+        th.textContent = text;
+        hRow.appendChild(th);
+    });
+    thead.appendChild(hRow);
+
+    const tbody = document.createElement('tbody');
+    if (recipeIngredientRows.length === 0) {
+        const emptyRow = document.createElement('tr');
+        const emptyTd  = document.createElement('td');
+        emptyTd.className = 'empty-cell';
+        emptyTd.colSpan = 5;
+        emptyTd.textContent = '材料がありません';
+        emptyRow.appendChild(emptyTd);
+        tbody.appendChild(emptyRow);
+    }
+    recipeIngredientRows.forEach((ingredient, index) => {
+        const row = document.createElement('tr');
+
+        [['name', '食材名'], ['qty', '数量'], ['unit', '単位'], ['note', '備考']].forEach(([field, placeholder]) => {
+            const td = document.createElement('td');
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.placeholder = placeholder;
+            input.value = ingredient[field] || '';
+            input.addEventListener('input', () => { ingredient[field] = input.value; });
+            td.appendChild(input);
+            row.appendChild(td);
+        });
+
+        const removeTd = document.createElement('td');
+        const removeBtn = document.createElement('button');
+        removeBtn.type = 'button';
+        removeBtn.className = 'triage-btn triage-btn--danger';
+        removeBtn.textContent = '削除';
+        removeBtn.addEventListener('click', () => {
+            recipeIngredientRows.splice(index, 1);
+            renderRecipeIngredientsTable();
+        });
+        removeTd.appendChild(removeBtn);
+        row.appendChild(removeTd);
+
+        tbody.appendChild(row);
+    });
+
+    table.replaceChildren(thead, tbody);
+}
+
+document.getElementById('recipe-ingredient-add-btn')?.addEventListener('click', () => {
+    recipeIngredientRows.push({ name: '', qty: '', unit: '', note: '' });
+    renderRecipeIngredientsTable();
+});
+
+/** 「料理」タブ・入力モード: 前処理／作り方など、1行1手順のテーブルを描画する汎用関数。 */
+function renderRecipeStepTable(tableId, steps, rerender) {
+    const table = document.getElementById(tableId);
+    if (!table) return;
+
+    const tbody = document.createElement('tbody');
+    if (steps.length === 0) {
+        const emptyRow = document.createElement('tr');
+        const emptyTd  = document.createElement('td');
+        emptyTd.className = 'empty-cell';
+        emptyTd.textContent = '項目がありません';
+        emptyRow.appendChild(emptyTd);
+        tbody.appendChild(emptyRow);
+    }
+    steps.forEach((step, index) => {
+        const row = document.createElement('tr');
+
+        const td = document.createElement('td');
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.placeholder = `${index + 1}.`;
+        input.value = step;
+        input.addEventListener('input', () => { steps[index] = input.value; });
+        td.appendChild(input);
+        row.appendChild(td);
+
+        const removeTd = document.createElement('td');
+        const removeBtn = document.createElement('button');
+        removeBtn.type = 'button';
+        removeBtn.className = 'triage-btn triage-btn--danger';
+        removeBtn.textContent = '削除';
+        removeBtn.addEventListener('click', () => {
+            steps.splice(index, 1);
+            rerender();
+        });
+        removeTd.appendChild(removeBtn);
+        row.appendChild(removeTd);
+
+        tbody.appendChild(row);
+    });
+
+    table.replaceChildren(tbody);
+}
+
+function renderRecipePrepTable()  { renderRecipeStepTable('recipe-prep-table',  recipePrepRows,  renderRecipePrepTable); }
+function renderRecipeStepsTable() { renderRecipeStepTable('recipe-steps-table', recipeStepsRows, renderRecipeStepsTable); }
+
+document.getElementById('recipe-prep-add-btn')?.addEventListener('click', () => {
+    recipePrepRows.push('');
+    renderRecipePrepTable();
+});
+
+document.getElementById('recipe-steps-add-btn')?.addEventListener('click', () => {
+    recipeStepsRows.push('');
+    renderRecipeStepsTable();
+});
+
 /** 「料理」タブ: 一覧テーブルを描画する。行クリックで選択・フォームへ読み込む。 */
 function renderRecipeList() {
     const table = document.getElementById('recipe-list-table');
@@ -914,16 +1041,22 @@ function loadRecipeForm(row) {
     if (isPermanentRecipe(row)) {
         const sections = parseRecipeContent(row['内容']);
         document.getElementById('recipe-servings').value     = sections['想定人数'];
-        document.getElementById('recipe-ingredients').value  = sections['材料'];
-        document.getElementById('recipe-prep').value         = sections['前処理'];
-        document.getElementById('recipe-steps').value        = sections['作り方'];
+        recipeIngredientRows = parseIngredientText(sections['材料']);
+        recipePrepRows       = parseStepList(sections['前処理']);
+        recipeStepsRows      = parseStepList(sections['作り方']);
         document.getElementById('recipe-improvements').value = sections['改善点'];
         document.getElementById('recipe-memo').value = '';
     } else {
         document.getElementById('recipe-memo').value = row['内容'] || '';
-        ['recipe-servings', 'recipe-ingredients', 'recipe-prep', 'recipe-steps', 'recipe-improvements']
+        recipeIngredientRows = [];
+        recipePrepRows       = [];
+        recipeStepsRows      = [];
+        ['recipe-servings', 'recipe-improvements']
             .forEach(id => { document.getElementById(id).value = ''; });
     }
+    renderRecipeIngredientsTable();
+    renderRecipePrepTable();
+    renderRecipeStepsTable();
 
     updateRecipeSelectionInfo();
 }
@@ -931,10 +1064,15 @@ function loadRecipeForm(row) {
 /** 「料理」タブ: フォームをクリアし、選択状態を解除する。 */
 function clearRecipeForm() {
     selectedRecipeId = null;
-    ['recipe-title', 'recipe-memo', 'recipe-servings', 'recipe-ingredients',
-     'recipe-prep', 'recipe-steps', 'recipe-improvements'].forEach(id => {
+    ['recipe-title', 'recipe-memo', 'recipe-servings', 'recipe-improvements'].forEach(id => {
         document.getElementById(id).value = '';
     });
+    recipeIngredientRows = [];
+    recipePrepRows       = [];
+    recipeStepsRows      = [];
+    renderRecipeIngredientsTable();
+    renderRecipePrepTable();
+    renderRecipeStepsTable();
     document.getElementById('recipe-category').value = '';
     document.getElementById('recipe-status').value = '';
     updateRecipeConditionalFields('');
@@ -947,9 +1085,9 @@ function readRecipeFormContent() {
     if (status === '永久保存') {
         return buildRecipeContent({
             '想定人数': document.getElementById('recipe-servings').value,
-            '材料':     document.getElementById('recipe-ingredients').value,
-            '前処理':   document.getElementById('recipe-prep').value,
-            '作り方':   document.getElementById('recipe-steps').value,
+            '材料':     buildIngredientText(recipeIngredientRows),
+            '前処理':   buildStepList(recipePrepRows),
+            '作り方':   buildStepList(recipeStepsRows),
             '改善点':   document.getElementById('recipe-improvements').value,
         });
     }
@@ -1024,11 +1162,226 @@ document.getElementById('recipe-delete-btn')?.addEventListener('click', () => {
     renderRecipeList();
 });
 
+/** 「料理」タブ・実践モード: 永久保存レシピのチェックリストを描画する。 */
+function renderRecipePracticeChecklist() {
+    const container = document.getElementById('recipe-practice-checklist');
+    if (!container) return;
+
+    const rows = getRecipeRows().filter(isPermanentRecipe);
+    // 削除済み・対象外になったレシピの選択状態を掃除する
+    recipePracticeSelectedIds.forEach(id => {
+        if (!rows.some(r => String(r['ID']) === id)) recipePracticeSelectedIds.delete(id);
+    });
+
+    if (rows.length === 0) {
+        container.replaceChildren();
+        const empty = document.createElement('div');
+        empty.className = 'triage-info';
+        empty.textContent = '永久保存のレシピがありません';
+        container.appendChild(empty);
+        return;
+    }
+
+    const fragment = document.createDocumentFragment();
+    rows.forEach(row => {
+        const id = String(row['ID']);
+        const label = document.createElement('label');
+        label.className = 'recipe-practice-checklist-item';
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.checked = recipePracticeSelectedIds.has(id);
+        checkbox.addEventListener('change', () => {
+            if (checkbox.checked) {
+                recipePracticeSelectedIds.add(id);
+                if (!recipePracticeActiveId) recipePracticeActiveId = id;
+            } else {
+                recipePracticeSelectedIds.delete(id);
+                if (recipePracticeActiveId === id) recipePracticeActiveId = null;
+            }
+            renderRecipePracticeView();
+        });
+        label.appendChild(checkbox);
+        label.appendChild(document.createTextNode(row['タイトル'] || '（無題）'));
+        fragment.appendChild(label);
+    });
+    container.replaceChildren(fragment);
+}
+
+/** 「料理」タブ・実践モード: 1レシピ分の詳細カード（人数指定＋換算済み材料・手順）を組み立てる。 */
+function buildRecipePracticeCard(row) {
+    const id = String(row['ID']);
+    const sections = parseRecipeContent(row['内容']);
+    const baseServings = sections['想定人数'];
+    const targetServings = recipePracticeServings[id] !== undefined ? recipePracticeServings[id] : baseServings;
+
+    const card = document.createElement('div');
+    card.className = 'recipe-practice-card';
+
+    const heading = document.createElement('h4');
+    heading.textContent = row['タイトル'] || '（無題）';
+    card.appendChild(heading);
+
+    const servingsRow = document.createElement('div');
+    servingsRow.className = 'triage-form-row';
+    const servingsLabel = document.createElement('label');
+    servingsLabel.textContent = `人数（基準: ${baseServings || '不明'}）`;
+    const servingsInput = document.createElement('input');
+    servingsInput.type = 'text';
+    servingsInput.value = targetServings || '';
+    servingsInput.addEventListener('input', () => {
+        recipePracticeServings[id] = servingsInput.value;
+        renderRecipePracticeView();
+    });
+    servingsRow.appendChild(servingsLabel);
+    servingsRow.appendChild(servingsInput);
+    card.appendChild(servingsRow);
+
+    const ingredientRows = scaleIngredientRows(parseIngredientText(sections['材料']), baseServings, targetServings);
+    const table = document.createElement('table');
+    table.className = 'data-table';
+    const thead = document.createElement('thead');
+    const hRow = document.createElement('tr');
+    ['食材名', '数量', '単位', '備考'].forEach(text => {
+        const th = document.createElement('th');
+        th.textContent = text;
+        hRow.appendChild(th);
+    });
+    thead.appendChild(hRow);
+    const tbody = document.createElement('tbody');
+    ingredientRows.forEach(ingredient => {
+        const tr = document.createElement('tr');
+        [ingredient.name, ingredient.qty, ingredient.unit, ingredient.note].forEach(val => {
+            const td = document.createElement('td');
+            td.textContent = val || '';
+            tr.appendChild(td);
+        });
+        tbody.appendChild(tr);
+    });
+    table.append(thead, tbody);
+    card.appendChild(table);
+
+    [['前処理', sections['前処理']], ['作り方', sections['作り方']]]
+        .forEach(([label, text]) => {
+            const steps = parseStepList(text);
+            if (steps.length === 0) return;
+            const section = document.createElement('div');
+            section.className = 'recipe-practice-section';
+            const h5 = document.createElement('h5');
+            h5.textContent = label;
+            const ol = document.createElement('ol');
+            steps.forEach(step => {
+                const li = document.createElement('li');
+                li.textContent = step;
+                ol.appendChild(li);
+            });
+            section.append(h5, ol);
+            card.appendChild(section);
+        });
+
+    if (sections['改善点']) {
+        const section = document.createElement('div');
+        section.className = 'recipe-practice-section';
+        const h5 = document.createElement('h5');
+        h5.textContent = '改善点';
+        const pre = document.createElement('pre');
+        pre.textContent = sections['改善点'];
+        section.append(h5, pre);
+        card.appendChild(section);
+    }
+
+    return card;
+}
+
+/** 「料理」タブ・実践モード: 選択済みレシピを、タブ切替または並列表示のレイアウトで描画する。 */
+function renderRecipePracticeView() {
+    const container = document.getElementById('recipe-practice-view');
+    if (!container) return;
+
+    const rows = getRecipeRows()
+        .filter(isPermanentRecipe)
+        .filter(row => recipePracticeSelectedIds.has(String(row['ID'])));
+
+    if (rows.length === 0) {
+        container.replaceChildren();
+        const empty = document.createElement('div');
+        empty.className = 'triage-info';
+        empty.textContent = '実践するレシピを選択してください';
+        container.appendChild(empty);
+        return;
+    }
+
+    if (recipePracticeLayout === 'grid') {
+        const grid = document.createElement('div');
+        grid.className = 'recipe-practice-grid';
+        rows.forEach(row => grid.appendChild(buildRecipePracticeCard(row)));
+        container.replaceChildren(grid);
+        return;
+    }
+
+    if (!rows.some(row => String(row['ID']) === recipePracticeActiveId)) {
+        recipePracticeActiveId = String(rows[0]['ID']);
+    }
+
+    const tabBar = document.createElement('div');
+    tabBar.className = 'taskorg-view-toggle';
+    rows.forEach(row => {
+        const id = String(row['ID']);
+        const tabBtn = document.createElement('button');
+        tabBtn.type = 'button';
+        tabBtn.className = 'taskorg-view-btn';
+        if (id === recipePracticeActiveId) tabBtn.classList.add('taskorg-view-btn--active');
+        tabBtn.textContent = row['タイトル'] || '（無題）';
+        tabBtn.addEventListener('click', () => {
+            recipePracticeActiveId = id;
+            renderRecipePracticeView();
+        });
+        tabBar.appendChild(tabBtn);
+    });
+
+    const activeRow = rows.find(row => String(row['ID']) === recipePracticeActiveId);
+    const wrapper = document.createElement('div');
+    wrapper.appendChild(tabBar);
+    if (activeRow) wrapper.appendChild(buildRecipePracticeCard(activeRow));
+    container.replaceChildren(wrapper);
+}
+
+['recipe-practice-layout-tabs', 'recipe-practice-layout-grid'].forEach(id => {
+    document.getElementById(id)?.addEventListener('change', (e) => {
+        if (!e.target.checked) return;
+        recipePracticeLayout = e.target.value;
+        renderRecipePracticeView();
+    });
+});
+
+/** 「料理」タブ: 入力／実践モードの切り替えボタン・パネル表示を更新する。 */
+function renderRecipeModeToggle() {
+    document.querySelectorAll('#recipe-mode-buttons .taskorg-view-btn').forEach(btn => {
+        btn.classList.toggle('taskorg-view-btn--active', btn.dataset.recipeMode === recipeMode);
+    });
+    const inputPanel    = document.getElementById('recipe-mode-panel-input');
+    const practicePanel = document.getElementById('recipe-mode-panel-practice');
+    if (inputPanel)    inputPanel.style.display    = recipeMode === 'input'    ? '' : 'none';
+    if (practicePanel) practicePanel.style.display = recipeMode === 'practice' ? '' : 'none';
+
+    if (recipeMode === 'practice') {
+        renderRecipePracticeChecklist();
+        renderRecipePracticeView();
+    }
+}
+
+document.querySelectorAll('#recipe-mode-buttons .taskorg-view-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        recipeMode = btn.dataset.recipeMode;
+        renderRecipeModeToggle();
+    });
+});
+
 /** 料理ビューア（一覧＋フォーム）を描画する。 */
 function renderRecipeView() {
     renderRecipeSelects();
     renderRecipeList();
     updateRecipeSelectionInfo();
+    renderRecipeModeToggle();
 }
 
 /** 指定タグの (M)タグ_親（カテゴリ）を調べ、現在選択中のカテゴリと一致するかどうかを返す。 */
