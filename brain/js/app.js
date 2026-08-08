@@ -40,6 +40,7 @@ import {
 import {
     isBookRow, isQaCardRow, isChapterRow, getChapters, getQaCards, getQaParaMarker, shuffleArray
 } from './modules/reading.js';
+import { findBacklinks } from './modules/zettel.js';
 
 const OWNER = 'palmelo2nd';
 const REPO  = 'brain_data';
@@ -92,6 +93,7 @@ let recipePracticeLayout = 'tabs';  // 実践モードの表示レイアウト�
 let recipePracticeActiveId = null;  // 実践モード・タブ切替時に表示中のレシピID
 let recipePracticeServings = {};    // 実践モードでのレシピID→表示用目標人数の上書き値
 let knowledgeViewer  = null;        // ナレッジタブ「専用ビューア」で開いているビューア（null | 'recipe' | 'reading'）
+let selectedKnowledgeId = null;     // ナレッジタブで選択中の行ID（[[ID]]リンク・バックリンク表示の対象）
 let selectedBookId    = null;       // 読書ビューアで選択中の本ID
 let selectedChapterId = null;       // 読書ビューアで選択中の章メモID
 let readingQuizCards      = [];     // 暗記モード中の出題カード配列（シャッフル済み）
@@ -180,7 +182,7 @@ function renderSummary() {
     renderTaskRunner();
     if (summaryView === 'taskorg2')  renderCalendar2();
     if (summaryView === 'edit2')     renderEdit2();
-    if (summaryView === 'knowledge') { renderKnowledgeList(); renderKnowledgeViewers(); }
+    if (summaryView === 'knowledge') { renderKnowledgeList(); renderKnowledgeDetail(); renderKnowledgeViewers(); }
     // データ編集タブ下部に埋め込んだメインデータ・マスタデータ一覧も、データ編集と合わせて再描画する
     if (summaryView === 'edit2') {
         renderDataTable('table-main',   'summary-main',   getFilteredMainData(),   MAIN_DATA_COLUMNS,   'メインデータ',   { editable: true, idColumn: 'ID' });
@@ -808,6 +810,9 @@ function renderKnowledgeList() {
     } else {
         rows.forEach(row => {
             const tr = document.createElement('tr');
+            const id = String(row['ID']);
+            if (id === selectedKnowledgeId) tr.classList.add('selected-row');
+            tr.addEventListener('click', () => selectKnowledgeNote(id));
             [row['タイトル'] || '（無題）', row['ステータス'] || '', row['カテゴリ'] || '', row['タグ'] || '', row['更新日時'] || '']
                 .forEach(val => {
                     const td = document.createElement('td');
@@ -820,6 +825,132 @@ function renderKnowledgeList() {
     table.append(thead, tbody);
     wrap.appendChild(table);
     container.appendChild(wrap);
+}
+
+/** ナレッジタブ: 詳細パネルに表示する行を切り替え、一覧・詳細を再描画する。 */
+function selectKnowledgeNote(id) {
+    selectedKnowledgeId = id;
+    renderKnowledgeList();
+    renderKnowledgeDetail();
+}
+
+/**
+ * ナレッジタブ「詳細パネル」を描画する。
+ * 選択中の行の基本情報・所属プロジェクト（親ID）・本文中の[[ID]]リンク・バックリンクを表示する。
+ * リンク先は選択中行がナレッジ以外（タスク等）でも currentMainData から検索して表示する。
+ */
+function renderKnowledgeDetail() {
+    const container = document.getElementById('knowledge-detail-summary');
+    if (!container) return;
+    container.innerHTML = '';
+
+    const row = currentMainData.find(r => String(r['ID']) === selectedKnowledgeId);
+    if (!row) {
+        const empty = document.createElement('p');
+        empty.className = 'triage-info';
+        empty.textContent = 'ノートを選択してください';
+        container.appendChild(empty);
+        return;
+    }
+
+    const form = document.createElement('div');
+    form.className = 'triage-form';
+
+    const infoRow = document.createElement('div');
+    infoRow.className = 'triage-form-row';
+    const infoLabel = document.createElement('label');
+    infoLabel.textContent = '基本情報';
+    const info = document.createElement('span');
+    info.className = 'triage-info';
+    info.textContent = [row['タイトル'] || '（無題）', row['ステータス'], row['カテゴリ'], row['タグ'], row['PARA区分']]
+        .filter(Boolean).join(' / ');
+    infoRow.append(infoLabel, info);
+    form.appendChild(infoRow);
+
+    // 所属プロジェクト（親ID）
+    const parentId = row['親ID'];
+    if (parentId) {
+        const parentRow = currentMainData.find(r => String(r['ID']) === String(parentId));
+        const projRow = document.createElement('div');
+        projRow.className = 'triage-form-row';
+        const projLabel = document.createElement('label');
+        projLabel.textContent = '所属プロジェクト';
+        const projInfo = document.createElement('span');
+        projInfo.className = 'triage-info';
+        projInfo.textContent = parentRow ? (parentRow['タイトル'] || '（無題）') : `不明な親 #${parentId}`;
+        projRow.append(projLabel, projInfo);
+        form.appendChild(projRow);
+    }
+
+    // 本文（内容＋備考）。[[ID]]をクリック可能なリンクチップに変換する。
+    const bodyRow = document.createElement('div');
+    bodyRow.className = 'triage-form-row triage-form-row--top';
+    const bodyLabel = document.createElement('label');
+    bodyLabel.textContent = '本文';
+    const bodyText = document.createElement('div');
+    bodyText.className = 'zettel-body';
+    [row['内容'], row['備考']].filter(Boolean).forEach(text => {
+        bodyText.appendChild(renderZettelText(text));
+    });
+    bodyRow.append(bodyLabel, bodyText);
+    form.appendChild(bodyRow);
+
+    // バックリンク（このノートを [[ID]] で参照している他の行）
+    const backlinks = findBacklinks(currentMainData, row['ID']);
+    const backRow = document.createElement('div');
+    backRow.className = 'triage-form-row triage-form-row--top';
+    const backLabel = document.createElement('label');
+    backLabel.textContent = 'バックリンク';
+    const backList = document.createElement('div');
+    backList.className = 'zettel-body';
+    if (backlinks.length === 0) {
+        const none = document.createElement('span');
+        none.className = 'triage-info';
+        none.textContent = 'なし';
+        backList.appendChild(none);
+    } else {
+        backlinks.forEach(r => backList.appendChild(makeZettelLinkChip(String(r['ID']), r['タイトル'] || '（無題）')));
+    }
+    backRow.append(backLabel, backList);
+    form.appendChild(backRow);
+
+    container.appendChild(form);
+}
+
+/** 本文中の [[ID]] をリンクチップに変換したDOM断片を返す（innerHTML不使用、テキストノード＋spanで組み立て）。 */
+function renderZettelText(text) {
+    const frag = document.createDocumentFragment();
+    const regex = /\[\[(\d+)\]\]/g;
+    let lastIndex = 0;
+    let match;
+    while ((match = regex.exec(text)) !== null) {
+        if (match.index > lastIndex) frag.appendChild(document.createTextNode(text.slice(lastIndex, match.index)));
+        const linkedId = match[1];
+        const linkedRow = currentMainData.find(r => String(r['ID']) === linkedId);
+        if (linkedRow) {
+            frag.appendChild(makeZettelLinkChip(linkedId, linkedRow['タイトル'] || '（無題）'));
+        } else {
+            const missing = document.createElement('span');
+            missing.className = 'zettel-missing-link';
+            missing.textContent = `不明なノート #${linkedId}`;
+            frag.appendChild(missing);
+        }
+        lastIndex = regex.lastIndex;
+    }
+    if (lastIndex < text.length) frag.appendChild(document.createTextNode(text.slice(lastIndex)));
+    const wrap = document.createElement('div');
+    wrap.className = 'zettel-text-block';
+    wrap.appendChild(frag);
+    return wrap;
+}
+
+/** クリックで対象IDのノートへ切り替えるリンクチップ要素を作る。 */
+function makeZettelLinkChip(id, label) {
+    const chip = document.createElement('span');
+    chip.className = 'zettel-link-chip';
+    chip.textContent = label;
+    chip.addEventListener('click', () => selectKnowledgeNote(id));
+    return chip;
 }
 
 // ===== 「料理」タブ（タグ＝料理のナレッジ行専用ビューア） =====

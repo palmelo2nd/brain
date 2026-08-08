@@ -267,6 +267,45 @@ input[type="checkbox"] {
 /* 選択行のハイライト */
 .selected-row td { background: #e8f4fd !important; }
 
+/* ===== ナレッジタブ: Zettelkasten型リンク（[[ID]]・バックリンク） ===== */
+.zettel-body {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.zettel-text-block {
+    font-size: 13px;
+    color: #333;
+    white-space: pre-wrap;
+    line-height: 1.6;
+}
+
+.zettel-link-chip {
+    display: inline-block;
+    padding: 2px 10px;
+    margin: 0 2px;
+    font-size: 12px;
+    color: #0d6efd;
+    background: #eaf2ff;
+    border: 1px solid #cfe2ff;
+    border-radius: 12px;
+    cursor: pointer;
+}
+
+.zettel-link-chip:hover { background: #d7e7ff; }
+
+.zettel-missing-link {
+    display: inline-block;
+    padding: 2px 10px;
+    margin: 0 2px;
+    font-size: 12px;
+    color: #8b949e;
+    background: #f0f2f5;
+    border: 1px dashed #ccc;
+    border-radius: 12px;
+}
+
 /* ===== エクスパンダー（details / summary） ===== */
 .expander {
     border: 1px solid #e1e4e8;
