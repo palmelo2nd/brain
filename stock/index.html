@@ -51,21 +51,15 @@
             <div class="update-form status-panel">
                 <p class="update-form-title">現在の状態（株価）</p>
                 <div class="status-actions">
-                    <button type="button" id="status-refresh-btn" class="run-btn run-btn--secondary">状態を更新</button>
-                    <button type="button" id="status-recheck-btn" class="run-btn run-btn--secondary">鮮度チェックを再実行</button>
+                    <button type="button" id="status-check-btn" class="run-btn">チェック</button>
                 </div>
-                <div id="status-summary" class="update-status">PWを入力し「状態を更新」を押してください。</div>
+                <div id="status-summary" class="update-status">IDとPWを入力し「チェック」を押してください。</div>
             </div>
 
             <!-- 更新：日常運用はこのボタン1つ。対象銘柄すべてを差分更新する -->
             <div class="update-form">
                 <p class="update-form-title">株価の更新</p>
-                <p class="placeholder-text">
-                    対象銘柄（内国株式＋ETF・ETN）をすべて最新日付まで差分更新します。
-                    数十分〜数時間かかる場合がありますが、20件処理するごとに自動コミットされるため、途中で失敗しても取得済み分は失われません。
-                    完了後は上の「状態を更新」で反映状況を確認できます。
-                </p>
-                <button type="button" id="price-update-all-btn" class="run-btn">最新株価に更新</button>
+                <button type="button" id="price-update-all-btn" class="run-btn">最新株価取得</button>
                 <div id="price-update-all-progress" class="progress-wrap" style="display:none">
                     <progress id="price-update-all-bar" max="100" value="0"></progress>
                     <span id="price-update-all-percent" class="progress-percent"></span>
@@ -75,7 +69,7 @@
 
             <!-- 詳細設定：日常運用では使わない操作（個別コード指定・新規銘柄の初回取得・データ品質チェック） -->
             <details class="advanced-settings">
-                <summary>詳細設定（通常は不要）</summary>
+                <summary>株価取得</summary>
 
                 <div class="update-form">
                     <p class="update-form-title">株価取得（銘柄コードを直接指定）</p>
@@ -93,7 +87,7 @@
 
                 <div class="update-form">
                     <p class="update-form-title">株価一括取得（銘柄マスタ master.csv から範囲指定）</p>
-                    <p class="placeholder-text">新規上場銘柄の初回取得など、範囲を区切って処理したい場合に使います。日常の差分更新は上の「最新株価に更新」で十分です。</p>
+                    <p class="placeholder-text">新規上場銘柄の初回取得など、範囲を区切って処理したい場合に使います。日常の差分更新は上の「最新株価取得」で十分です。</p>
                     <div class="update-form-row">
                         <label>モード</label>
                         <select id="bulk-update-mode">
@@ -113,14 +107,6 @@
                     </div>
                     <button type="button" id="bulk-update-run-btn" class="run-btn run-btn--secondary">一括取得を実行</button>
                     <p id="bulk-update-status" class="update-status"></p>
-                </div>
-
-                <div class="update-form">
-                    <p class="update-form-title">データ品質チェック（欠損・重複・古さの検出）</p>
-                    <button type="button" id="validate-run-btn" class="run-btn run-btn--secondary">チェックを実行</button>
-                    <button type="button" id="validate-check-btn" class="run-btn run-btn--secondary">結果を確認</button>
-                    <p id="validate-status" class="update-status"></p>
-                    <div id="validate-report"></div>
                 </div>
             </details>
         </div>

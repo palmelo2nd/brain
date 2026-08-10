@@ -109,7 +109,7 @@ document.getElementById('price-update-run-btn')?.addEventListener('click', async
 // 一括取得ワークフロー（fetch-stock-prices-bulk.yml）をoffset=0・mode=updateで起動する。
 // limitは毎回master.csvから対象件数（listed×BULK_ASSET_TYPES）を数えて渡す（手動でのoffset/limit指定を不要にするため）。
 // 起動後は実行状況とコミット進捗をポーリングし、進捗バー・バナーに反映する（ブラウザを閉じるとポーリングは止まるが、
-// ワークフロー自体はGitHub側で継続するので、再度開いて「状態を更新」を押せば結果は確認できる）。
+// ワークフロー自体はGitHub側で継続するので、再度開いて「チェック」を押せば結果は確認できる）。
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -260,7 +260,7 @@ document.getElementById('price-update-all-btn')?.addEventListener('click', async
         // 競合し、片方が失敗することがある（実際に発生した事例あり）。事前に警告し、続行するか確認する。
         if (baselineRun && (baselineRun.status === 'in_progress' || baselineRun.status === 'queued')) {
             const proceed = confirm(
-                '前回の「最新株価に更新」がまだ実行中の可能性があります。\n' +
+                '前回の「最新株価取得」がまだ実行中の可能性があります。\n' +
                 '同時に実行すると、データリポジトリへのコミットが競合し、片方が失敗する場合があります。\n' +
                 'それでも実行しますか？'
             );
@@ -366,7 +366,7 @@ document.getElementById('bulk-update-check-btn')?.addEventListener('click', asyn
 async function loadFreshnessStatus() {
     const summaryEl = document.getElementById('status-summary');
     const token = getDataTokenValue();
-    if (!token) { summaryEl.textContent = 'PWを入力し「状態を更新」を押してください。'; return; }
+    if (!token) { summaryEl.textContent = 'PWを入力し「チェック」を押してください。'; return; }
 
     summaryEl.textContent = '状態を確認中...';
 
@@ -393,14 +393,12 @@ async function loadFreshnessStatus() {
             lines.appendChild(p);
         });
 
-        // 品質チェック（欠損・重複等）の問題件数。詳細は詳細設定の「データ品質チェック」で確認・対処する。
+        // 品質チェック（欠損・重複等）の問題件数。問題があれば内訳・再取得・承認をこの下に表示する。
         const qualityP = document.createElement('p');
         if (!validation) {
-            qualityP.textContent = '品質チェック: 未実行です（詳細設定から実行できます）';
+            qualityP.textContent = '品質チェック: 未実行です';
         } else if (validation.issue_count > 0) {
-            qualityP.textContent =
-                `品質チェック（${validation.checked_at}時点）: 問題 ${validation.issue_count}件` +
-                `（詳細設定の「データ品質チェック」で確認できます）`;
+            qualityP.textContent = `品質チェック（${validation.checked_at}時点）: 問題 ${validation.issue_count}件`;
             qualityP.classList.add('status-line--warning');
         } else {
             qualityP.textContent = `品質チェック（${validation.checked_at}時点）: 問題なし`;
@@ -409,15 +407,36 @@ async function loadFreshnessStatus() {
 
         summaryEl.appendChild(lines);
 
+        if (validation && validation.issue_count > 0) {
+            renderValidationIssues(summaryEl, token, validation);
+        }
+
         // 銘柄ごとの最終日付の分布（新しい日付が上に来るように降順）。
         // 大半が最新日付に揃っていれば正常、古い日付に銘柄が散っていれば取りこぼしがあると分かる。
+        // codes_by_date（日付ごとの該当銘柄コード一覧）があれば、行ごとに折りたたみで内訳を出す
+        // （古いcheck_freshness.pyで作られたレポートにはこのフィールドが無いので、その場合は件数のみ表示する）。
         if (report.distribution) {
             const entries = Object.entries(report.distribution).sort((a, b) => b[0].localeCompare(a[0]));
             const list = document.createElement('ul');
             list.className = 'status-distribution';
             entries.forEach(([date, count]) => {
                 const li = document.createElement('li');
-                li.textContent = `${date}: ${count}銘柄`;
+                const codes = report.codes_by_date ? report.codes_by_date[date] : null;
+
+                if (codes && codes.length > 0) {
+                    const details = document.createElement('details');
+                    details.className = 'status-date-detail';
+                    const summary = document.createElement('summary');
+                    summary.textContent = `${date}: ${count}銘柄`;
+                    details.appendChild(summary);
+                    const codeList = document.createElement('div');
+                    codeList.className = 'status-code-list';
+                    codeList.textContent = codes.join(', ');
+                    details.appendChild(codeList);
+                    li.appendChild(details);
+                } else {
+                    li.textContent = `${date}: ${count}銘柄`;
+                }
                 list.appendChild(li);
             });
             summaryEl.appendChild(list);
@@ -428,112 +447,139 @@ async function loadFreshnessStatus() {
     }
 }
 
-document.getElementById('status-refresh-btn')?.addEventListener('click', () => loadFreshnessStatus());
+// 指定ワークフローの実行が完了するまで待つ（バックグラウンドで並行して待てるようPromiseを返す）。
+// baselineRunId: 起動前に記録しておいた「それまでの最新」run id（無ければnull）。
+// 一覧の先頭がこれと変わる（＝新しい実行が始まった）まで探し、見つかったらそのrunが完了するまでポーリングする。
+// 時刻ではなくid比較で新しい実行を判定する（ブラウザ側の時計とGitHubサーバー側の時計がズレていても正しく動く）。
+// 戻り値: 完了したrunオブジェクト（status==='completed'）。実行が見つからなかった場合はnull。
+async function waitForWorkflowRun(codeToken, workflowFile, baselineRunId) {
+    let run = null;
+    for (let i = 0; i < 10; i++) {
+        try {
+            const latest = await getLatestWorkflowRun(codeToken, OWNER, CODE_REPO, workflowFile);
+            if (latest && latest.id !== baselineRunId) { run = latest; break; }
+        } catch (error) {
+            console.error(error);
+        }
+        await sleep(3000);
+    }
+    if (!run) return null;
 
-// ===== データ更新：データ鮮度チェック（check_freshness.py）のGitHub Actionsワークフローを再実行 =====
-document.getElementById('status-recheck-btn')?.addEventListener('click', async () => {
+    while (true) {
+        try {
+            const latestRun = await getWorkflowRun(codeToken, OWNER, CODE_REPO, run.id);
+            if (latestRun.status === 'completed') return latestRun;
+        } catch (error) {
+            console.error(error);
+        }
+        await sleep(15000);
+    }
+}
+
+// ===== データ更新：チェック（鮮度チェック・品質チェックを両方実行し、完了を待って状態パネルへ反映） =====
+document.getElementById('status-check-btn')?.addEventListener('click', async (event) => {
+    const btn = event.currentTarget;
     const summaryEl = document.getElementById('status-summary');
-    const token = getCodeTokenValue();
-    if (!token) { alert('IDを入力してください'); return; }
+    const codeToken = getCodeTokenValue();
+    const dataToken = getDataTokenValue();
+    if (!codeToken) { alert('IDを入力してください'); return; }
+    if (!dataToken) { alert('PWを入力してください（結果の確認に使用します）'); return; }
 
-    summaryEl.textContent = '鮮度チェックの実行をリクエスト中...';
-
-    try {
-        await dispatchWorkflow(token, OWNER, CODE_REPO, FRESHNESS_WORKFLOW_FILE, CODE_REPO_BRANCH, {});
-        summaryEl.textContent = `鮮度チェックの実行をリクエストしました。数分後に「状態を更新」を押すと最新の結果を確認できます。`;
-    } catch (error) {
-        console.error(error);
-        summaryEl.textContent = `失敗しました: ${error.message}`;
-    }
-});
-
-// ===== データ更新：データ品質チェック（validate_prices.py）のGitHub Actionsワークフローを起動 =====
-document.getElementById('validate-run-btn')?.addEventListener('click', async () => {
-    const statusEl = document.getElementById('validate-status');
-    const token = getCodeTokenValue();
-    if (!token) { alert('IDを入力してください'); return; }
-
-    statusEl.textContent = '実行をリクエスト中...';
+    btn.disabled = true;
+    summaryEl.textContent = 'チェックを実行中...（鮮度チェック・品質チェックを開始しています）';
 
     try {
-        await dispatchWorkflow(token, OWNER, CODE_REPO, VALIDATE_WORKFLOW_FILE, CODE_REPO_BRANCH, {});
-        statusEl.textContent =
-            `チェックの実行をリクエストしました。数分後にデータリポジトリの ${VALIDATION_REPORT_PATH} が更新されます。` +
-            `完了後「結果を確認」で表示できます。`;
-    } catch (error) {
-        console.error(error);
-        statusEl.textContent = `失敗しました: ${error.message}`;
-    }
-});
+        // 起動前に「それまでの最新」の実行を記録しておく（新しい実行が始まったことの判定に使う）
+        const [freshnessBaseline, validationBaseline] = await Promise.all([
+            getLatestWorkflowRun(codeToken, OWNER, CODE_REPO, FRESHNESS_WORKFLOW_FILE).catch(() => null),
+            getLatestWorkflowRun(codeToken, OWNER, CODE_REPO, VALIDATE_WORKFLOW_FILE).catch(() => null),
+        ]);
 
-// ===== データ更新：データ品質チェックの結果（validation_report.json）を取得して表示 =====
-document.getElementById('validate-check-btn')?.addEventListener('click', async () => {
-    const statusEl = document.getElementById('validate-status');
-    const reportEl = document.getElementById('validate-report');
-    const token = getDataTokenValue();
-    if (!token) { alert('PWを入力してください'); return; }
+        // 鮮度チェックと品質チェックは別ファイル（freshness_report.json / validation_report.json）に
+        // コミットするため競合せず、同時に起動できる
+        await Promise.all([
+            dispatchWorkflow(codeToken, OWNER, CODE_REPO, FRESHNESS_WORKFLOW_FILE, CODE_REPO_BRANCH, {}),
+            dispatchWorkflow(codeToken, OWNER, CODE_REPO, VALIDATE_WORKFLOW_FILE, CODE_REPO_BRANCH, {}),
+        ]);
 
-    statusEl.textContent = '確認中...';
-    reportEl.innerHTML = '';
+        summaryEl.textContent = 'チェックを実行中...（完了を待っています。数分かかります）';
 
-    try {
-        const reportText = await fetchFile(token, OWNER, DATA_REPO, VALIDATION_REPORT_PATH);
-        const report = JSON.parse(reportText);
+        const [freshnessRun, validationRun] = await Promise.all([
+            waitForWorkflowRun(codeToken, FRESHNESS_WORKFLOW_FILE, freshnessBaseline ? freshnessBaseline.id : null),
+            waitForWorkflowRun(codeToken, VALIDATE_WORKFLOW_FILE, validationBaseline ? validationBaseline.id : null),
+        ]);
 
-        statusEl.textContent =
-            `チェック日時: ${report.checked_at} / 対象: ${report.total_files}銘柄 / 問題: ${report.issue_count}件`;
+        const problems = [];
+        if (!freshnessRun) problems.push('鮮度チェックの実行が見つかりませんでした');
+        else if (freshnessRun.conclusion !== 'success') problems.push(`鮮度チェックが失敗しました（結果: ${freshnessRun.conclusion}）`);
+        if (!validationRun) problems.push('品質チェックの実行が見つかりませんでした');
+        else if (validationRun.conclusion !== 'success') problems.push(`品質チェックが失敗しました（結果: ${validationRun.conclusion}）`);
 
-        if (report.issue_count > 0) {
-            // 検出された銘柄コード（重複除去）をまとめて再取得するボタン。2013年以降の全期間を取得し直すことで、
-            // 差分更新（末尾への追記のみ）では直せない途中の欠損・終値空欄・重複日付なども穴埋めする。
-            const issueCodes = Array.from(new Set(report.issues.map(issue => issue.code)));
-            const refetchBar = document.createElement('div');
-            refetchBar.className = 'validate-refetch-bar';
-            const refetchBtn = document.createElement('button');
-            refetchBtn.type = 'button';
-            refetchBtn.className = 'run-btn';
-            refetchBtn.textContent = `検出銘柄${issueCodes.length}件をまとめて再取得`;
-            refetchBtn.addEventListener('click', () => refetchIssueCodes(issueCodes, refetchBtn));
-            refetchBar.appendChild(refetchBtn);
-            reportEl.appendChild(refetchBar);
+        await loadFreshnessStatus();
 
-            // 同一内容（type+detail）の問題は銘柄をまたいで多発しやすい（例: 特定期間の連休による欠損）ため、
-            // 件数付きのサマリーとしてまとめて表示する（個々の銘柄コードの列挙はしない）
-            const groups = new Map();
-            report.issues.forEach(issue => {
-                const key = `${issue.type}::${issue.detail}`;
-                if (!groups.has(key)) groups.set(key, { type: issue.type, detail: issue.detail, count: 0 });
-                groups.get(key).count += 1;
-            });
-            const sortedGroups = Array.from(groups.values()).sort((a, b) => b.count - a.count);
-
-            const list = document.createElement('ul');
-            sortedGroups.forEach(group => {
-                const li = document.createElement('li');
-                li.className = 'validate-issue';
-
-                const label = document.createElement('span');
-                label.textContent = `${group.count}件：${group.detail}`;
-                li.appendChild(label);
-
-                // このtype+detailと完全一致する問題を「承認済み例外」として登録する（既知の連休による欠損など）。
-                // 登録後は次回のvalidate_prices.py実行（GitHub Actions）からこの内容の問題が検知対象から除外される。
-                const approveBtn = document.createElement('button');
-                approveBtn.type = 'button';
-                approveBtn.className = 'run-btn run-btn--secondary approve-btn';
-                approveBtn.textContent = '承認（次回からスキップ）';
-                approveBtn.addEventListener('click', () => approveIssue(token, group.type, group.detail, approveBtn));
-                li.appendChild(approveBtn);
-
-                list.appendChild(li);
-            });
-            reportEl.appendChild(list);
+        if (problems.length > 0) {
+            const warn = document.createElement('p');
+            warn.className = 'status-line--warning';
+            warn.textContent = problems.join(' / ') + '（GitHubのActionsタブで詳細を確認してください）';
+            summaryEl.prepend(warn);
         }
     } catch (error) {
         console.error(error);
-        statusEl.textContent = `確認に失敗しました: ${error.message}`;
+        summaryEl.textContent = `失敗しました: ${error.message}`;
+    } finally {
+        btn.disabled = false;
     }
 });
+
+// データ品質チェックの問題内訳（再取得・承認ボタン付き）をcontainerに描画する。
+// 状態パネルの「チェック」実行後、問題が1件以上あるときにloadFreshnessStatusから呼ばれる。
+function renderValidationIssues(container, token, validation) {
+    // 検出された銘柄コード（重複除去）をまとめて再取得するボタン。2013年以降の全期間を取得し直すことで、
+    // 差分更新（末尾への追記のみ）では直せない途中の欠損・終値空欄・重複日付なども穴埋めする。
+    const issueCodes = Array.from(new Set(validation.issues.map(issue => issue.code)));
+    const refetchBar = document.createElement('div');
+    refetchBar.className = 'validate-refetch-bar';
+    const refetchBtn = document.createElement('button');
+    refetchBtn.type = 'button';
+    refetchBtn.className = 'run-btn';
+    refetchBtn.textContent = `検出銘柄${issueCodes.length}件をまとめて再取得`;
+    refetchBtn.addEventListener('click', () => refetchIssueCodes(issueCodes, refetchBtn));
+    refetchBar.appendChild(refetchBtn);
+    container.appendChild(refetchBar);
+
+    // 同一内容（type+detail）の問題は銘柄をまたいで多発しやすい（例: 特定期間の連休による欠損）ため、
+    // 件数付きのサマリーとしてまとめて表示する（個々の銘柄コードの列挙はしない）
+    const groups = new Map();
+    validation.issues.forEach(issue => {
+        const key = `${issue.type}::${issue.detail}`;
+        if (!groups.has(key)) groups.set(key, { type: issue.type, detail: issue.detail, count: 0 });
+        groups.get(key).count += 1;
+    });
+    const sortedGroups = Array.from(groups.values()).sort((a, b) => b.count - a.count);
+
+    const list = document.createElement('ul');
+    list.className = 'validate-issue-list';
+    sortedGroups.forEach(group => {
+        const li = document.createElement('li');
+        li.className = 'validate-issue';
+
+        const label = document.createElement('span');
+        label.textContent = `${group.count}件：${group.detail}`;
+        li.appendChild(label);
+
+        // このtype+detailと完全一致する問題を「承認済み例外」として登録する（既知の連休による欠損など）。
+        // 登録後は次回のvalidate_prices.py実行（GitHub Actions）からこの内容の問題が検知対象から除外される。
+        const approveBtn = document.createElement('button');
+        approveBtn.type = 'button';
+        approveBtn.className = 'run-btn run-btn--secondary approve-btn';
+        approveBtn.textContent = '承認（次回からスキップ）';
+        approveBtn.addEventListener('click', () => approveIssue(token, group.type, group.detail, approveBtn));
+        li.appendChild(approveBtn);
+
+        list.appendChild(li);
+    });
+    container.appendChild(list);
+}
 
 // データ品質チェックで検出された銘柄コードをまとめて再取得するワークフロー（fetch-stock-prices-by-codes.yml）を起動する。
 // mode=fullで2013年以降の全期間を取得し直すため、差分更新では直せない途中の欠損等も穴埋めできる。

@@ -9,7 +9,7 @@ validate_prices.py（欠損・重複・日付間隔異常など行単位まで�
 import argparse
 import json
 import sys
-from collections import Counter
+from collections import Counter, defaultdict
 from datetime import datetime
 from pathlib import Path
 
@@ -67,6 +67,13 @@ def main():
     stale_codes = [code for code, d in last_dates.items() if (now - d).days > args.stale_days]
     distribution = Counter(d.strftime("%Y-%m-%d") for d in last_dates.values())
 
+    # 日付ごとの該当銘柄コード一覧（フロントエンドでの内訳表示用）。コード順に並べておく
+    codes_by_date = defaultdict(list)
+    for code, d in last_dates.items():
+        codes_by_date[d.strftime("%Y-%m-%d")].append(code)
+    for codes in codes_by_date.values():
+        codes.sort()
+
     print(
         f"対象: {len(last_dates)}銘柄 / 全体の最新日付: {latest_date.date()} / "
         f"最も遅れている銘柄: {oldest_last_date_code}（{oldest_last_date.date()}） / "
@@ -83,6 +90,7 @@ def main():
             "stale_days": args.stale_days,
             "stale_count": len(stale_codes),
             "distribution": dict(sorted(distribution.items())),
+            "codes_by_date": dict(sorted(codes_by_date.items())),
         }
         report_path = Path(args.report)
         report_path.parent.mkdir(parents=True, exist_ok=True)
