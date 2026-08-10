@@ -39,6 +39,7 @@ def fetch_close_prices(code: str, start_date: str, period: str | None):
         return data
 
     closes = data[["Close"]].rename(columns={"Close": "close"})
+    closes = closes.dropna(subset=["close"])  # 当日分の取引がまだ確定していない等で終値が空の行は保存しない
     closes["close"] = closes["close"].round(2)  # 株式分割調整の影響で細かい小数が出るため丸める
     closes.index = closes.index.tz_localize(None).normalize()  # タイムゾーン・時刻を落として日付のみにする
     closes.index.name = "date"
