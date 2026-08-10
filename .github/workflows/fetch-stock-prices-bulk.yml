@@ -27,6 +27,15 @@ on:
           - update
         default: initial
 
+# stock/prices へ書き込む他のワークフロー（単体取得・品質チェック再取得）と同じグループ名にすることで、
+# GitHub Actions自身に排他制御させる。同じファイルへ同時にコミット・pushしようとして
+# git rebase時にコンテンツ競合が起き、ジョブが失敗する事例が実際にあったため
+# （2つのpush先が同じ銘柄・同じ日付の行を追記し、リベースで自動マージできなかった）。
+# cancel-in-progress: false なので、先行する実行を止めずに後続はキューで順番待ちする。
+concurrency:
+  group: stock-prices-write
+  cancel-in-progress: false
+
 jobs:
   fetch:
     runs-on: ubuntu-latest

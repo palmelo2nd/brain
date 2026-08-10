@@ -18,6 +18,12 @@ on:
           - update
         default: full
 
+# stock/prices へ書き込む他のワークフロー（単体取得・一括取得）と同じグループ名にすることで、
+# GitHub Actions自身に排他制御させる（同時書き込みによるgit rebaseのコンテンツ競合を防ぐ）。
+concurrency:
+  group: stock-prices-write
+  cancel-in-progress: false
+
 jobs:
   fetch:
     runs-on: ubuntu-latest

@@ -1,5 +1,8 @@
 import { loadIdToken, saveIdToken, loadPwToken, savePwToken } from './modules/storage.js';
-import { dispatchWorkflow, fetchFile, fetchFileIfExists, commitFile, listFilesRecursive } from './modules/github.js';
+import {
+    dispatchWorkflow, fetchFile, fetchFileIfExists, commitFile, listFilesRecursive,
+    getLatestWorkflowRun, getWorkflowRun, getLatestCommit
+} from './modules/github.js';
 import { parseCsv } from './modules/csv.js';
 
 const OWNER              = 'palmelo2nd';
@@ -70,6 +73,11 @@ STOCK_VIEWS.forEach(v => {
     document.getElementById(`tab-${v}`)?.addEventListener('click', () => renderStockView(v));
 });
 
+// データ更新タブを開いたとき、PWが入力済みなら状態パネルを自動更新する
+document.getElementById('tab-dataupdate')?.addEventListener('click', () => {
+    if (getDataTokenValue()) loadFreshnessStatus();
+});
+
 // ===== データ更新：株価取得（yfinance）のGitHub Actionsワークフローを起動 =====
 document.getElementById('price-update-run-btn')?.addEventListener('click', async () => {
     const statusEl = document.getElementById('price-update-status');
@@ -94,6 +102,190 @@ document.getElementById('price-update-run-btn')?.addEventListener('click', async
     } catch (error) {
         console.error(error);
         statusEl.textContent = `失敗しました: ${error.message}`;
+    }
+});
+
+// ===== データ更新：株価の更新（日常運用向け・対象銘柄すべてを差分更新） =====
+// 一括取得ワークフロー（fetch-stock-prices-bulk.yml）をoffset=0・mode=updateで起動する。
+// limitは毎回master.csvから対象件数（listed×BULK_ASSET_TYPES）を数えて渡す（手動でのoffset/limit指定を不要にするため）。
+// 起動後は実行状況とコミット進捗をポーリングし、進捗バー・バナーに反映する（ブラウザを閉じるとポーリングは止まるが、
+// ワークフロー自体はGitHub側で継続するので、再度開いて「状態を更新」を押せば結果は確認できる）。
+
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+let bulkUpdateTrackingGen = 0; // ボタン多重クリック時、古いポーリングを打ち切るための世代カウンタ
+
+function setBulkUpdateBanner(state, text) {
+    const el = document.getElementById('price-update-all-status');
+    el.textContent = text;
+    el.classList.remove('update-banner--running', 'update-banner--success', 'update-banner--failure');
+    if (state) el.classList.add(`update-banner--${state}`);
+}
+
+function setBulkUpdateProgress(processed, target) {
+    const wrap = document.getElementById('price-update-all-progress');
+    const bar = document.getElementById('price-update-all-bar');
+    const percentEl = document.getElementById('price-update-all-percent');
+    const pct = target > 0 ? Math.min(100, Math.round((processed / target) * 100)) : 0;
+
+    wrap.style.display = '';
+    bar.value = pct;
+    percentEl.textContent = `${pct}%（${Math.min(processed, target)}/${target}）`;
+}
+
+// コミットメッセージ「...offset=123, count=20）」からoffset・countを取り出し、処理済み件数（offset+count）を返す
+function parseProcessedFromCommitMessage(message) {
+    const m = message && message.match(/offset=(\d+),\s*count=(\d+)/);
+    return m ? Number(m[1]) + Number(m[2]) : null;
+}
+
+// baselineRun/baselineCommit: 起動直前（dispatchWorkflowを呼ぶ前）に取得しておいた「それまでの最新」の状態。
+// created_at等の時刻比較ではなく、この基準からid/shaが変化したかどうかで新しい実行・コミットを判定する
+// （ブラウザ側の時計がGitHubサーバー側とズレていても正しく動く）。
+async function trackBulkUpdateProgress(myGen, baselineRun, baselineCommit, targetCount, btn) {
+    const codeToken = getCodeTokenValue();
+    const dataToken = getDataTokenValue();
+    const baselineRunId = baselineRun ? baselineRun.id : null;
+    const baselineCommitSha = baselineCommit ? baselineCommit.sha : null;
+
+    // (a) 一覧の先頭がbaselineから変わる（＝新しい実行が始まった）まで探す（最大30秒）
+    let run = null;
+    let lastError = null;
+    let lastSeenRunId = null;
+    for (let i = 0; i < 10; i++) {
+        if (myGen !== bulkUpdateTrackingGen) return; // 別の実行が始まっていたら中断
+        try {
+            const latest = await getLatestWorkflowRun(codeToken, OWNER, CODE_REPO, PRICE_BULK_WORKFLOW_FILE);
+            lastSeenRunId = latest ? latest.id : null;
+            lastError = null;
+            if (latest && latest.id !== baselineRunId) run = latest;
+        } catch (error) {
+            console.error(error);
+            lastError = error;
+        }
+        if (run) break;
+        await sleep(3000);
+    }
+
+    if (!run) {
+        // 原因調査用に、最後に何が起きていたか（APIエラー／一覧の先頭が変わらなかった等）をバナーに出す
+        const detail = lastError
+            ? `直近のエラー: ${lastError.message}`
+            : `直近の一覧の先頭run id: ${lastSeenRunId ?? 'なし'}（起動前と同じ: ${lastSeenRunId === baselineRunId}）`;
+        setBulkUpdateBanner('failure',
+            `実行の自動追跡に失敗しました（一覧に新しい実行が見つかりませんでした）。リクエスト自体は送信済みです。` +
+            `GitHubのActionsタブから状況を確認してください。[${detail}]`);
+        btn.disabled = false;
+        return;
+    }
+
+    // (b) 完了するまで、実行状況とコミット進捗を定期的に確認する
+    while (myGen === bulkUpdateTrackingGen) {
+        try {
+            const latestRun = await getWorkflowRun(codeToken, OWNER, CODE_REPO, run.id);
+
+            const commit = await getLatestCommit(dataToken, OWNER, DATA_REPO, DATA_REPO_BRANCH, PRICES_DIR);
+            if (commit && commit.sha !== baselineCommitSha) {
+                const processed = parseProcessedFromCommitMessage(commit.message);
+                if (processed !== null) setBulkUpdateProgress(processed, targetCount);
+            }
+
+            if (latestRun.status === 'completed') {
+                const ok = latestRun.conclusion === 'success';
+                setBulkUpdateProgress(targetCount, targetCount);
+                setBulkUpdateBanner(ok ? 'success' : 'failure',
+                    ok
+                        ? `完了しました（対象 ${targetCount}銘柄・差分更新）。状態パネルを更新します...`
+                        : `完了しましたが、一部失敗した可能性があります（結果: ${latestRun.conclusion}）。詳細はGitHubのActionsタブで確認してください。`
+                );
+                btn.disabled = false;
+                loadFreshnessStatus();
+                return;
+            }
+
+            setBulkUpdateBanner('running',
+                latestRun.status === 'queued' ? 'キューに登録されました。開始を待っています...' : '実行中...'
+            );
+        } catch (error) {
+            console.error(error);
+        }
+        await sleep(15000);
+    }
+}
+
+document.getElementById('price-update-all-btn')?.addEventListener('click', async (event) => {
+    const btn = event.currentTarget;
+    const codeToken = getCodeTokenValue();
+    const dataToken = getDataTokenValue();
+    if (!codeToken) { alert('IDを入力してください'); return; }
+    if (!dataToken) { alert('PWを入力してください（対象銘柄数の確認・進捗表示に使用します）'); return; }
+
+    // 実行中の多重クリックによる二重起動を防ぐ（GitHub Actions側のconcurrency設定が本丸の対策だが、
+    // UI側でも防げるに越したことはない。トラッキングが終わるまで再度押せないようにする）
+    btn.disabled = true;
+
+    document.getElementById('price-update-all-progress').style.display = 'none';
+    setBulkUpdateBanner('running', '対象銘柄数を確認中...');
+
+    try {
+        const masterText = await fetchFile(dataToken, OWNER, DATA_REPO, MASTER_PATH);
+        const allRows = parseCsv(masterText);
+        const targetCount = allRows.filter(r =>
+            r.status === 'listed' && BULK_ASSET_TYPES.includes(r.asset_type)
+        ).length;
+
+        if (targetCount === 0) {
+            // master.csvは取得できたが対象銘柄が0件 ＝ 内容が想定と異なる可能性が高い（権限エラーなら例外で分かる）。
+            // 開発者ツールを開かなくても原因調査できるよう、実際に取得できた内容をバナーに直接表示する。ワークフローは起動しない。
+            const headSnippet = masterText.slice(0, 200).replace(/\s+/g, ' ').trim();
+            setBulkUpdateBanner('failure',
+                `対象銘柄が0件でした。ワークフローは起動していません。` +
+                `[取得文字数: ${masterText.length} / 解析できた行数: ${allRows.length}件 / ` +
+                `1行目の解析結果: ${JSON.stringify(allRows[0] ?? null)}] ` +
+                `[内容の先頭200文字: "${headSnippet}${masterText.length > 200 ? '...' : ''}"]`);
+            btn.disabled = false;
+            return;
+        }
+
+        setBulkUpdateBanner('running', '実行状況を確認中...');
+
+        // ワークフロー特定・進捗追跡のため、起動直前の「それまでの最新」状態をベースラインとして記録しておく
+        // （時刻での比較ではなく、この基準からid/shaが変化したかどうかで新しい実行・コミットを判定する）
+        const [baselineRun, baselineCommit] = await Promise.all([
+            getLatestWorkflowRun(codeToken, OWNER, CODE_REPO, PRICE_BULK_WORKFLOW_FILE).catch(() => null),
+            getLatestCommit(dataToken, OWNER, DATA_REPO, DATA_REPO_BRANCH, PRICES_DIR).catch(() => null),
+        ]);
+
+        // 前回の実行がまだ動いている状態でもう一度起動すると、同じディレクトリへ同時にコミット・pushしようとして
+        // 競合し、片方が失敗することがある（実際に発生した事例あり）。事前に警告し、続行するか確認する。
+        if (baselineRun && (baselineRun.status === 'in_progress' || baselineRun.status === 'queued')) {
+            const proceed = confirm(
+                '前回の「最新株価に更新」がまだ実行中の可能性があります。\n' +
+                '同時に実行すると、データリポジトリへのコミットが競合し、片方が失敗する場合があります。\n' +
+                'それでも実行しますか？'
+            );
+            if (!proceed) {
+                setBulkUpdateBanner(null, '実行をキャンセルしました。前回の実行が完了してから再度お試しください。');
+                btn.disabled = false;
+                return;
+            }
+        }
+
+        setBulkUpdateBanner('running', '実行をリクエスト中...');
+
+        await dispatchWorkflow(codeToken, OWNER, CODE_REPO, PRICE_BULK_WORKFLOW_FILE, CODE_REPO_BRANCH, {
+            offset: '0', limit: String(targetCount), mode: 'update'
+        });
+
+        setBulkUpdateProgress(0, targetCount);
+        setBulkUpdateBanner('running', `実行をリクエストしました（対象 ${targetCount}銘柄・差分更新）。実行状況を確認しています...`);
+
+        bulkUpdateTrackingGen += 1;
+        trackBulkUpdateProgress(bulkUpdateTrackingGen, baselineRun, baselineCommit, targetCount, btn);
+    } catch (error) {
+        console.error(error);
+        setBulkUpdateBanner('failure', `失敗しました: ${error.message}`);
+        btn.disabled = false;
     }
 });
 
@@ -170,45 +362,88 @@ document.getElementById('bulk-update-check-btn')?.addEventListener('click', asyn
     }
 });
 
-// ===== データ更新：データ鮮度チェック（check_freshness.py）のGitHub Actionsワークフローを起動 =====
-document.getElementById('freshness-run-btn')?.addEventListener('click', async () => {
-    const statusEl = document.getElementById('freshness-status');
+// ===== データ更新：現在の状態パネル（freshness_report.json・validation_report.jsonを読み込んで常時表示用に整形） =====
+async function loadFreshnessStatus() {
+    const summaryEl = document.getElementById('status-summary');
+    const token = getDataTokenValue();
+    if (!token) { summaryEl.textContent = 'PWを入力し「状態を更新」を押してください。'; return; }
+
+    summaryEl.textContent = '状態を確認中...';
+
+    try {
+        // 品質チェックの結果は未実行だとファイル自体が存在しないため、fetchFileIfExistsでnull許容にする
+        const [reportText, validationText] = await Promise.all([
+            fetchFile(token, OWNER, DATA_REPO, FRESHNESS_REPORT_PATH),
+            fetchFileIfExists(token, OWNER, DATA_REPO, VALIDATION_REPORT_PATH),
+        ]);
+        const report = JSON.parse(reportText);
+        const validation = validationText ? JSON.parse(validationText) : null;
+
+        summaryEl.innerHTML = '';
+
+        const lines = document.createElement('div');
+        lines.className = 'status-lines';
+        [
+            `チェック日時: ${report.checked_at}`,
+            `対象: ${report.total_files}銘柄 / 全体の最新日付: ${report.latest_date}`,
+            `要更新（${report.stale_days}日超過）: ${report.stale_count}件 / 最も遅れている銘柄: ${report.oldest_last_date_code}（${report.oldest_last_date}）`,
+        ].forEach(text => {
+            const p = document.createElement('p');
+            p.textContent = text;
+            lines.appendChild(p);
+        });
+
+        // 品質チェック（欠損・重複等）の問題件数。詳細は詳細設定の「データ品質チェック」で確認・対処する。
+        const qualityP = document.createElement('p');
+        if (!validation) {
+            qualityP.textContent = '品質チェック: 未実行です（詳細設定から実行できます）';
+        } else if (validation.issue_count > 0) {
+            qualityP.textContent =
+                `品質チェック（${validation.checked_at}時点）: 問題 ${validation.issue_count}件` +
+                `（詳細設定の「データ品質チェック」で確認できます）`;
+            qualityP.classList.add('status-line--warning');
+        } else {
+            qualityP.textContent = `品質チェック（${validation.checked_at}時点）: 問題なし`;
+        }
+        lines.appendChild(qualityP);
+
+        summaryEl.appendChild(lines);
+
+        // 銘柄ごとの最終日付の分布（新しい日付が上に来るように降順）。
+        // 大半が最新日付に揃っていれば正常、古い日付に銘柄が散っていれば取りこぼしがあると分かる。
+        if (report.distribution) {
+            const entries = Object.entries(report.distribution).sort((a, b) => b[0].localeCompare(a[0]));
+            const list = document.createElement('ul');
+            list.className = 'status-distribution';
+            entries.forEach(([date, count]) => {
+                const li = document.createElement('li');
+                li.textContent = `${date}: ${count}銘柄`;
+                list.appendChild(li);
+            });
+            summaryEl.appendChild(list);
+        }
+    } catch (error) {
+        console.error(error);
+        summaryEl.textContent = `状態の取得に失敗しました: ${error.message}`;
+    }
+}
+
+document.getElementById('status-refresh-btn')?.addEventListener('click', () => loadFreshnessStatus());
+
+// ===== データ更新：データ鮮度チェック（check_freshness.py）のGitHub Actionsワークフローを再実行 =====
+document.getElementById('status-recheck-btn')?.addEventListener('click', async () => {
+    const summaryEl = document.getElementById('status-summary');
     const token = getCodeTokenValue();
     if (!token) { alert('IDを入力してください'); return; }
 
-    statusEl.textContent = '実行をリクエスト中...';
+    summaryEl.textContent = '鮮度チェックの実行をリクエスト中...';
 
     try {
         await dispatchWorkflow(token, OWNER, CODE_REPO, FRESHNESS_WORKFLOW_FILE, CODE_REPO_BRANCH, {});
-        statusEl.textContent =
-            `鮮度チェックの実行をリクエストしました。数分後にデータリポジトリの ${FRESHNESS_REPORT_PATH} が更新されます。` +
-            `完了後「結果を確認」で表示できます。`;
+        summaryEl.textContent = `鮮度チェックの実行をリクエストしました。数分後に「状態を更新」を押すと最新の結果を確認できます。`;
     } catch (error) {
         console.error(error);
-        statusEl.textContent = `失敗しました: ${error.message}`;
-    }
-});
-
-// ===== データ更新：データ鮮度チェックの結果（freshness_report.json）を取得して表示 =====
-document.getElementById('freshness-check-btn')?.addEventListener('click', async () => {
-    const statusEl = document.getElementById('freshness-status');
-    const token = getDataTokenValue();
-    if (!token) { alert('PWを入力してください'); return; }
-
-    statusEl.textContent = '確認中...';
-
-    try {
-        const reportText = await fetchFile(token, OWNER, DATA_REPO, FRESHNESS_REPORT_PATH);
-        const report = JSON.parse(reportText);
-
-        statusEl.textContent =
-            `チェック日時: ${report.checked_at} / 対象: ${report.total_files}銘柄 / ` +
-            `全体の最新日付: ${report.latest_date} / ` +
-            `最も遅れている銘柄: ${report.oldest_last_date_code}（${report.oldest_last_date}） / ` +
-            `要更新（${report.stale_days}日超過）: ${report.stale_count}件`;
-    } catch (error) {
-        console.error(error);
-        statusEl.textContent = `確認に失敗しました: ${error.message}`;
+        summaryEl.textContent = `失敗しました: ${error.message}`;
     }
 });
 
