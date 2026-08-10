@@ -78,9 +78,6 @@ def main():
     parser.add_argument("--codes", default=None, help="検証対象の証券コード（カンマ区切り。省略時はディレクトリ内の全CSVを検証）")
     parser.add_argument("--max-gap-days", type=int, default=DEFAULT_MAX_GAP_DAYS, help="これを超える日数の間隔を異常とみなす")
     parser.add_argument("--report", default=None, help="検証結果をJSON形式で書き出すファイルパス（省略時は書き出さない）")
-    parser.add_argument("--exceptions", default=None,
-                         help="承認済み例外が書かれたJSONファイルのパス（type+detailが完全一致する問題を検知対象から除外する。"
-                              "ファイルが存在しない場合は除外なしとして扱う）")
     args = parser.parse_args()
 
     target_dir = Path(args.dir)
@@ -100,26 +97,11 @@ def main():
             continue
         all_issues.extend(validate_file(path, args.max_gap_days))
 
-    # 承認済み例外（type+detailが完全一致）を検知対象から除外する。連休による欠損など、既知で問題ない
-    # ものを一度承認しておけば、以降の実行では毎回同じ内容として再検知されないようにするための仕組み。
-    skipped_count = 0
-    if args.exceptions:
-        exceptions_path = Path(args.exceptions)
-        if exceptions_path.exists():
-            with open(exceptions_path, encoding="utf-8") as f:
-                approved = {(e["type"], e["detail"]) for e in json.load(f)}
-            before = len(all_issues)
-            all_issues = [issue for issue in all_issues if (issue["type"], issue["detail"]) not in approved]
-            skipped_count = before - len(all_issues)
-            if skipped_count:
-                print(f"承認済み例外により {skipped_count} 件をスキップしました", file=sys.stderr)
-
     if args.report:
         report = {
             "checked_at": datetime.now().isoformat(timespec="seconds"),
             "total_files": len(files),
             "issue_count": len(all_issues),
-            "skipped_count": skipped_count,
             "issues": all_issues,
         }
         report_path = Path(args.report)
