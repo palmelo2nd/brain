@@ -220,6 +220,23 @@
                     <p id="bulk-update-status" class="update-status"></p>
                 </div>
             </details>
+
+            <!-- IRBANK企業ID取得：内国株式の企業ID(EID)・URL・社名を取得し、stock/irbank.csvを更新する。
+                 将来の業績情報（配当等）取得の前提データ（EIDが無いとIRBANKの個別ページを特定できない） -->
+            <div class="update-form status-panel">
+                <p class="update-form-title">現在の状態（IRBANK企業ID）</p>
+                <div class="status-actions">
+                    <button type="button" id="irbank-status-check-btn" class="run-btn">チェック</button>
+                </div>
+                <div id="irbank-status-summary" class="update-status">トークンを入力し「チェック」を押してください。</div>
+            </div>
+
+            <div class="update-form">
+                <p class="update-form-title">IRBANK企業IDの取得</p>
+                <p class="placeholder-text">内国株式の銘柄マスタを対象に、IRBANKの企業ID（EID）・URL・社名を取得します（取得済みの銘柄は再取得しません）。</p>
+                <button type="button" id="irbank-update-all-btn" class="run-btn">未取得分をまとめて取得</button>
+                <p id="irbank-update-all-status" class="update-status"></p>
+            </div>
         </div>
 
         <!-- 銘柄属性：上場銘柄一覧を母集団に、ラベル付け（高配当認定・高利回り優待認定・NG認定など） -->

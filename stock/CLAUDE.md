@@ -20,7 +20,7 @@
 
 ### 現在の modules 構成
 
-`storage.js`（トークンのLocalStorageキャッシュ）／`github.js`（GitHub API通信）／`csv.js`（CSVパース）。
+`storage.js`（トークンのLocalStorageキャッシュ）／`github.js`（GitHub API通信）／`csv.js`（CSVパース・書き出し）／`brokerCsv.js`（証券会社ネイティブCSVのパース）／`holdingsSummary.js`（保有銘柄の階層集計）。
 
 ### modules の関数構成（必須4段落）
 
@@ -43,7 +43,7 @@
 ### .github/workflows/*.yml の規約
 
 - `workflow_dispatch`で手動起動し、実行時パラメータは`inputs`で受け取る（コード側からは`dispatchWorkflow`でPOSTする）。
-- データリポジトリの`stock/prices/`へ書き込む系のワークフローは、concurrencyグループ`stock-prices-write`を共有し、同時書き込みによるgit rebase競合を防ぐ（`cancel-in-progress: false`で先行実行を止めずキュー待ちさせる）。
+- 同じファイル（群）へ書き込む系のワークフローは、対象ファイルごとのconcurrencyグループ（例: `stock/prices/`書き込み系＝`stock-prices-write`、`stock/irbank.csv`書き込み系＝`stock-irbank-write`）を共有し、同時書き込みによるgit rebase競合を防ぐ（`cancel-in-progress: false`で先行実行を止めずキュー待ちさせる）。新しく書き込み先ファイルを増やす場合は、既存グループに混ぜず新しいグループ名を割り当てる（無関係な書き込み同士が互いを待つ無駄を避けるため）。
 - 大量データを扱うワークフローは一定件数（既存実装は20件）のサブバッチ単位で都度コミット・pushし、途中で失敗しても成功分は失われないようにする。
 - コードリポジトリ（`palmelo2nd/brain`）・データリポジトリ（`palmelo2nd/brain_data`）の両方をcheckoutし、変更はデータリポジトリ側にのみコミット・pushする。
 
@@ -77,6 +77,11 @@ brainアプリと異なり、stockは銘柄数×期間で合計データ量が�
 ### データパース・整合性
 
 - CSV／JSONのパースはキー名（プロパティ名・列名）ベースで行う。行番号・インデックス依存のアクセスは禁止。
+
+### データファイルの分離方針（「作り直せるデータ」と「積み上げるデータ」を混ぜない）
+
+- **Why（2026-08-11判断）:** `master.csv`はJPX公式データ（`data_j_*.xls`）から`build_stock_master.py`が毎回まるごと再生成する、決定論的に作り直せる派生データ。一方、IRBANKスクレイピングで取得するID/URL（`stock/irbank.csv`）や、将来の人手ラベル（`stock/labels.csv`想定）は、再取得・再入力のコストが高い「積み上げ型」のデータ。両者を同じファイルに同居させると、`master.csv`の再生成ロジックが「全列保持マージ」のような複雑な処理を持たざるを得なくなる（旧Jupyter実装が複雑化した直接の原因）。
+- **How to apply:** `master.csv`に列を追加する形で新しいデータを持たせようとしていないか、実装前に必ず確認する。「作り直せるデータ」か「積み上げるデータ」かで判断し、後者は必ず別ファイル（`code`列で結合）にする。書き込み元（GitHub Actions＝スクリプト側／ブラウザ＝UI側）が異なるデータは、可能な限り別ファイルに分ける（同時書き込みの競合を避けるため。[.github/workflows/*.ymlの規約](#githubworkflowsymlの規約)のconcurrencyグループ分けとも対応させる）。
 
 ---
 

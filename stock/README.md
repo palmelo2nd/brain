@@ -24,6 +24,7 @@
   - [4.3 詳細設定（株価取得）](#43-詳細設定株価取得)
     - [4.3.1 株価取得（銘柄コードを直接指定）](#431-株価取得銘柄コードを直接指定)
     - [4.3.2 株価一括取得（銘柄マスタから範囲指定）](#432-株価一括取得銘柄マスタから範囲指定)
+  - [4.4 IRBANK企業ID取得](#44-irbank企業id取得)
 - [5. 銘柄属性（開発中）](#5-銘柄属性開発中)
 - [6. スコア（開発中）](#6-スコア開発中)
 - [7. 銘柄提案（開発中）](#7-銘柄提案開発中)
@@ -51,7 +52,7 @@ Webフロントエンド（`index.html` / `css/` / `js/`）と、GitHub Actions�
 | `js/modules/*.js` | 機能ロジック。1機能1ファイル |
 | `scripts/*.py` | GitHub Actions上で実行するデータ取得・加工・検証スクリプト |
 
-現在の`js/modules`構成：`storage.js`（トークンのLocalStorageキャッシュ）／`github.js`（GitHub API通信）／`csv.js`（CSVパース）。
+現在の`js/modules`構成：`storage.js`（トークンのLocalStorageキャッシュ）／`github.js`（GitHub API通信）／`csv.js`（CSVパース・書き出し）／`brokerCsv.js`（証券会社ネイティブCSVのパース。SBI・楽天）／`holdingsSummary.js`（保有銘柄の所有者別階層集計）。
 
 modules配下の関数は4段落構成でexportする：(1) インポート → (2) インプット（引数でデータ・トークンを受け取る） → (3) メイン機能 → (4) アウトプット（`return`）。禁止事項：modules内でのDOM操作（`document.getElementById`等）、OWNER名・REPO名等の環境依存定数のハードコード（必ず引数として受け取る）。
 
@@ -158,6 +159,15 @@ modules配下の関数は4段落構成でexportする：(1) インポート → 
 
 - 「取得状況を確認」ボタン：銘柄マスタの対象行と、データリポジトリの`stock/prices/`配下に既に存在するCSV（Git Trees APIで再帰的に列挙）を突き合わせ、取得済み件数・残り件数・次の開始位置候補（未取得の中で最小の位置）を算出し、開始位置欄に自動入力する。
 
+### 4.4 IRBANK企業ID取得
+
+IRBANK（irbank.net）から内国株式の企業ID（EID）・URL・社名を取得し、`stock/irbank.csv`を更新する。将来の業績情報（配当等）取得の前提データ（EIDが無いとIRBANKの個別企業ページを特定できない）。
+
+- **対象**：`master.csv`の`status=listed`かつ`asset_type=内国株式`の銘柄のみ（ETF・REIT・PRO Market等はIRBANKの個別企業ページを持たないため対象外）。
+- **`master.csv`とは別ファイルにしている理由**：`master.csv`はJPX公式データから毎回まるごと作り直せる派生データだが、`stock/irbank.csv`はスクレイピングで積み上げた（再取得コストが高い）データのため、`master.csv`の再生成（`build_stock_master.py`）で失われないよう独立させている。同じ理由で、将来のラベル付け（[5. 銘柄属性](#5-銘柄属性開発中)）も`master.csv`ではなく別ファイル（`stock/labels.csv`想定・未実装）に持たせる方針。
+- **現在の状態**：「チェック」ボタンで`stock/irbank.csv`と対象銘柄数を突き合わせ、取得済み／未取得（`not_found`＝要再挑戦）／未着手の件数を表示する。
+- **取得**：「未取得分をまとめて取得」ボタンで、対象銘柄数を数えて一括取得ワークフロー（`fetch-irbank-ids.yml`）を`offset=0`で起動する（取得済み銘柄は`fetch_irbank_ids.py`側が自動スキップ）。20件処理するごとに自動コミット。株価取得と同様、進捗のライブ追跡は行わない（GitHubのActionsタブで確認する）。
+
 ---
 
 ## 5. 銘柄属性（開発中）
@@ -206,7 +216,7 @@ modules配下の関数は4段落構成でexportする：(1) インポート → 
 
 ## 添付2. バックエンド構成（GitHub Actions × Pythonスクリプト）
 
-株価データの取得・検証はすべてGitHub Actionsのワークフロー（`workflow_dispatch`で手動起動）として実装し、フロントエンドからGitHub APIで起動する。`stock/prices/`へ書き込む系のワークフローは同じconcurrencyグループ（`stock-prices-write`）を共有し、同時書き込みによるgitの競合（同一ファイルへのpush競合）を防いでいる。
+株価・IRBANK企業IDの取得・検証はすべてGitHub Actionsのワークフロー（`workflow_dispatch`で手動起動）として実装し、フロントエンドからGitHub APIで起動する。同じファイルへ書き込む系のワークフローは同じconcurrencyグループを共有し、同時書き込みによるgitの競合（同一ファイルへのpush競合）を防いでいる（`stock/prices/`書き込み系＝`stock-prices-write`、`stock/irbank.csv`書き込み系＝`stock-irbank-write`）。
 
 | ワークフロー（`.github/workflows/`） | 対応スクリプト | 起動元 | 内容 |
 |---|---|---|---|
@@ -216,6 +226,7 @@ modules配下の関数は4段落構成でexportする：(1) インポート → 
 | `check-price-freshness.yml` | `check_freshness.py` | [4.1](#41-現在の状態株価)の「チェック」 | 銘柄ごとの最終日付を集計し`stock/freshness_report.json`を出力 |
 | `validate-stock-prices.yml` | `validate_prices.py` | [4.1](#41-現在の状態株価)の「チェック」 | 欠損・重複・日付間隔異常等を検出し`stock/validation_report.json`を出力 |
 | `clean-missing-close.yml` | `clean_missing_close.py` | アプリ未接続（GitHub Actionsタブから手動実行） | 旧`fetch_prices.py`が保存した終値空行を一括除去する一回限りの修復用 |
+| `fetch-irbank-ids.yml` | `fetch_irbank_ids.py --master` | [4.4](#44-irbank企業id取得) | 内国株式を対象にIRBANKの企業ID・URL・社名を範囲指定で一括取得。20件ごとに自動コミット |
 
 その他のスクリプト：
 
@@ -232,6 +243,7 @@ modules配下の関数は4段落構成でexportする：(1) インポート → 
 | `stock/master.csv` | 銘柄マスタ。列：`id, code, name, market, segment, asset_type, industry33_code, industry33_name, industry17_code, industry17_name, scale_code, scale_name, status, source, as_of`。`build_stock_master.py`が生成（2026-06-30時点で4,437銘柄） |
 | `stock/prices/{code}.csv` | 銘柄コードごとの日足終値。列：`date, close`。2013年以降を`fetch_prices.py`が取得・追記 |
 | `stock/holdings.csv` | 保有銘柄一覧。列：`id, owner, broker, account, code, shares, avg_cost`。[3.1 保有銘柄](#31-保有銘柄)ページから手入力で登録・保存（アプリからの保存時に一覧全体を洗い替え） |
+| `stock/irbank.csv` | IRBANK企業ID一覧（内国株式のみ）。列：`code, eid, url, name, status, updated_at`。[4.4](#44-irbank企業id取得)から`fetch_irbank_ids.py`が取得・追記（差分更新。`master.csv`とは別ファイルで、`master.csv`の再生成では消えない） |
 | `stock/freshness_report.json` | [4.1](#41-現在の状態株価)「更新最終日」の表示元 |
 | `stock/validation_report.json` | [4.1](#41-現在の状態株価)「データ品質」の表示元。未実行時はファイル自体が存在しない |
 | `stock/input/listed_companies/` | `build_stock_master.py`の入力元（JPX公開の`data_j_*.xls`） |

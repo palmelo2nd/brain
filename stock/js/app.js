@@ -26,6 +26,9 @@ const HOLDINGS_PATH = 'stock/holdings.csv';
 const HOLDINGS_HEADERS = ['id', 'owner', 'broker', 'account', 'code', 'shares', 'avg_cost'];
 const HOLDINGS_CODE_DISPLAY_MAX = 10; // 一覧表のコード列・銘柄名列の最大表示文字数（全角10文字相当。超過分は…で省略）
 const BULK_ASSET_TYPES = ['内国株式', 'ETF・ETN']; // fetch_prices.pyの--asset-types既定値と揃えている
+const IRBANK_PATH = 'stock/irbank.csv';
+const IRBANK_WORKFLOW_FILE = 'fetch-irbank-ids.yml';
+const IRBANK_ASSET_TYPE = '内国株式'; // fetch_irbank_ids.pyの対象絞り込みと揃えている（ETF・REIT等はIRBANKの個別企業ページを持たない）
 
 // ===== GitHub PAT入力欄 =====
 // brain（コードリポジトリ）・brain_data（データリポジトリ）の両方に対して
@@ -1135,5 +1138,82 @@ document.getElementById('holdings-csv-import-btn')?.addEventListener('click', as
     } catch (error) {
         console.error(error);
         statusEl.textContent = `取り込みに失敗しました: ${error.message}`;
+    }
+});
+
+// ===== データ更新：IRBANK企業ID取得（stock/irbank.csv。内国株式のEID・URL・社名） =====
+// master.csvとは別ファイルにする理由: master.csvはJPX公式データからいつでも作り直せる派生データだが、
+// irbank.csvはスクレイピングで積み上げた（再取得コストが高い）データのため、master.csvの再生成で
+// 消えないよう独立させている（詳細はREADME参照）。
+
+/** stock/irbank.csv を読み込み、内国株式の取得状況（取得済み／未取得）を集計して表示する。 */
+async function loadIrbankStatus() {
+    const summaryEl = document.getElementById('irbank-status-summary');
+    const token = getTokenValue();
+    if (!token) { summaryEl.textContent = 'トークンを入力し「チェック」を押してください。'; return; }
+
+    summaryEl.textContent = '状態を確認中...';
+
+    try {
+        const [masterText, irbankText] = await Promise.all([
+            fetchFile(token, OWNER, DATA_REPO, MASTER_PATH),
+            fetchFileIfExists(token, OWNER, DATA_REPO, IRBANK_PATH),
+        ]);
+
+        const targetRows = parseCsv(masterText).filter(r => r.status === 'listed' && r.asset_type === IRBANK_ASSET_TYPE);
+        const irbankRows = irbankText ? parseCsv(irbankText) : [];
+        const irbankByCode = new Map(irbankRows.map(r => [r.code, r]));
+
+        let okCount = 0;
+        let notFoundCount = 0;
+        let missingCount = 0;
+        targetRows.forEach(row => {
+            const irbankRow = irbankByCode.get(row.code);
+            if (irbankRow && irbankRow.status === 'ok' && irbankRow.eid) okCount++;
+            else if (irbankRow && irbankRow.status === 'not_found') notFoundCount++;
+            else missingCount++;
+        });
+
+        summaryEl.textContent =
+            `対象（内国株式）: ${targetRows.length}銘柄 / 取得済み: ${okCount}件 / ` +
+            `未取得（要再挑戦）: ${notFoundCount}件 / 未着手: ${missingCount}件`;
+    } catch (error) {
+        console.error(error);
+        summaryEl.textContent = `状態の取得に失敗しました: ${error.message}`;
+    }
+}
+
+document.getElementById('irbank-status-check-btn')?.addEventListener('click', loadIrbankStatus);
+
+// 未取得分（status!=ok）をまとめて取得する。対象件数はmaster.csvの内国株式数から毎回数え、
+// 取得済み銘柄はワークフロー側（fetch_irbank_ids.py）が自動的にスキップする。
+document.getElementById('irbank-update-all-btn')?.addEventListener('click', async () => {
+    const statusEl = document.getElementById('irbank-update-all-status');
+    const token = getTokenValue();
+    if (!token) { alert('トークンを入力してください'); return; }
+
+    statusEl.textContent = '対象銘柄数を確認中...';
+
+    try {
+        const masterText = await fetchFile(token, OWNER, DATA_REPO, MASTER_PATH);
+        const targetCount = parseCsv(masterText).filter(r => r.status === 'listed' && r.asset_type === IRBANK_ASSET_TYPE).length;
+
+        if (targetCount === 0) {
+            statusEl.textContent = '対象銘柄が0件でした。ワークフローは起動していません。';
+            return;
+        }
+
+        statusEl.textContent = '実行をリクエスト中...';
+        await dispatchWorkflow(token, OWNER, CODE_REPO, IRBANK_WORKFLOW_FILE, CODE_REPO_BRANCH, {
+            offset: '0', limit: String(targetCount)
+        });
+
+        statusEl.textContent =
+            `実行をリクエストしました（対象 ${targetCount}銘柄・取得済みは自動スキップ）。` +
+            `20件処理するごとにデータリポジトリへ自動コミットされます。数十分〜数時間かかる場合があります。` +
+            `GitHubの Actions タブから進捗を確認できます。完了後は上の「チェック」で状況を確認してください。`;
+    } catch (error) {
+        console.error(error);
+        statusEl.textContent = `失敗しました: ${error.message}`;
     }
 });
