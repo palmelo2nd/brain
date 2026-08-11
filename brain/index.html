@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Second Brain タスク管理</title>
-    <link rel="stylesheet" href="css/style.css?v=4">
+    <link rel="stylesheet" href="css/style.css?v=5">
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
@@ -473,12 +473,13 @@
                 </div>
             </div>
 
-            <!-- 表示切り替え（タスク整理／繰返し／タスク実行／INBOX／編集／プロジェクト／データ） -->
+            <!-- 表示切り替え（タスク整理／繰返し／タスク実行／INBOX／編集／プロジェクト／データ／Info） -->
             <div class="taskorg-view-toggle summary-main-tabs">
                 <button type="button" id="summary-tab-taskorg2" class="taskorg-view-btn taskorg-view-btn--active" data-view="taskorg2">タスク管理</button>
                 <button type="button" id="summary-tab-top" class="taskorg-view-btn" data-view="top">INBOX</button>
                 <button type="button" id="summary-tab-edit2" class="taskorg-view-btn" data-view="edit2">データ編集</button>
                 <button type="button" id="summary-tab-knowledge" class="taskorg-view-btn" data-view="knowledge">ナレッジ</button>
+                <button type="button" id="summary-tab-info" class="taskorg-view-btn" data-view="info">Info</button>
             </div>
 
             <!-- INBOX（既定はデータ区分＝INBOX。タスク／ナレッジを選んだ場合も、生成される行はタイトル・内容以外は空欄にする） -->
@@ -713,6 +714,14 @@
                 </details>
             </div>
 
+            <!-- Info：コードリポジトリのREADME.md（アプリ概要）を表示するページ -->
+            <div id="summary-view-info" class="summary-view-panel" style="display:none">
+                <div class="triage-toolbar">
+                    <button type="button" id="info-reload-btn" class="triage-btn triage-btn--primary">再読込</button>
+                </div>
+                <div id="info-content" class="markdown-body">Loadが済んだ状態でこのタブを開くと、README.mdの内容を表示します。</div>
+            </div>
+
         </div>
 
         <!-- 編集（親ID方式、INBOX／タスク／ナレッジ 統合編集・新規登録、Summaryページ「編集」タブに表示） -->
@@ -855,6 +864,6 @@
 
 </div>
 
-<script type="module" src="js/app.js?v=11"></script>
+<script type="module" src="js/app.js?v=12"></script>
 </body>
 </html>

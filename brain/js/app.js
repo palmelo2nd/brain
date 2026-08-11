@@ -46,6 +46,9 @@ const OWNER = 'palmelo2nd';
 const REPO  = 'brain_data';
 const PATH  = 'brain/data.md';
 
+const CODE_REPO    = 'brain';        // アプリ本体・README.mdが置かれているコードリポジトリ
+const README_PATH  = 'brain/README.md';
+
 // ===== グローバル状態 =====
 let currentSha        = null;
 let currentMainData   = [];
@@ -165,7 +168,7 @@ function mountSection(elId, anchorId) {
 
 // --- ページレンダラー ---
 
-const SUMMARY_VIEWS = ['taskorg2', 'top', 'edit2', 'knowledge'];
+const SUMMARY_VIEWS = ['taskorg2', 'top', 'edit2', 'knowledge', 'info'];
 
 /** Summary ページ（INBOX／タスク管理／データ編集／ナレッジの表示切り替え。タスク実行・繰返し・勤務はタスク管理タブ内、メインデータ・マスタデータ一覧はデータ編集タブ内のExpanderに常駐。PW・Load〜Import・カテゴリは常時表示バーで共通）を描画する */
 function renderSummary() {
@@ -204,6 +207,30 @@ function renderSummary() {
 SUMMARY_VIEWS.forEach(view => {
     document.getElementById(`summary-tab-${view}`)?.addEventListener('click', () => { summaryView = view; renderSummary(); });
 });
+
+// ===== Info：コードリポジトリのREADME.md（アプリ概要）を取得しMarkdownとして表示 =====
+async function loadInfoReadme() {
+    const el = document.getElementById('info-content');
+    const token = getTokenValue();
+    if (!token) { el.textContent = 'トークンを入力してください。'; return; }
+
+    el.textContent = '読み込み中...';
+
+    try {
+        const { content } = await fetchFile(token, OWNER, CODE_REPO, README_PATH);
+        el.innerHTML = window.marked.parse(content);
+    } catch (error) {
+        console.error(error);
+        el.textContent = `読み込みに失敗しました: ${error.message}`;
+    }
+}
+
+// Infoタブを開いたとき、トークンが入力済みなら自動的に読み込む
+document.getElementById('summary-tab-info')?.addEventListener('click', () => {
+    if (getTokenValue()) loadInfoReadme();
+});
+
+document.getElementById('info-reload-btn')?.addEventListener('click', loadInfoReadme);
 
 /** INBOX のカテゴリバッジ（サイドバー／Summary 両方）を更新する */
 function renderInboxBadge() {
