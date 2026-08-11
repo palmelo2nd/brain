@@ -1,7 +1,7 @@
 // (1) インポート — なし（Web標準APIのみ使用）
 
 /** CSVの1行を、ダブルクォート・カンマのエスケープを考慮しつつ値の配列にパースする。 */
-function parseCsvLine(line) {
+export function parseCsvLine(line) {
     const values = [];
     let current = '';
     let inQuotes = false;

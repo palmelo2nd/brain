@@ -13,12 +13,10 @@
     <main class="main-content">
         <h1 class="app-title">Stock 投資管理</h1>
 
-        <!-- 常時表示バー（ID/PW入力。GitHub連携が必要な各ページで共通して使う。ID=コードリポジトリ操作用、PW=データリポジトリ操作用） -->
+        <!-- 常時表示バー（GitHub PAT入力。GitHub連携が必要な各ページで共通して使う。brain・brain_data両リポジトリへの権限を持つ単一トークン） -->
         <div class="pw-bar">
-            <label for="id-input">ID</label>
-            <input type="password" id="id-input" class="pw-input" autocomplete="off">
-            <label for="pw-input">PW</label>
-            <input type="password" id="pw-input" class="pw-input" autocomplete="off">
+            <label for="token-input">PW</label>
+            <input type="password" id="token-input" class="pw-input" autocomplete="off">
         </div>
 
         <!-- 表示切り替え（ダッシュボード／保有・履歴／データ更新／銘柄属性／スコア／銘柄提案／Info） -->
@@ -35,26 +33,59 @@
         <!-- ダッシュボード：ポートフォリオスコア・直近の提案などのサマリー起点ページ -->
         <div id="view-dashboard" class="view-panel">
             <p class="section-label">ダッシュボード</p>
-            <p class="placeholder-text">ポートフォリオスコア・直近の提案などのサマリーをここに表示予定です。</p>
+            <p class="placeholder-text">ポートフォリオスコア・直近の提案などのサマリーは今後追加予定です。まずは登録済み資産のサマリーのみ。</p>
+
+            <!-- 資産サマリー：stock/holdings.csv（データリポジトリ）を所有者ごとに集計（株数×取得単価の合計＝総投資金額）。
+                 非表示チェックボックスは既定でON（金額を隠した状態）で開く -->
+            <div class="update-form">
+                <p class="update-form-title">資産サマリー（所有者別 総投資金額）</p>
+                <button type="button" id="dashboard-reload-btn" class="run-btn run-btn--secondary">読込</button>
+                <div class="update-form-row">
+                    <label for="dashboard-hide-amounts">非表示</label>
+                    <input type="checkbox" id="dashboard-hide-amounts" checked>
+                </div>
+                <div class="table-wrapper">
+                    <table id="dashboard-summary-table" class="data-table"></table>
+                </div>
+                <p id="dashboard-summary-status" class="update-status">トークンを入力し「ダッシュボード」タブを開くと集計します。</p>
+            </div>
         </div>
 
         <!-- 保有・履歴：証券会社ごとの保有銘柄インプット、売買履歴CSVインポート -->
         <div id="view-holdings" class="view-panel" style="display:none">
             <p class="section-label">保有・履歴</p>
-            <p class="placeholder-text">売買履歴CSVのインポートは今後追加予定です。まずは保有銘柄の手入力登録のみ。</p>
+            <p class="placeholder-text">保有銘柄は手動入力・証券会社CSV取込（準備中）に対応。売買履歴CSVのインポートは今後追加予定です。</p>
 
             <!-- 保有銘柄一覧：stock/holdings.csv（データリポジトリ）の内容を一覧表示。行クリックで下のフォームへ読み込む -->
             <div class="update-form">
                 <p class="update-form-title">保有銘柄</p>
                 <button type="button" id="holdings-reload-btn" class="run-btn run-btn--secondary">読込</button>
-                <div class="table-wrapper">
+                <div class="update-form-row">
+                    <label>所有者</label>
+                    <select id="holdings-filter-owner"></select>
+                </div>
+                <div class="update-form-row">
+                    <label>証券会社</label>
+                    <select id="holdings-filter-broker"></select>
+                </div>
+                <div class="update-form-row">
+                    <label>口座区分</label>
+                    <select id="holdings-filter-account"></select>
+                </div>
+                <div class="table-wrapper table-wrapper--limited">
                     <table id="holdings-table" class="data-table"></table>
                 </div>
-                <p id="holdings-list-status" class="update-status">IDとPWを入力し「保有・履歴」タブを開くと一覧を読み込みます。</p>
+                <p id="holdings-list-status" class="update-status">トークンを入力し「保有・履歴」タブを開くと一覧を読み込みます。</p>
             </div>
 
-            <!-- 入力フォーム：新規登録・既存行編集の両方で使う共通フォーム -->
-            <div class="update-form">
+            <!-- 入力方法の切り替え（手動入力／CSV入力） -->
+            <div class="view-toggle">
+                <button type="button" id="holdings-mode-manual" class="view-btn view-btn--active" data-mode="manual">手動入力</button>
+                <button type="button" id="holdings-mode-csv"    class="view-btn" data-mode="csv">CSV入力</button>
+            </div>
+
+            <!-- 手動入力：新規登録・既存行編集の両方で使う共通フォーム -->
+            <div id="holdings-manual-panel" class="update-form">
                 <p class="update-form-title" id="holdings-form-title">新規登録</p>
                 <div class="update-form-row">
                     <label>所有者</label>
@@ -90,9 +121,34 @@
                 <button type="button" id="holdings-delete-btn" class="run-btn run-btn--danger">削除</button>
             </div>
 
+            <!-- CSV入力：証券会社の出力ファイルから保有銘柄を取り込む。取り込むと、同じ所有者×証券会社の既存行だけを
+                 今回の内容で置き換える（他の所有者・証券会社の行はそのまま保持）。パーサー自体は準備中（各社の
+                 出力データ構造をもとに実装予定）で、現状はどの証券会社を選んでも「準備中」の案内を表示する -->
+            <div id="holdings-csv-panel" class="update-form" style="display:none">
+                <p class="update-form-title">CSV入力</p>
+                <p class="placeholder-text">証券会社ごとの出力CSVから取り込みます。取り込むと、選択した所有者・証券会社の既存データのみが置き換わります。</p>
+                <div class="update-form-row">
+                    <label>証券会社</label>
+                    <select id="holdings-csv-broker">
+                        <option value="SBI">SBI証券</option>
+                        <option value="楽天">楽天証券</option>
+                    </select>
+                </div>
+                <div class="update-form-row">
+                    <label>所有者</label>
+                    <input type="text" id="holdings-csv-owner" list="holdings-owner-list" placeholder="例: Y">
+                </div>
+                <div class="update-form-row">
+                    <label>CSVファイル</label>
+                    <input type="file" id="holdings-csv-file" accept=".csv">
+                </div>
+                <button type="button" id="holdings-csv-import-btn" class="run-btn">取り込む</button>
+                <p id="holdings-csv-status" class="update-status"></p>
+            </div>
+
             <!-- 保存：フォーム操作はここまでメモリ上のみ。押すまでGitHubへは反映されない -->
             <div class="update-form">
-                <button type="button" id="holdings-save-btn" class="run-btn">保存（GitHubへ反映）</button>
+                <button type="button" id="holdings-save-btn" class="run-btn">登録</button>
                 <p id="holdings-save-status" class="update-status"></p>
             </div>
         </div>
@@ -108,7 +164,7 @@
                 <div class="status-actions">
                     <button type="button" id="status-check-btn" class="run-btn">チェック</button>
                 </div>
-                <div id="status-summary" class="update-status">IDとPWを入力し「チェック」を押してください。</div>
+                <div id="status-summary" class="update-status">トークンを入力し「チェック」を押してください。</div>
             </div>
 
             <!-- 更新：日常運用はこのボタン1つ。対象銘柄すべてを差分更新する -->

@@ -152,6 +152,12 @@ body {
     margin-top: 10px;
 }
 
+/* 縦に長くなりすぎるテーブル向け（例: 保有銘柄一覧）。約10行分の高さで縦スクロールにする */
+.table-wrapper--limited {
+    max-height: 340px;
+    overflow-y: auto;
+}
+
 .data-table {
     width: 100%;
     border-collapse: collapse;
@@ -166,7 +172,7 @@ body {
     white-space: nowrap;
 }
 
-.data-table th { background: #f6f8fa; }
+.data-table th { background: #f6f8fa; position: sticky; top: 0; }
 
 .data-table tbody tr { cursor: pointer; }
 .data-table tbody tr:hover { background: #f6f8fa; }
@@ -176,6 +182,34 @@ body {
     text-align: center;
     color: #8b949e;
     cursor: default;
+}
+
+.dashboard-summary-total-row td {
+    font-weight: 700;
+    border-top: 2px solid #d0d7de;
+}
+
+/* ダッシュボード資産サマリー：所有者→口座区分→証券会社の階層をインデント・文字の濃淡で表す */
+.dashboard-summary-row--owner td {
+    font-weight: 700;
+    color: #1e2a38;
+}
+
+.dashboard-summary-row--account td {
+    font-weight: 600;
+    color: #57606a;
+}
+.dashboard-summary-row--account td:first-child {
+    padding-left: 24px;
+}
+
+.dashboard-summary-row--broker td {
+    font-weight: 400;
+    color: #8b949e;
+    font-size: 11.5px;
+}
+.dashboard-summary-row--broker td:first-child {
+    padding-left: 40px;
 }
 
 .update-status {

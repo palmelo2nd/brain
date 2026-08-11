@@ -1,9 +1,11 @@
-import { loadIdToken, saveIdToken, loadPwToken, savePwToken } from './modules/storage.js';
+import { loadToken, saveToken } from './modules/storage.js';
 import {
     dispatchWorkflow, fetchFile, fetchFileIfExists, listFilesRecursive, commitFile,
     getLatestWorkflowRun, getWorkflowRun, getLatestCommit
 } from './modules/github.js';
 import { parseCsv, stringifyCsv } from './modules/csv.js';
+import { parseSbiHoldingsCsv, parseRakutenHoldingsCsv } from './modules/brokerCsv.js';
+import { summarizeHoldingsHierarchy } from './modules/holdingsSummary.js';
 
 const OWNER              = 'palmelo2nd';
 const CODE_REPO          = 'brain';        // ワークフローファイルが置かれているコードリポジトリ
@@ -22,40 +24,31 @@ const FRESHNESS_REPORT_PATH  = 'stock/freshness_report.json';
 const README_PATH   = 'stock/README.md'; // コードリポジトリ側（アプリ概要ドキュメント）
 const HOLDINGS_PATH = 'stock/holdings.csv';
 const HOLDINGS_HEADERS = ['id', 'owner', 'broker', 'account', 'code', 'shares', 'avg_cost'];
+const HOLDINGS_CODE_DISPLAY_MAX = 10; // 一覧表のコード列・銘柄名列の最大表示文字数（全角10文字相当。超過分は…で省略）
 const BULK_ASSET_TYPES = ['内国株式', 'ETF・ETN']; // fetch_prices.pyの--asset-types既定値と揃えている
 
-// ===== ID/PW（GitHub PAT）入力欄 =====
-// ID: コードリポジトリ（brain）操作用PAT（ワークフロー起動＝dispatchWorkflowに使用）
-// PW: データリポジトリ（brain_data）操作用PAT（ファイルの読み書き＝fetchFile/commitFile等に使用）
-// 2つに分かれているのは、この2リポジトリで必要な権限が異なる（ID側はActions、PW側はContents）ため。
-// それぞれ一度入力すればlocalStorageに保存され、次回以降は自動的に入力済みの状態になる。
-const idInput = document.getElementById('id-input');
-const pwInput = document.getElementById('pw-input');
+// ===== GitHub PAT入力欄 =====
+// brain（コードリポジトリ）・brain_data（データリポジトリ）の両方に対して
+// Actions・Contentsをread/writeできる単一のPersonal Access Tokenを使う。
+// 以前はリポジトリごとにID/PW2つの欄に分けていたが（最小権限の原則を意図したもの）、
+// 実運用では1つのトークンに両リポジトリの権限をまとめて付与する運用になったため統合した。
+// 一度入力すればlocalStorageに保存され、次回以降は自動的に入力済みの状態になる。
+const tokenInput = document.getElementById('token-input');
 
-/** コードリポジトリ操作用トークン（ID欄）を返す。 */
-export function getCodeTokenValue() {
-    return idInput ? idInput.value.trim() : '';
-}
-
-/** データリポジトリ操作用トークン（PW欄）を返す。 */
-export function getDataTokenValue() {
-    return pwInput ? pwInput.value.trim() : '';
+/** GitHub PATを返す。 */
+export function getTokenValue() {
+    return tokenInput ? tokenInput.value.trim() : '';
 }
 
 window.addEventListener('DOMContentLoaded', () => {
-    const savedId = loadIdToken();
-    if (savedId && idInput) idInput.value = savedId;
-
-    const savedPw = loadPwToken();
-    if (savedPw && pwInput) pwInput.value = savedPw;
+    const saved = loadToken();
+    if (saved && tokenInput) tokenInput.value = saved;
+    // ダッシュボードは初期表示タブ（クリック無しで見える）のため、他タブと違いページ読込時点でも自動集計する
+    if (saved) loadDashboardSummary();
 });
 
-idInput?.addEventListener('input', () => {
-    saveIdToken(idInput.value.trim());
-});
-
-pwInput?.addEventListener('input', () => {
-    savePwToken(pwInput.value.trim());
+tokenInput?.addEventListener('input', () => {
+    saveToken(tokenInput.value.trim());
 });
 
 // ===== ページ切り替え（タブ） =====
@@ -75,21 +68,110 @@ STOCK_VIEWS.forEach(v => {
     document.getElementById(`tab-${v}`)?.addEventListener('click', () => renderStockView(v));
 });
 
-// データ更新タブを開いたとき、PWが入力済みなら状態パネルを自動更新する
+// データ更新タブを開いたとき、トークンが入力済みなら状態パネルを自動更新する
 document.getElementById('tab-dataupdate')?.addEventListener('click', () => {
-    if (getDataTokenValue()) loadFreshnessStatus();
+    if (getTokenValue()) loadFreshnessStatus();
 });
 
-// 保有・履歴タブを開いたとき、PWが入力済みなら保有銘柄一覧を自動読み込みする
+// 保有・履歴タブを開いたとき、トークンが入力済みなら保有銘柄一覧を自動読み込みする
 document.getElementById('tab-holdings')?.addEventListener('click', () => {
-    if (getDataTokenValue()) loadHoldings();
+    if (getTokenValue()) loadHoldings();
 });
+
+// ダッシュボードタブを開いたとき、トークンが入力済みなら資産サマリーを自動集計する
+document.getElementById('tab-dashboard')?.addEventListener('click', () => {
+    if (getTokenValue()) loadDashboardSummary();
+});
+
+// ===== ダッシュボード：資産サマリー（所有者 → 口座区分 → 証券会社の階層集計） =====
+let dashboardSummaryHierarchy = []; // [{ owner, total, accounts: [{ account, total, brokers: [{ broker, total }] }] }]
+
+/** stock/holdings.csv を読み込み、所有者→口座区分→証券会社の階層で総投資金額を集計して表示する。 */
+async function loadDashboardSummary() {
+    const statusEl = document.getElementById('dashboard-summary-status');
+    const token = getTokenValue();
+    if (!token) { statusEl.textContent = 'トークンを入力してください。'; return; }
+
+    statusEl.textContent = '集計中...';
+
+    try {
+        const text = await fetchFileIfExists(token, OWNER, DATA_REPO, HOLDINGS_PATH);
+        const rows = text ? parseCsv(text) : [];
+        dashboardSummaryHierarchy = summarizeHoldingsHierarchy(rows);
+
+        renderDashboardSummaryTable();
+        statusEl.textContent = rows.length === 0
+            ? '保有銘柄が登録されていません。'
+            : `${rows.length}件の保有銘柄から集計しました。`;
+    } catch (error) {
+        console.error(error);
+        statusEl.textContent = `集計に失敗しました: ${error.message}`;
+    }
+}
+
+/** 資産サマリーの表に1行追加する（区分ラベル・金額・階層に応じたスタイル用クラス）。 */
+function appendDashboardSummaryRow(tbody, label, amount, formatYen, rowClass) {
+    const tr = document.createElement('tr');
+    tr.className = rowClass;
+    const labelTd = document.createElement('td');
+    labelTd.textContent = label;
+    const amountTd = document.createElement('td');
+    amountTd.textContent = formatYen(amount);
+    tr.append(labelTd, amountTd);
+    tbody.appendChild(tr);
+}
+
+/**
+ * 資産サマリーの表を描画する。所有者→口座区分→証券会社の順に行を並べ、各階層の小計を表示し、
+ * 最後に全体の合計行を追加する。「非表示」チェックボックスがONの間は金額をマスクして表示する。
+ */
+function renderDashboardSummaryTable() {
+    const table = document.getElementById('dashboard-summary-table');
+    if (!table) return;
+
+    const hidden = document.getElementById('dashboard-hide-amounts')?.checked ?? true;
+    const formatYen = (amount) => hidden ? '●●●●●●' : `${Math.round(amount).toLocaleString('ja-JP')}円`;
+
+    const thead = document.createElement('thead');
+    const hRow = document.createElement('tr');
+    ['区分', '総投資金額'].forEach(col => { const th = document.createElement('th'); th.textContent = col; hRow.appendChild(th); });
+    thead.appendChild(hRow);
+
+    const tbody = document.createElement('tbody');
+    if (dashboardSummaryHierarchy.length === 0) {
+        const tr = document.createElement('tr');
+        const td = document.createElement('td');
+        td.colSpan = 2;
+        td.className = 'empty-cell';
+        td.textContent = '保有銘柄が登録されていません';
+        tr.appendChild(td);
+        tbody.appendChild(tr);
+    } else {
+        let grandTotal = 0;
+        dashboardSummaryHierarchy.forEach(ownerEntry => {
+            appendDashboardSummaryRow(tbody, ownerEntry.owner, ownerEntry.total, formatYen, 'dashboard-summary-row--owner');
+            grandTotal += ownerEntry.total;
+            ownerEntry.accounts.forEach(accountEntry => {
+                appendDashboardSummaryRow(tbody, accountEntry.account, accountEntry.total, formatYen, 'dashboard-summary-row--account');
+                accountEntry.brokers.forEach(brokerEntry => {
+                    appendDashboardSummaryRow(tbody, brokerEntry.broker, brokerEntry.total, formatYen, 'dashboard-summary-row--broker');
+                });
+            });
+        });
+
+        appendDashboardSummaryRow(tbody, '合計', grandTotal, formatYen, 'dashboard-summary-total-row');
+    }
+    table.replaceChildren(thead, tbody);
+}
+
+document.getElementById('dashboard-reload-btn')?.addEventListener('click', loadDashboardSummary);
+document.getElementById('dashboard-hide-amounts')?.addEventListener('change', renderDashboardSummaryTable);
 
 // ===== Info：コードリポジトリのREADME.md（アプリ概要）を取得しMarkdownとして表示 =====
 async function loadInfoReadme() {
     const el = document.getElementById('info-content');
-    const token = getCodeTokenValue();
-    if (!token) { el.textContent = 'IDを入力してください。'; return; }
+    const token = getTokenValue();
+    if (!token) { el.textContent = 'トークンを入力してください。'; return; }
 
     el.textContent = '読み込み中...';
 
@@ -102,9 +184,9 @@ async function loadInfoReadme() {
     }
 }
 
-// Infoタブを開いたとき、IDが入力済みなら自動的に読み込む
+// Infoタブを開いたとき、トークンが入力済みなら自動的に読み込む
 document.getElementById('tab-info')?.addEventListener('click', () => {
-    if (getCodeTokenValue()) loadInfoReadme();
+    if (getTokenValue()) loadInfoReadme();
 });
 
 document.getElementById('info-reload-btn')?.addEventListener('click', loadInfoReadme);
@@ -115,11 +197,11 @@ document.getElementById('price-update-run-btn')?.addEventListener('click', async
     const codesInput  = document.getElementById('price-update-code');
     const periodInput = document.getElementById('price-update-period');
 
-    const token  = getCodeTokenValue();
+    const token  = getTokenValue();
     const codes  = codesInput.value.trim();
     const period = periodInput.value.trim(); // 空欄なら2013年以降の全期間（ワークフロー側のデフォルト）
 
-    if (!token) { alert('IDを入力してください'); return; }
+    if (!token) { alert('トークンを入力してください'); return; }
     if (!codes) { alert('証券コードを入力してください'); return; }
 
     statusEl.textContent = '実行をリクエスト中...';
@@ -174,8 +256,7 @@ function parseProcessedFromCommitMessage(message) {
 // created_at等の時刻比較ではなく、この基準からid/shaが変化したかどうかで新しい実行・コミットを判定する
 // （ブラウザ側の時計がGitHubサーバー側とズレていても正しく動く）。
 async function trackBulkUpdateProgress(myGen, baselineRun, baselineCommit, targetCount, btn) {
-    const codeToken = getCodeTokenValue();
-    const dataToken = getDataTokenValue();
+    const token = getTokenValue();
     const baselineRunId = baselineRun ? baselineRun.id : null;
     const baselineCommitSha = baselineCommit ? baselineCommit.sha : null;
 
@@ -186,7 +267,7 @@ async function trackBulkUpdateProgress(myGen, baselineRun, baselineCommit, targe
     for (let i = 0; i < 10; i++) {
         if (myGen !== bulkUpdateTrackingGen) return; // 別の実行が始まっていたら中断
         try {
-            const latest = await getLatestWorkflowRun(codeToken, OWNER, CODE_REPO, PRICE_BULK_WORKFLOW_FILE);
+            const latest = await getLatestWorkflowRun(token, OWNER, CODE_REPO, PRICE_BULK_WORKFLOW_FILE);
             lastSeenRunId = latest ? latest.id : null;
             lastError = null;
             if (latest && latest.id !== baselineRunId) run = latest;
@@ -213,9 +294,9 @@ async function trackBulkUpdateProgress(myGen, baselineRun, baselineCommit, targe
     // (b) 完了するまで、実行状況とコミット進捗を定期的に確認する
     while (myGen === bulkUpdateTrackingGen) {
         try {
-            const latestRun = await getWorkflowRun(codeToken, OWNER, CODE_REPO, run.id);
+            const latestRun = await getWorkflowRun(token, OWNER, CODE_REPO, run.id);
 
-            const commit = await getLatestCommit(dataToken, OWNER, DATA_REPO, DATA_REPO_BRANCH, PRICES_DIR);
+            const commit = await getLatestCommit(token, OWNER, DATA_REPO, DATA_REPO_BRANCH, PRICES_DIR);
             if (commit && commit.sha !== baselineCommitSha) {
                 const processed = parseProcessedFromCommitMessage(commit.message);
                 if (processed !== null) setBulkUpdateProgress(processed, targetCount);
@@ -246,10 +327,8 @@ async function trackBulkUpdateProgress(myGen, baselineRun, baselineCommit, targe
 
 document.getElementById('price-update-all-btn')?.addEventListener('click', async (event) => {
     const btn = event.currentTarget;
-    const codeToken = getCodeTokenValue();
-    const dataToken = getDataTokenValue();
-    if (!codeToken) { alert('IDを入力してください'); return; }
-    if (!dataToken) { alert('PWを入力してください（対象銘柄数の確認・進捗表示に使用します）'); return; }
+    const token = getTokenValue();
+    if (!token) { alert('トークンを入力してください'); return; }
 
     // 実行中の多重クリックによる二重起動を防ぐ（GitHub Actions側のconcurrency設定が本丸の対策だが、
     // UI側でも防げるに越したことはない。トラッキングが終わるまで再度押せないようにする）
@@ -259,7 +338,7 @@ document.getElementById('price-update-all-btn')?.addEventListener('click', async
     setBulkUpdateBanner('running', '対象銘柄数を確認中...');
 
     try {
-        const masterText = await fetchFile(dataToken, OWNER, DATA_REPO, MASTER_PATH);
+        const masterText = await fetchFile(token, OWNER, DATA_REPO, MASTER_PATH);
         const allRows = parseCsv(masterText);
         const targetCount = allRows.filter(r =>
             r.status === 'listed' && BULK_ASSET_TYPES.includes(r.asset_type)
@@ -283,8 +362,8 @@ document.getElementById('price-update-all-btn')?.addEventListener('click', async
         // ワークフロー特定・進捗追跡のため、起動直前の「それまでの最新」状態をベースラインとして記録しておく
         // （時刻での比較ではなく、この基準からid/shaが変化したかどうかで新しい実行・コミットを判定する）
         const [baselineRun, baselineCommit] = await Promise.all([
-            getLatestWorkflowRun(codeToken, OWNER, CODE_REPO, PRICE_BULK_WORKFLOW_FILE).catch(() => null),
-            getLatestCommit(dataToken, OWNER, DATA_REPO, DATA_REPO_BRANCH, PRICES_DIR).catch(() => null),
+            getLatestWorkflowRun(token, OWNER, CODE_REPO, PRICE_BULK_WORKFLOW_FILE).catch(() => null),
+            getLatestCommit(token, OWNER, DATA_REPO, DATA_REPO_BRANCH, PRICES_DIR).catch(() => null),
         ]);
 
         // 前回の実行がまだ動いている状態でもう一度起動すると、同じディレクトリへ同時にコミット・pushしようとして
@@ -304,7 +383,7 @@ document.getElementById('price-update-all-btn')?.addEventListener('click', async
 
         setBulkUpdateBanner('running', '実行をリクエスト中...');
 
-        await dispatchWorkflow(codeToken, OWNER, CODE_REPO, PRICE_BULK_WORKFLOW_FILE, CODE_REPO_BRANCH, {
+        await dispatchWorkflow(token, OWNER, CODE_REPO, PRICE_BULK_WORKFLOW_FILE, CODE_REPO_BRANCH, {
             offset: '0', limit: String(targetCount), mode: 'update'
         });
 
@@ -327,12 +406,12 @@ document.getElementById('bulk-update-run-btn')?.addEventListener('click', async 
     const offsetInput  = document.getElementById('bulk-update-offset');
     const limitInput   = document.getElementById('bulk-update-limit');
 
-    const token  = getCodeTokenValue();
+    const token  = getTokenValue();
     const mode   = modeInput.value;
     const offset = offsetInput.value.trim() || '0';
     const limit  = limitInput.value.trim();
 
-    if (!token) { alert('IDを入力してください'); return; }
+    if (!token) { alert('トークンを入力してください'); return; }
     if (!limit) { alert('件数を入力してください'); return; }
 
     const modeLabel = mode === 'update' ? '差分更新' : '初回取得';
@@ -355,8 +434,8 @@ document.getElementById('bulk-update-check-btn')?.addEventListener('click', asyn
     const progressEl  = document.getElementById('bulk-update-progress');
     const offsetInput = document.getElementById('bulk-update-offset');
 
-    const token = getDataTokenValue();
-    if (!token) { alert('PWを入力してください'); return; }
+    const token = getTokenValue();
+    if (!token) { alert('トークンを入力してください'); return; }
 
     progressEl.textContent = '確認中...';
 
@@ -396,8 +475,8 @@ document.getElementById('bulk-update-check-btn')?.addEventListener('click', asyn
 // ===== データ更新：現在の状態パネル（freshness_report.json・validation_report.jsonを読み込んで常時表示用に整形） =====
 async function loadFreshnessStatus() {
     const summaryEl = document.getElementById('status-summary');
-    const token = getDataTokenValue();
-    if (!token) { summaryEl.textContent = 'PWを入力し「チェック」を押してください。'; return; }
+    const token = getTokenValue();
+    if (!token) { summaryEl.textContent = 'トークンを入力し「チェック」を押してください。'; return; }
 
     summaryEl.textContent = '状態を確認中...';
 
@@ -513,11 +592,11 @@ function buildExpandableListItem(summaryText, codes) {
 // 一覧の先頭がこれと変わる（＝新しい実行が始まった）まで探し、見つかったらそのrunが完了するまでポーリングする。
 // 時刻ではなくid比較で新しい実行を判定する（ブラウザ側の時計とGitHubサーバー側の時計がズレていても正しく動く）。
 // 戻り値: 完了したrunオブジェクト（status==='completed'）。実行が見つからなかった場合はnull。
-async function waitForWorkflowRun(codeToken, workflowFile, baselineRunId) {
+async function waitForWorkflowRun(token, workflowFile, baselineRunId) {
     let run = null;
     for (let i = 0; i < 10; i++) {
         try {
-            const latest = await getLatestWorkflowRun(codeToken, OWNER, CODE_REPO, workflowFile);
+            const latest = await getLatestWorkflowRun(token, OWNER, CODE_REPO, workflowFile);
             if (latest && latest.id !== baselineRunId) { run = latest; break; }
         } catch (error) {
             console.error(error);
@@ -528,7 +607,7 @@ async function waitForWorkflowRun(codeToken, workflowFile, baselineRunId) {
 
     while (true) {
         try {
-            const latestRun = await getWorkflowRun(codeToken, OWNER, CODE_REPO, run.id);
+            const latestRun = await getWorkflowRun(token, OWNER, CODE_REPO, run.id);
             if (latestRun.status === 'completed') return latestRun;
         } catch (error) {
             console.error(error);
@@ -542,32 +621,30 @@ async function waitForWorkflowRun(codeToken, workflowFile, baselineRunId) {
 // 両方から呼ばれる共通処理。
 async function runFullCheck() {
     const summaryEl = document.getElementById('status-summary');
-    const codeToken = getCodeTokenValue();
-    const dataToken = getDataTokenValue();
-    if (!codeToken) { alert('IDを入力してください'); return; }
-    if (!dataToken) { alert('PWを入力してください（結果の確認に使用します）'); return; }
+    const token = getTokenValue();
+    if (!token) { alert('トークンを入力してください'); return; }
 
     summaryEl.textContent = 'チェックを実行中...（鮮度チェック・品質チェックを開始しています）';
 
     try {
         // 起動前に「それまでの最新」の実行を記録しておく（新しい実行が始まったことの判定に使う）
         const [freshnessBaseline, validationBaseline] = await Promise.all([
-            getLatestWorkflowRun(codeToken, OWNER, CODE_REPO, FRESHNESS_WORKFLOW_FILE).catch(() => null),
-            getLatestWorkflowRun(codeToken, OWNER, CODE_REPO, VALIDATE_WORKFLOW_FILE).catch(() => null),
+            getLatestWorkflowRun(token, OWNER, CODE_REPO, FRESHNESS_WORKFLOW_FILE).catch(() => null),
+            getLatestWorkflowRun(token, OWNER, CODE_REPO, VALIDATE_WORKFLOW_FILE).catch(() => null),
         ]);
 
         // 鮮度チェックと品質チェックは別ファイル（freshness_report.json / validation_report.json）に
         // コミットするため競合せず、同時に起動できる
         await Promise.all([
-            dispatchWorkflow(codeToken, OWNER, CODE_REPO, FRESHNESS_WORKFLOW_FILE, CODE_REPO_BRANCH, {}),
-            dispatchWorkflow(codeToken, OWNER, CODE_REPO, VALIDATE_WORKFLOW_FILE, CODE_REPO_BRANCH, {}),
+            dispatchWorkflow(token, OWNER, CODE_REPO, FRESHNESS_WORKFLOW_FILE, CODE_REPO_BRANCH, {}),
+            dispatchWorkflow(token, OWNER, CODE_REPO, VALIDATE_WORKFLOW_FILE, CODE_REPO_BRANCH, {}),
         ]);
 
         summaryEl.textContent = 'チェックを実行中...（完了を待っています。数分かかります）';
 
         const [freshnessRun, validationRun] = await Promise.all([
-            waitForWorkflowRun(codeToken, FRESHNESS_WORKFLOW_FILE, freshnessBaseline ? freshnessBaseline.id : null),
-            waitForWorkflowRun(codeToken, VALIDATE_WORKFLOW_FILE, validationBaseline ? validationBaseline.id : null),
+            waitForWorkflowRun(token, FRESHNESS_WORKFLOW_FILE, freshnessBaseline ? freshnessBaseline.id : null),
+            waitForWorkflowRun(token, VALIDATE_WORKFLOW_FILE, validationBaseline ? validationBaseline.id : null),
         ]);
 
         const problems = [];
@@ -647,24 +724,22 @@ async function refetchIssueCodes(codes, buttonEl) {
     const ok = confirm(`${codes.length}件の銘柄を2013年以降の全期間で再取得します。よろしいですか？`);
     if (!ok) return;
 
-    const codeToken = getCodeTokenValue();
-    const dataToken = getDataTokenValue();
-    if (!codeToken) { alert('IDを入力してください'); return; }
-    if (!dataToken) { alert('PWを入力してください（完了後のチェック結果の確認に使用します）'); return; }
+    const token = getTokenValue();
+    if (!token) { alert('トークンを入力してください'); return; }
 
     buttonEl.disabled = true;
     buttonEl.textContent = '実行をリクエスト中...';
 
     try {
-        const baseline = await getLatestWorkflowRun(codeToken, OWNER, CODE_REPO, PRICE_ISSUES_WORKFLOW_FILE).catch(() => null);
+        const baseline = await getLatestWorkflowRun(token, OWNER, CODE_REPO, PRICE_ISSUES_WORKFLOW_FILE).catch(() => null);
 
-        await dispatchWorkflow(codeToken, OWNER, CODE_REPO, PRICE_ISSUES_WORKFLOW_FILE, CODE_REPO_BRANCH, {
+        await dispatchWorkflow(token, OWNER, CODE_REPO, PRICE_ISSUES_WORKFLOW_FILE, CODE_REPO_BRANCH, {
             codes: codes.join(','),
             mode: 'full'
         });
 
         buttonEl.textContent = `再取得の完了を待っています...（${codes.length}件・数分かかります）`;
-        const run = await waitForWorkflowRun(codeToken, PRICE_ISSUES_WORKFLOW_FILE, baseline ? baseline.id : null);
+        const run = await waitForWorkflowRun(token, PRICE_ISSUES_WORKFLOW_FILE, baseline ? baseline.id : null);
 
         if (!run) {
             alert('再取得の実行が見つかりませんでした。リクエスト自体は送信済みです。GitHubのActionsタブから状況を確認してください。');
@@ -716,7 +791,7 @@ async function renderHoldingsTable() {
     const table = document.getElementById('holdings-table');
     if (!table) return;
 
-    const token = getDataTokenValue();
+    const token = getTokenValue();
     let nameMap = new Map();
     if (token) {
         try { nameMap = await getMasterNameMap(token); } catch (error) { console.error(error); }
@@ -729,30 +804,90 @@ async function renderHoldingsTable() {
     thead.appendChild(hRow);
 
     const tbody = document.createElement('tbody');
-    if (holdingsRows.length === 0) {
+    const rows = getFilteredHoldingsRows();
+    if (rows.length === 0) {
         const tr = document.createElement('tr');
         const td = document.createElement('td');
         td.colSpan = cols.length;
         td.className = 'empty-cell';
-        td.textContent = '保有銘柄が登録されていません';
+        td.textContent = holdingsRows.length === 0
+            ? '保有銘柄が登録されていません'
+            : '絞り込み条件に一致する保有銘柄がありません';
         tr.appendChild(td);
         tbody.appendChild(tr);
     } else {
-        holdingsRows.forEach(row => {
+        rows.forEach(row => {
             const tr = document.createElement('tr');
             if (String(row.id) === String(selectedHoldingId)) tr.classList.add('selected-row');
-            [row.owner, row.broker, row.account, row.code, nameMap.get(row.code) || '', row.shares, row.avg_cost]
-                .forEach(value => {
-                    const td = document.createElement('td');
-                    td.textContent = value ?? '';
-                    tr.appendChild(td);
-                });
+
+            // 投資信託等はmaster.csvに登録が無く名前解決できないため、その場合はコード（＝ファンド名）をそのまま銘柄名として表示する
+            const values = [row.owner, row.broker, row.account, row.code, nameMap.get(row.code) || row.code, row.shares, row.avg_cost];
+            const TRUNCATE_COL_INDEXES = new Set([3, 4]); // コード・銘柄名は長いファンド名が入りうるため省略表示する
+            values.forEach((value, index) => {
+                const td = document.createElement('td');
+                const text = value ?? '';
+                if (TRUNCATE_COL_INDEXES.has(index) && text.length > HOLDINGS_CODE_DISPLAY_MAX) {
+                    td.textContent = text.slice(0, HOLDINGS_CODE_DISPLAY_MAX) + '…';
+                    td.title = text; // 省略前の全文はホバーで確認できる
+                } else {
+                    td.textContent = text;
+                }
+                tr.appendChild(td);
+            });
+
             tr.addEventListener('click', () => loadHoldingIntoForm(row.id));
             tbody.appendChild(tr);
         });
     }
     table.replaceChildren(thead, tbody);
 }
+
+// 所有者／証券会社／口座区分の絞り込み状態（表示のみに影響。holdingsRows自体・保存内容には影響しない）
+const holdingsFilters = { owner: '', broker: '', account: '' };
+
+/** holdingsFiltersを適用した一覧を返す（空文字＝絞り込みなし）。 */
+function getFilteredHoldingsRows() {
+    return holdingsRows.filter(row =>
+        (!holdingsFilters.owner   || row.owner   === holdingsFilters.owner) &&
+        (!holdingsFilters.broker  || row.broker  === holdingsFilters.broker) &&
+        (!holdingsFilters.account || row.account === holdingsFilters.account)
+    );
+}
+
+/** 所有者／証券会社／口座区分の絞り込み用<select>を、現在のholdingsRowsに実在する値から再構築する。選択中の値が引き続き有効なら維持する。 */
+function renderHoldingsFilters() {
+    const fillFilterSelect = (elId, field) => {
+        const el = document.getElementById(elId);
+        if (!el) return;
+
+        const values = [...new Set(holdingsRows.map(r => r[field]).filter(Boolean))].sort();
+        if (!values.includes(holdingsFilters[field])) holdingsFilters[field] = '';
+
+        el.innerHTML = '';
+        const allOption = document.createElement('option');
+        allOption.value = '';
+        allOption.textContent = 'すべて';
+        el.appendChild(allOption);
+        values.forEach(value => {
+            const option = document.createElement('option');
+            option.value = value;
+            option.textContent = value;
+            el.appendChild(option);
+        });
+        el.value = holdingsFilters[field];
+    };
+
+    fillFilterSelect('holdings-filter-owner',   'owner');
+    fillFilterSelect('holdings-filter-broker',  'broker');
+    fillFilterSelect('holdings-filter-account', 'account');
+}
+
+['owner', 'broker', 'account'].forEach(field => {
+    document.getElementById(`holdings-filter-${field}`)?.addEventListener('change', (event) => {
+        holdingsFilters[field] = event.target.value;
+        renderHoldingsTable();
+    });
+});
 
 /** 所有者／証券会社／口座区分の入力補助（datalist）を、現在のholdingsRowsに実在する値から再構築する。 */
 function renderHoldingsDatalists() {
@@ -807,8 +942,8 @@ function loadHoldingIntoForm(id) {
 /** stock/holdings.csv を読み込む（未作成の場合は0件として扱う）。 */
 async function loadHoldings() {
     const listStatusEl = document.getElementById('holdings-list-status');
-    const token = getDataTokenValue();
-    if (!token) { listStatusEl.textContent = 'PWを入力してください。'; return; }
+    const token = getTokenValue();
+    if (!token) { listStatusEl.textContent = 'トークンを入力してください。'; return; }
 
     listStatusEl.textContent = '読み込み中...';
 
@@ -818,6 +953,7 @@ async function loadHoldings() {
         holdingsLoaded = true;
         clearHoldingsForm();
         renderHoldingsDatalists();
+        renderHoldingsFilters();
         listStatusEl.textContent = text
             ? `${holdingsRows.length}件を読み込みました。`
             : 'まだ保有銘柄が登録されていません（「保存」を押すとstock/holdings.csvが新規作成されます）。';
@@ -834,7 +970,7 @@ document.getElementById('holdings-code')?.addEventListener('input', async () => 
     const codeInput = document.getElementById('holdings-code');
     const nameEl = document.getElementById('holdings-code-name');
     const code = codeInput.value.trim();
-    const token = getDataTokenValue();
+    const token = getTokenValue();
     if (!code || !token) { nameEl.textContent = ''; return; }
 
     try {
@@ -847,17 +983,14 @@ document.getElementById('holdings-code')?.addEventListener('input', async () => 
     }
 });
 
-document.getElementById('holdings-new-btn')?.addEventListener('click', clearHoldingsForm);
-
-document.getElementById('holdings-apply-btn')?.addEventListener('click', () => {
+/** フォームの入力値を検証して返す（idは含まない）。証券コード・株数が未入力ならnullを返す（アラート表示済み）。 */
+function readHoldingsFormFields() {
     const code   = document.getElementById('holdings-code').value.trim();
     const shares = document.getElementById('holdings-shares').value.trim();
-    if (!code)   { alert('証券コードを入力してください'); return; }
-    if (!shares) { alert('株数を入力してください'); return; }
+    if (!code)   { alert('証券コードを入力してください'); return null; }
+    if (!shares) { alert('株数を入力してください'); return null; }
 
-    const editId = document.getElementById('holdings-edit-id').value;
-    const record = {
-        id:      editId || String(nextHoldingId(holdingsRows)),
+    return {
         owner:   document.getElementById('holdings-owner').value.trim(),
         broker:  document.getElementById('holdings-broker').value.trim(),
         account: document.getElementById('holdings-account').value.trim(),
@@ -865,16 +998,37 @@ document.getElementById('holdings-apply-btn')?.addEventListener('click', () => {
         shares,
         avg_cost: document.getElementById('holdings-avg-cost').value.trim(),
     };
+}
 
-    if (editId) {
-        const idx = holdingsRows.findIndex(r => String(r.id) === String(editId));
-        if (idx !== -1) holdingsRows[idx] = record;
-    } else {
-        holdingsRows.push(record);
-    }
+// 「新規」：フォームの内容を、選択中の行とは関係なく常に新しい1件として一覧へ追加する。
+document.getElementById('holdings-new-btn')?.addEventListener('click', () => {
+    const fields = readHoldingsFormFields();
+    if (!fields) return;
+
+    holdingsRows.push({ id: String(nextHoldingId(holdingsRows)), ...fields });
 
     clearHoldingsForm();
     renderHoldingsDatalists();
+    renderHoldingsFilters();
+    document.getElementById('holdings-list-status').textContent =
+        `${holdingsRows.length}件（未保存の変更があります。「保存」を押すとGitHubへ反映されます）。`;
+});
+
+// 「適用」：一覧で選択中の行（holdings-edit-idに読み込み済み）を、フォームの内容で更新する。新規追加は行わない。
+document.getElementById('holdings-apply-btn')?.addEventListener('click', () => {
+    const editId = document.getElementById('holdings-edit-id').value;
+    if (!editId) { alert('更新する行を一覧から選択してください（新しく登録する場合は「新規」ボタンを使ってください）'); return; }
+
+    const fields = readHoldingsFormFields();
+    if (!fields) return;
+
+    const idx = holdingsRows.findIndex(r => String(r.id) === String(editId));
+    if (idx === -1) { alert('選択中の行が見つかりませんでした。一覧から選び直してください'); return; }
+    holdingsRows[idx] = { id: editId, ...fields };
+
+    renderHoldingsTable();
+    renderHoldingsDatalists();
+    renderHoldingsFilters();
     document.getElementById('holdings-list-status').textContent =
         `${holdingsRows.length}件（未保存の変更があります。「保存」を押すとGitHubへ反映されます）。`;
 });
@@ -887,14 +1041,15 @@ document.getElementById('holdings-delete-btn')?.addEventListener('click', () => 
     holdingsRows = holdingsRows.filter(r => String(r.id) !== String(editId));
     clearHoldingsForm();
     renderHoldingsDatalists();
+    renderHoldingsFilters();
     document.getElementById('holdings-list-status').textContent =
         `${holdingsRows.length}件（未保存の変更があります。「保存」を押すとGitHubへ反映されます）。`;
 });
 
 document.getElementById('holdings-save-btn')?.addEventListener('click', async () => {
     const statusEl = document.getElementById('holdings-save-status');
-    const token = getDataTokenValue();
-    if (!token) { alert('PWを入力してください'); return; }
+    const token = getTokenValue();
+    if (!token) { alert('トークンを入力してください'); return; }
     if (!holdingsLoaded) { alert('先に一覧の「読込」を押してから保存してください（既存データを取りこぼして上書きするのを防ぐため）'); return; }
 
     statusEl.textContent = '保存中...';
@@ -907,5 +1062,78 @@ document.getElementById('holdings-save-btn')?.addEventListener('click', async ()
     } catch (error) {
         console.error(error);
         statusEl.textContent = `保存に失敗しました: ${error.message}`;
+    }
+});
+
+// ===== 保有・履歴：入力方法の切り替え（手動入力／CSV入力） =====
+const HOLDINGS_INPUT_MODES = ['manual', 'csv'];
+
+function renderHoldingsInputMode(mode) {
+    HOLDINGS_INPUT_MODES.forEach(m => {
+        document.getElementById(`holdings-mode-${m}`)?.classList.toggle('view-btn--active', m === mode);
+    });
+    const manualPanel = document.getElementById('holdings-manual-panel');
+    const csvPanel    = document.getElementById('holdings-csv-panel');
+    if (manualPanel) manualPanel.style.display = mode === 'manual' ? '' : 'none';
+    if (csvPanel)    csvPanel.style.display    = mode === 'csv'    ? '' : 'none';
+}
+
+HOLDINGS_INPUT_MODES.forEach(mode => {
+    document.getElementById(`holdings-mode-${mode}`)?.addEventListener('click', () => renderHoldingsInputMode(mode));
+});
+
+// ===== 保有・履歴：CSV入力（証券会社の出力ファイルから取り込み） =====
+// 取り込むと、選択した所有者×証券会社の既存行だけを置き換える（他の所有者・証券会社の行は保持する）。
+// SMBC日興証券は保有銘柄が少数のため手動入力で運用し、CSVパーサーは用意していない。
+const HOLDINGS_CSV_PARSERS = {
+    'SBI': parseSbiHoldingsCsv,
+    '楽天': parseRakutenHoldingsCsv,
+};
+
+document.getElementById('holdings-csv-import-btn')?.addEventListener('click', async () => {
+    const statusEl = document.getElementById('holdings-csv-status');
+    const broker = document.getElementById('holdings-csv-broker').value;
+    const owner  = document.getElementById('holdings-csv-owner').value.trim();
+    const file   = document.getElementById('holdings-csv-file').files[0];
+
+    if (!owner) { alert('所有者を入力してください'); return; }
+    if (!file)  { alert('CSVファイルを選択してください'); return; }
+
+    const parser = HOLDINGS_CSV_PARSERS[broker];
+    if (!parser) {
+        statusEl.textContent = `${broker}のCSV取込は準備中です（${owner}分・ファイル「${file.name}」）。データ構造をもとに実装予定です。`;
+        return;
+    }
+
+    statusEl.textContent = '読み込み中...';
+
+    try {
+        // 証券会社の出力CSVはShift-JIS（cp932）でエクスポートされるため、明示的にデコードする
+        const buffer = await file.arrayBuffer();
+        const text = new TextDecoder('shift-jis').decode(buffer);
+        const parsed = parser(text);
+
+        if (parsed.length === 0) {
+            statusEl.textContent = 'CSVから保有銘柄を読み取れませんでした（ファイル形式が想定と異なる可能性があります）。';
+            return;
+        }
+
+        // 選択した所有者×証券会社に一致する既存行だけを置き換える（他の所有者・証券会社の行はそのまま保持）
+        holdingsRows = holdingsRows.filter(r => !(r.owner === owner && r.broker === broker));
+        let nextId = nextHoldingId(holdingsRows);
+        parsed.forEach(item => {
+            holdingsRows.push({ id: String(nextId++), owner, broker, ...item });
+        });
+
+        clearHoldingsForm();
+        renderHoldingsDatalists();
+        renderHoldingsFilters();
+        document.getElementById('holdings-csv-file').value = '';
+        statusEl.textContent =
+            `${parsed.length}件を取り込みました（${owner} / ${broker}）。一覧全体: ${holdingsRows.length}件` +
+            `（未保存の変更があります。「登録」を押すとGitHubへ反映されます）。`;
+    } catch (error) {
+        console.error(error);
+        statusEl.textContent = `取り込みに失敗しました: ${error.message}`;
     }
 });

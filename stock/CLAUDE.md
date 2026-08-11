@@ -20,7 +20,7 @@
 
 ### 現在の modules 構成
 
-`storage.js`（ID/PWトークンのLocalStorageキャッシュ）／`github.js`（GitHub API通信）／`csv.js`（CSVパース）。
+`storage.js`（トークンのLocalStorageキャッシュ）／`github.js`（GitHub API通信）／`csv.js`（CSVパース）。
 
 ### modules の関数構成（必須4段落）
 
@@ -58,11 +58,11 @@
 | コードリポジトリ | `palmelo2nd/brain` | `main` | `app/brain/code/stock` |
 | データリポジトリ | `palmelo2nd/brain_data` | `main` | `app/brain/data/stock` |
 
-### ID/PWトークン（常時表示バー）
+### トークン（常時表示バー）
 
-- **ID**：コードリポジトリ操作用PAT。ワークフロー起動（`dispatchWorkflow`＝Actions権限）に使用。
-- **PW**：データリポジトリ操作用PAT。ファイル読み書き（`fetchFile`／`commitFile`等＝Contents権限）に使用。
-- 2リポジトリで必要な権限が異なるため分離している。入力するとLocalStorageに自動保存（キー：`stock_id_token`／`stock_pw_token`）。旧・単一PAT欄時代の値（`stock_pat_token`）はID欄への値として引き継ぐ。
+- コードリポジトリ（`brain`）・データリポジトリ（`brain_data`）の両方に対して、**Actions・Contentsをread/writeできる単一のPAT**を使う。ワークフロー起動（`dispatchWorkflow`＝Actions権限）、ファイル読み書き（`fetchFile`／`commitFile`等＝Contents権限）のすべてに共通で使う。
+- 入力するとLocalStorageに自動保存（キー：`stock_token`）。旧・ID/PW2欄時代の値（`stock_id_token`／`stock_pw_token`）、さらに旧い単一PAT欄時代の値（`stock_pat_token`）が残っている場合は引き継ぐ。
+- **経緯（2026-08-11）**：以前はリポジトリごとにID（`brain`用）／PW（`brain_data`用）の2欄に分け、最小権限の原則を意図していた。しかし[保有銘柄の保存機能](./README.md#31-保有銘柄)（`commitFile`でブラウザから直接データリポジトリへ書き込む初めての機能）を追加した際、PW側PATのContents書き込み権限が不足していることが判明し（`fetchFile`等の読み取りは動いていたため気づかれていなかった）、調査の過程で両リポジトリ・両権限をまとめた単一トークン運用に切り替える方針になった。最小権限の原則より運用の単純さを優先した判断であり、意図的な設計変更である（元に戻す場合は`getTokenValue`を`getCodeTokenValue`/`getDataTokenValue`に再分割し、呼び出し箇所ごとに正しいリポジトリの権限を持つトークンを渡すよう戻すこと）。
 
 ### オフライン対応方針（データの重さで扱いを分ける）
 
@@ -72,7 +72,7 @@ brainアプリと異なり、stockは銘柄数×期間で合計データ量が�
 - **重量データ**（個別銘柄の株価CSV `stock/prices/{code}.csv`、株価の一括取得・更新など重い処理）：全量をLocalStorageにキャッシュする対象から**除外**する。必要な範囲だけをその都度GitHub API／GitHub Actions経由で取得する（現状の実装通り）。
 - 上記のいずれにも該当しない、**APIを毎回叩く必要がない操作**（フォーム入力・フィルタ・表示切り替えなど、既に取得済みのデータやUI状態だけで完結する操作）は、通信なしでスマートフォン上だけで完結できるようにする。
 
-> **今後の対応事項（未実装）**：現状は常時表示バーのID/PWトークンのみLocalStorageにキャッシュされており、軽量データ（`master.csv`／`freshness_report.json`／`validation_report.json`）のオフラインキャッシュ・フォールバックはまだ実装されていない。今後、[4. データ更新](./README.md#4-データ更新)まわりを改修する際に、上記の軽量データ側から順にこの方針への対応を進める。
+> **今後の対応事項（未実装）**：現状は常時表示バーのトークンのみLocalStorageにキャッシュされており、軽量データ（`master.csv`／`freshness_report.json`／`validation_report.json`）のオフラインキャッシュ・フォールバックはまだ実装されていない。今後、[4. データ更新](./README.md#4-データ更新)まわりを改修する際に、上記の軽量データ側から順にこの方針への対応を進める。
 
 ### データパース・整合性
 
