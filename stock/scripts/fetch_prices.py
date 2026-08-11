@@ -12,6 +12,9 @@ Yahoo Finance側への負荷・アクセス制限を避けるため、銘柄ご�
 
 出力形式: {output-dir}/{code}.csv （列: date, close。1銘柄1ファイルで全期間をまとめて持つ）
 コード形式が4桁でない銘柄やETF・米国株等は、必要に応じて別スクリプト・別フレームで管理してよい。
+
+--codes に "N225" を指定すると日経平均株価（yfinanceティッカー ^N225）を取得できる（INDEX_TICKERS参照）。
+ベンチマーク比較用で、他の銘柄コードと同じ形式（date, close）でstock/prices/N225.csvに保存される。
 """
 import argparse
 import sys
@@ -25,12 +28,21 @@ import yfinance as yf
 # 東証上場銘柄はyfinance（Yahoo Finance）上でこのサフィックスを付けたティッカーになる
 TSE_SUFFIX = ".T"
 
+# 個別銘柄コードではなく指数のティッカー特例（--codesに"N225"と指定するとこちらを使う）
+INDEX_TICKERS = {"N225": "^N225"}  # 日経平均株価
+
+
+def code_to_ticker(code: str) -> str:
+    """証券コードをyfinanceのティッカーに変換する（指数（N225等）は特例テーブルを優先）。"""
+    special = INDEX_TICKERS.get(code.upper())
+    return special if special else f"{code}{TSE_SUFFIX}"
+
 
 def fetch_close_prices(code: str, start_date: str, period: str | None):
     """指定した証券コードの日足終値をDataFrameで返す（列: close、インデックス: 日付）。
     period が指定されていればそちらを優先し、無ければ start_date 以降の全期間を取得する。
     """
-    ticker = f"{code}{TSE_SUFFIX}"
+    ticker = code_to_ticker(code)
     if period:
         data = yf.Ticker(ticker).history(period=period)
     else:
