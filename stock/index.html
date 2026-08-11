@@ -251,10 +251,39 @@
             </div>
         </div>
 
-        <!-- 銘柄属性：上場銘柄一覧を母集団に、ラベル付け（高配当認定・高利回り優待認定・NG認定など） -->
+        <!-- 銘柄属性：上場銘柄一覧を母集団に、ラベル付け（高配当認定・高利回り優待認定など）を行う。
+             対象は全上場銘柄のうちごく一部のため、一覧表示ではなく証券コード検索＋トグル方式で編集する。
+             「適用」を押すまではメモリ上のlabelsRowsを書き換えるのみで、「登録」を押した時点で
+             一覧全体をstock/labels.csvへコミットする（保有銘柄と同じ操作感） -->
         <div id="view-attributes" class="view-panel" style="display:none">
             <p class="section-label">銘柄属性</p>
-            <p class="placeholder-text">上場銘柄一覧を母集団に、ラベル付け（高配当認定・高利回り優待認定・NG認定など）をここで行う予定です。</p>
+            <p class="placeholder-text">証券コードで銘柄を検索し、高配当・優待のラベルをON/OFFして登録します（NG認定等は今後追加予定）。</p>
+
+            <div class="update-form">
+                <p class="update-form-title">ラベル編集</p>
+                <button type="button" id="attributes-reload-btn" class="run-btn run-btn--secondary">読込</button>
+                <div class="update-form-row">
+                    <label>証券コード</label>
+                    <input type="text" id="attributes-code" placeholder="例: 7203">
+                </div>
+                <p id="attributes-code-name" class="update-status"></p>
+                <div class="update-form-row">
+                    <label>高配当</label>
+                    <input type="checkbox" id="attributes-label-high-div">
+                </div>
+                <div class="update-form-row">
+                    <label>優待</label>
+                    <input type="checkbox" id="attributes-label-perk">
+                </div>
+                <button type="button" id="attributes-apply-btn" class="run-btn">適用</button>
+                <p id="attributes-list-status" class="update-status">トークンを入力し「銘柄属性」タブを開くと読み込みます。</p>
+            </div>
+
+            <!-- 保存：フォーム操作はここまでメモリ上のみ。押すまでGitHubへは反映されない -->
+            <div class="update-form">
+                <button type="button" id="attributes-save-btn" class="run-btn">登録</button>
+                <p id="attributes-save-status" class="update-status"></p>
+            </div>
         </div>
 
         <!-- スコア：業績スコア・配当利回り・売買履歴補正後利回り・ポートフォリオスコアの計算結果表示 -->

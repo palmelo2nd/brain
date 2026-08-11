@@ -28,6 +28,8 @@ const HOLDINGS_CODE_DISPLAY_MAX = 10; // 一覧表のコード列・銘柄名列
 const BULK_ASSET_TYPES = ['内国株式', 'ETF・ETN']; // fetch_prices.pyの--asset-types既定値と揃えている
 const IRBANK_PATH = 'stock/irbank.csv';
 const IRBANK_ASSET_TYPE = '内国株式'; // notebooks/C01_IRBANK企業ID取得.ipynbの対象絞り込みと揃えている（ETF・REIT等はIRBANKの個別企業ページを持たない）
+const LABELS_PATH = 'stock/labels.csv';
+const LABEL_HEADERS = ['code', 'L_高配当', 'L_優待', 'updated_at'];
 
 // ===== GitHub PAT入力欄 =====
 // brain（コードリポジトリ）・brain_data（データリポジトリ）の両方に対して
@@ -99,6 +101,11 @@ DATAUPDATE_MODES.forEach(mode => {
 // 保有・履歴タブを開いたとき、トークンが入力済みなら保有銘柄一覧を自動読み込みする
 document.getElementById('tab-holdings')?.addEventListener('click', () => {
     if (getTokenValue()) loadHoldings();
+});
+
+// 銘柄属性タブを開いたとき、トークンが入力済みならラベル一覧を自動読み込みする
+document.getElementById('tab-attributes')?.addEventListener('click', () => {
+    if (getTokenValue()) loadLabels();
 });
 
 // ダッシュボードタブを開いたとき、トークンが入力済みなら資産サマリーを自動集計する
@@ -1204,4 +1211,112 @@ async function loadIrbankStatus() {
 }
 
 document.getElementById('irbank-status-check-btn')?.addEventListener('click', loadIrbankStatus);
+
+// ===== 銘柄属性：高配当・優待ラベル（stock/labels.csv） =====
+// master.csvとは別ファイルにする理由: master.csvはJPX公式データから毎回作り直される派生データだが、
+// ラベルは人手で積み上げる再取得コストの高いデータのため（過去のirbank.csvと同じ判断。詳細はCLAUDE.md参照）。
+// 対象は全上場銘柄のうちごく一部（過去実装で高配当約120件・優待約30件程度）のため、一覧表示ではなく
+// 証券コード検索＋トグル方式で編集する（holdings.csvの手動入力と同じく、「登録」を押すまでGitHubへは反映されない）。
+
+let labelsRows = [];      // ラベル一覧（メモリ上の編集対象）
+let labelsLoaded = false; // 一度でも読み込みが済んだか（未読み込みでの「登録」による取りこぼし上書きを防ぐ）
+
+/** 現在時刻をJST・"YYYY-MM-DD HH:MM:SS"形式で返す（irbank.csvのupdated_atと表記を揃えている）。 */
+function formatJstTimestamp() {
+    const jst = new Date(Date.now() + 9 * 60 * 60 * 1000);
+    const iso = jst.toISOString();
+    return `${iso.slice(0, 10)} ${iso.slice(11, 19)}`;
+}
+
+/** stock/labels.csv を読み込む（未作成の場合は0件として扱う）。 */
+async function loadLabels() {
+    const statusEl = document.getElementById('attributes-list-status');
+    const token = getTokenValue();
+    if (!token) { statusEl.textContent = 'トークンを入力してください。'; return; }
+
+    statusEl.textContent = '読み込み中...';
+
+    try {
+        const text = await fetchFileIfExists(token, OWNER, DATA_REPO, LABELS_PATH);
+        labelsRows = text ? parseCsv(text) : [];
+        labelsLoaded = true;
+        statusEl.textContent = text
+            ? `${labelsRows.length}件を読み込みました。`
+            : 'まだラベルが登録されていません（「登録」を押すとstock/labels.csvが新規作成されます）。';
+        // 検索欄に既にコードが入力済みなら、読み込んだ内容でチェック状態を再反映する
+        document.getElementById('attributes-code')?.dispatchEvent(new Event('input'));
+    } catch (error) {
+        console.error(error);
+        statusEl.textContent = `読み込みに失敗しました: ${error.message}`;
+    }
+}
+
+document.getElementById('attributes-reload-btn')?.addEventListener('click', loadLabels);
+
+// 証券コード入力のたびに、master.csvから引ける銘柄名と、labelsRowsに既存のラベル状態をプレビュー表示する
+document.getElementById('attributes-code')?.addEventListener('input', async () => {
+    const codeInput = document.getElementById('attributes-code');
+    const nameEl = document.getElementById('attributes-code-name');
+    const highDivEl = document.getElementById('attributes-label-high-div');
+    const perkEl = document.getElementById('attributes-label-perk');
+    const code = codeInput.value.trim();
+
+    const existing = labelsRows.find(r => r.code === code);
+    highDivEl.checked = existing ? existing['L_高配当'] === '1' : false;
+    perkEl.checked = existing ? existing['L_優待'] === '1' : false;
+
+    const token = getTokenValue();
+    if (!code || !token) { nameEl.textContent = ''; return; }
+
+    try {
+        const nameMap = await getMasterNameMap(token);
+        if (codeInput.value.trim() !== code) return; // 取得中に入力内容が変わっていたら破棄
+        nameEl.textContent = nameMap.has(code) ? nameMap.get(code) : '（銘柄マスタに見つかりません）';
+    } catch (error) {
+        console.error(error);
+        nameEl.textContent = '';
+    }
+});
+
+// 「適用」：入力中のコードのラベル状態をlabelsRowsへ反映する（GitHubへはまだ反映されない）。
+// 両ラベルともOFFになった場合は行自体を削除する（積み上げるデータを不要な0/0行で肥大化させないため）。
+document.getElementById('attributes-apply-btn')?.addEventListener('click', () => {
+    if (!labelsLoaded) { alert('先に「読込」を押してから編集してください（既存データを取りこぼして上書きするのを防ぐため）'); return; }
+
+    const code = document.getElementById('attributes-code').value.trim();
+    if (!code) { alert('証券コードを入力してください'); return; }
+
+    const highDiv = document.getElementById('attributes-label-high-div').checked;
+    const perk = document.getElementById('attributes-label-perk').checked;
+
+    const idx = labelsRows.findIndex(r => r.code === code);
+    if (!highDiv && !perk) {
+        if (idx !== -1) labelsRows.splice(idx, 1);
+    } else {
+        const row = { code, 'L_高配当': highDiv ? '1' : '0', 'L_優待': perk ? '1' : '0', updated_at: formatJstTimestamp() };
+        if (idx !== -1) labelsRows[idx] = row; else labelsRows.push(row);
+    }
+
+    document.getElementById('attributes-list-status').textContent =
+        `${labelsRows.length}件（未保存の変更があります。「登録」を押すとGitHubへ反映されます）。`;
+});
+
+document.getElementById('attributes-save-btn')?.addEventListener('click', async () => {
+    const statusEl = document.getElementById('attributes-save-status');
+    const token = getTokenValue();
+    if (!token) { alert('トークンを入力してください'); return; }
+    if (!labelsLoaded) { alert('先に一覧の「読込」を押してから保存してください（既存データを取りこぼして上書きするのを防ぐため）'); return; }
+
+    statusEl.textContent = '保存中...';
+
+    try {
+        const content = stringifyCsv(labelsRows, LABEL_HEADERS);
+        await commitFile(token, OWNER, DATA_REPO, LABELS_PATH, DATA_REPO_BRANCH, content, 'chore: 銘柄属性ラベルを更新');
+        statusEl.textContent = `保存しました（${labelsRows.length}件）。`;
+        document.getElementById('attributes-list-status').textContent = `${labelsRows.length}件を読み込みました。`;
+    } catch (error) {
+        console.error(error);
+        statusEl.textContent = `保存に失敗しました: ${error.message}`;
+    }
+});
 
