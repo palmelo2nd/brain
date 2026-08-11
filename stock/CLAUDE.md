@@ -16,6 +16,7 @@
 | `js/app.js` | 管制塔。イベント監視・DOM操作・各ページの制御に専念 |
 | `js/modules/*.js` | 機能ロジック。1機能1ファイル |
 | `scripts/*.py` | GitHub Actions上で実行するデータ取得・加工・検証スクリプト |
+| `notebooks/*.ipynb` | ローカル（Jupyter）専用で実行するデータ取得・分析。GitHub Actions側でブロックされる／対話的な試行錯誤が要る機能はこちら |
 | `.github/workflows/*.yml` | （`app/brain/code/.github/workflows/`。リポジトリ直下）ワークフロー定義 |
 
 ### 現在の modules 構成
@@ -39,6 +40,14 @@
 - `argparse`で実行時引数を受け取る。出力先パス等の環境依存値もデフォルト値込みで引数化し、ハードコードしない。
 - ファイル冒頭のdocstringに、スクリプトの概要・入力・出力・将来の拡張について記載する（既存スクリプトのスタイルに合わせる）。
 - アプリのフロントエンドから状態を表示する用途がある場合は`--report`引数でJSON出力できるようにする（例: `freshness_report.json`、`validation_report.json`）。
+
+### notebooks/*.ipynb の規約
+
+- **使いどころ**：GitHub Actionsから実行できない（サイト側がクラウドIPをブロックする等）機能や、`past/`の旧Jupyter実装を新データ構成に合わせて作り直す機能。それ以外（GitHub Actionsで動く定型処理）は`scripts/*.py`に置く。
+- 1機能1notebook。命名は`past/`の旧ファイル名を踏襲する（例：`past/C01_...`を作り直す場合は`notebooks/C01_...`）。
+- 出力データの保存先は必ずデータリポジトリ（`../../../data/stock/`、ローカルパス`app/brain/data/stock/`）。[データファイルの分離方針](#データファイルの分離方針作り直せるデータと積み上げるデータを混ぜない)に従い、`master.csv`とは別ファイルに保存する。
+- 実行後の`app/brain/data`側の変更（コミット・push）はユーザーが手動で行う（本アプリはユーザー自身がgit同期を管理する運用のため、notebook側からの自動push処理は実装しない）。
+- 中断・再実行に対応する（対話実行中にKernelを止める可能性があるため）：既に取得済み（`status=ok`等）の行はスキップし、一定件数ごとに逐次保存する。
 
 ### .github/workflows/*.yml の規約
 
@@ -82,6 +91,11 @@ brainアプリと異なり、stockは銘柄数×期間で合計データ量が�
 
 - **Why（2026-08-11判断）:** `master.csv`はJPX公式データ（`data_j_*.xls`）から`build_stock_master.py`が毎回まるごと再生成する、決定論的に作り直せる派生データ。一方、IRBANKスクレイピングで取得するID/URL（`stock/irbank.csv`）や、将来の人手ラベル（`stock/labels.csv`想定）は、再取得・再入力のコストが高い「積み上げ型」のデータ。両者を同じファイルに同居させると、`master.csv`の再生成ロジックが「全列保持マージ」のような複雑な処理を持たざるを得なくなる（旧Jupyter実装が複雑化した直接の原因）。
 - **How to apply:** `master.csv`に列を追加する形で新しいデータを持たせようとしていないか、実装前に必ず確認する。「作り直せるデータ」か「積み上げるデータ」かで判断し、後者は必ず別ファイル（`code`列で結合）にする。書き込み元（GitHub Actions＝スクリプト側／ブラウザ＝UI側）が異なるデータは、可能な限り別ファイルに分ける（同時書き込みの競合を避けるため。[.github/workflows/*.ymlの規約](#githubworkflowsymlの規約)のconcurrencyグループ分けとも対応させる）。
+
+### IRBANK企業ID取得（`notebooks/C01_IRBANK企業ID取得.ipynb`）はローカル（Jupyter）実行専用
+
+- **Why（2026-08-11判断）:** GitHub Actionsのランナーから`irbank.net`へアクセスすると、robots.txtで`Allow: /`とされている直URL（`https://irbank.net/{code}`）ですら一律403 Forbiddenが返ることを診断ログ付きで確認した（User-Agent変更では回避できず、同じページがローカルからの通常アクセスでは問題なく取得できたことから、IRBANK側がGitHub ActionsのデータセンターIPレンジをブロックしていると判断）。プロキシ・IP偽装等でこのブロックを回避する実装は行わない方針（サイト側のアクセス制御を尊重する）。当初は`scripts/fetch_irbank_ids.py`というCLIスクリプトとして実装したが、この機能はGitHub Actionsで動かせず`scripts/*.py`の役割（GitHub Actions上で実行するスクリプト）に合致しないため、[notebooks/*.ipynb](#notebooksipynbの規約)に一本化し、CLIスクリプトは削除した。
+- **How to apply:** `notebooks/C01_IRBANK企業ID取得.ipynb`をJupyterで開いてセルを順に実行すると、既定値だけでローカルの`../../../data/stock/master.csv`を読み、`../../../data/stock/irbank.csv`を更新する（未取得銘柄のみ対象、取得済みはスキップ）。実行後は`app/brain/data`側の変更を自分でコミット・pushする（ユーザーがgit同期を自分で行う運用と一致）。アプリ側（`index.html`の「現在の状態」パネル）は`stock/irbank.csv`を読むだけなので、ローカル実行後にpushすれば自動的に反映される。
 
 ---
 

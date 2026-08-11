@@ -126,7 +126,7 @@ modules配下の関数は4段落構成でexportする：(1) インポート → 
 
 ## 4. データ更新
 
-株価データ（yfinance由来）の取得・鮮度確認・品質チェックをGitHub Actions経由で行うページ。業績情報（IRBANK）の更新は未着手で、株価のみ実装済み。
+株価データ（yfinance由来）の取得・鮮度確認・品質チェックと、IRBANK企業ID（EID）の取得状況確認を行うページ。株価はGitHub Actions経由、IRBANK企業IDの取得はローカル実行（[4.4](#44-irbank企業id取得)）。
 
 ### 4.1 現在の状態（株価）
 
@@ -166,7 +166,7 @@ IRBANK（irbank.net）から内国株式の企業ID（EID）・URL・社名を�
 - **対象**：`master.csv`の`status=listed`かつ`asset_type=内国株式`の銘柄のみ（ETF・REIT・PRO Market等はIRBANKの個別企業ページを持たないため対象外）。
 - **`master.csv`とは別ファイルにしている理由**：`master.csv`はJPX公式データから毎回まるごと作り直せる派生データだが、`stock/irbank.csv`はスクレイピングで積み上げた（再取得コストが高い）データのため、`master.csv`の再生成（`build_stock_master.py`）で失われないよう独立させている。同じ理由で、将来のラベル付け（[5. 銘柄属性](#5-銘柄属性開発中)）も`master.csv`ではなく別ファイル（`stock/labels.csv`想定・未実装）に持たせる方針。
 - **現在の状態**：「チェック」ボタンで`stock/irbank.csv`と対象銘柄数を突き合わせ、取得済み／未取得（`not_found`＝要再挑戦）／未着手の件数を表示する。
-- **取得**：「IDを取得」ボタンで、対象銘柄数を数えて一括取得ワークフロー（`fetch-irbank-ids.yml`）を`offset=0`で起動する（取得済み銘柄は`fetch_irbank_ids.py`側が自動スキップ）。20件処理するごとに自動コミット。[4.2 株価の更新](#42-株価の更新最新株価取得)と同じ仕組みで進捗バー・実行状況をライブ追跡する（コミットメッセージの`offset`/`count`から処理済み件数を算出）。前回実行がまだ進行中の場合は、同時実行によるコミット競合の恐れがある旨を警告する。
+- **取得はローカル（Jupyter）実行のみ**：IRBANKがGitHub ActionsのIPアドレスを一律ブロックしており（robots.txtで`Allow: /`とされている直URLアクセスでも403が返る）、UA偽装でも回避できないことを確認済み。回避策（プロキシ・IP偽装等）は用いず、自分のPC上で`notebooks/C01_IRBANK企業ID取得.ipynb`をJupyterで実行する運用にしている（旧`past/`Notebook実装と同じ、ローカルの正規アクセス経路を使う方式。ただし検索フォールバック廃止・失敗理由の記録・逐次保存など、旧実装から改良済み）。実行後は更新された`stock/irbank.csv`を手動でコミット・pushする。詳細手順は[CLAUDE.md](./CLAUDE.md)を参照。
 
 ---
 
@@ -216,7 +216,7 @@ IRBANK（irbank.net）から内国株式の企業ID（EID）・URL・社名を�
 
 ## 添付2. バックエンド構成（GitHub Actions × Pythonスクリプト）
 
-株価・IRBANK企業IDの取得・検証はすべてGitHub Actionsのワークフロー（`workflow_dispatch`で手動起動）として実装し、フロントエンドからGitHub APIで起動する。同じファイルへ書き込む系のワークフローは同じconcurrencyグループを共有し、同時書き込みによるgitの競合（同一ファイルへのpush競合）を防いでいる（`stock/prices/`書き込み系＝`stock-prices-write`、`stock/irbank.csv`書き込み系＝`stock-irbank-write`）。
+株価の取得・検証はすべてGitHub Actionsのワークフロー（`workflow_dispatch`で手動起動）として実装し、フロントエンドからGitHub APIで起動する。同じファイルへ書き込む系のワークフローは同じconcurrencyグループを共有し、同時書き込みによるgitの競合（同一ファイルへのpush競合）を防いでいる（`stock/prices/`書き込み系＝`stock-prices-write`）。IRBANK企業ID取得（`notebooks/C01_IRBANK企業ID取得.ipynb`）はIRBANK側がGitHub ActionsのIPをブロックするため対象外で、ローカル（Jupyter）実行専用（[4.4](#44-irbank企業id取得)参照）。
 
 | ワークフロー（`.github/workflows/`） | 対応スクリプト | 起動元 | 内容 |
 |---|---|---|---|
@@ -226,11 +226,14 @@ IRBANK（irbank.net）から内国株式の企業ID（EID）・URL・社名を�
 | `check-price-freshness.yml` | `check_freshness.py` | [4.1](#41-現在の状態株価)の「チェック」 | 銘柄ごとの最終日付を集計し`stock/freshness_report.json`を出力 |
 | `validate-stock-prices.yml` | `validate_prices.py` | [4.1](#41-現在の状態株価)の「チェック」 | 欠損・重複・日付間隔異常等を検出し`stock/validation_report.json`を出力 |
 | `clean-missing-close.yml` | `clean_missing_close.py` | アプリ未接続（GitHub Actionsタブから手動実行） | 旧`fetch_prices.py`が保存した終値空行を一括除去する一回限りの修復用 |
-| `fetch-irbank-ids.yml` | `fetch_irbank_ids.py --master` | [4.4](#44-irbank企業id取得) | 内国株式を対象にIRBANKの企業ID・URL・社名を範囲指定で一括取得。20件ごとに自動コミット |
 
 その他のスクリプト：
 
 - `build_stock_master.py`：JPX公開の東証上場銘柄一覧（`data_j_*.xls`）を銘柄マスタCSV（`stock/master.csv`）に変換する。現状はワークフロー化されておらずローカル実行想定（銘柄マスタの更新頻度が低いため）。
+
+`notebooks/`（Jupyter・ローカル実行専用）：
+
+- `C01_IRBANK企業ID取得.ipynb`：IRBANKから企業ID（EID）・URL・社名を取得し`stock/irbank.csv`を更新する（[4.4](#44-irbank企業id取得)）。IRBANKがGitHub ActionsのIPをブロックするためワークフロー化できず、`past/`の旧Notebookをローカル実行前提で作り直したもの。
 
 ---
 
@@ -243,7 +246,7 @@ IRBANK（irbank.net）から内国株式の企業ID（EID）・URL・社名を�
 | `stock/master.csv` | 銘柄マスタ。列：`id, code, name, market, segment, asset_type, industry33_code, industry33_name, industry17_code, industry17_name, scale_code, scale_name, status, source, as_of`。`build_stock_master.py`が生成（2026-06-30時点で4,437銘柄） |
 | `stock/prices/{code}.csv` | 銘柄コードごとの日足終値。列：`date, close`。2013年以降を`fetch_prices.py`が取得・追記 |
 | `stock/holdings.csv` | 保有銘柄一覧。列：`id, owner, broker, account, code, shares, avg_cost`。[3.1 保有銘柄](#31-保有銘柄)ページから手入力で登録・保存（アプリからの保存時に一覧全体を洗い替え） |
-| `stock/irbank.csv` | IRBANK企業ID一覧（内国株式のみ）。列：`code, eid, url, name, status, updated_at`。[4.4](#44-irbank企業id取得)から`fetch_irbank_ids.py`が取得・追記（差分更新。`master.csv`とは別ファイルで、`master.csv`の再生成では消えない） |
+| `stock/irbank.csv` | IRBANK企業ID一覧（内国株式のみ）。列：`code, eid, url, name, status, updated_at`。`notebooks/C01_IRBANK企業ID取得.ipynb`をローカル実行して取得・追記し、手動でコミット・push（[4.4](#44-irbank企業id取得)。差分更新。`master.csv`とは別ファイルで、`master.csv`の再生成では消えない） |
 | `stock/freshness_report.json` | [4.1](#41-現在の状態株価)「更新最終日」の表示元 |
 | `stock/validation_report.json` | [4.1](#41-現在の状態株価)「データ品質」の表示元。未実行時はファイル自体が存在しない |
 | `stock/input/listed_companies/` | `build_stock_master.py`の入力元（JPX公開の`data_j_*.xls`） |

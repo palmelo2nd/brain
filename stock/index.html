@@ -241,14 +241,12 @@
                 </div>
 
                 <div class="update-form">
-                    <p class="update-form-title">IRBANK企業IDの取得</p>
-                    <p class="placeholder-text">内国株式の銘柄マスタを対象に、IRBANKの企業ID（EID）・URL・社名を取得します（取得済みの銘柄は再取得しません）。</p>
-                    <button type="button" id="irbank-update-all-btn" class="run-btn">IDを取得</button>
-                    <div id="irbank-update-all-progress" class="progress-wrap" style="display:none">
-                        <progress id="irbank-update-all-bar" max="100" value="0"></progress>
-                        <span id="irbank-update-all-percent" class="progress-percent"></span>
-                    </div>
-                    <p id="irbank-update-all-status" class="update-status"></p>
+                    <p class="update-form-title">IRBANK企業IDの取得（ローカル実行）</p>
+                    <p class="placeholder-text">
+                        IRBANKがGitHub ActionsのIPアドレスをブロックしているため、この機能はアプリ画面から実行できません。
+                        自分のPC上で <code>notebooks/C01_IRBANK企業ID取得.ipynb</code> をJupyterで開いて実行してください（詳細はCLAUDE.mdを参照）。
+                        実行後、更新された <code>stock/irbank.csv</code> をデータリポジトリに手動でコミット・pushすると、上の「現在の状態」に反映されます。
+                    </p>
                 </div>
             </div>
         </div>
