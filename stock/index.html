@@ -157,10 +157,10 @@
         <div id="view-dataupdate" class="view-panel" style="display:none">
             <p class="section-label">データ更新</p>
 
-            <!-- 更新対象の切り替え（株価更新／EID更新） -->
+            <!-- 更新対象の切り替え（株価更新／企業ID） -->
             <div class="view-toggle">
                 <button type="button" id="dataupdate-mode-price"  class="view-btn view-btn--active" data-mode="price">株価更新</button>
-                <button type="button" id="dataupdate-mode-irbank" class="view-btn" data-mode="irbank">EID更新</button>
+                <button type="button" id="dataupdate-mode-irbank" class="view-btn" data-mode="irbank">企業ID</button>
             </div>
 
             <!-- 株価更新：yfinance由来の株価データ -->
@@ -229,7 +229,7 @@
                 </details>
             </div>
 
-            <!-- EID更新：IRBANK企業ID取得。内国株式の企業ID(EID)・URL・社名を取得し、stock/irbank.csvを更新する。
+            <!-- 企業ID：IRBANK企業ID取得。内国株式の企業ID(EID)・URL・社名を取得し、stock/irbank.csvを更新する。
                  将来の業績情報（配当等）取得の前提データ（EIDが無いとIRBANKの個別ページを特定できない） -->
             <div id="dataupdate-irbank-panel" style="display:none">
                 <div class="update-form status-panel">

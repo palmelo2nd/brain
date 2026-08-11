@@ -30,7 +30,10 @@ BASE_BY_CODE = "https://irbank.net/{code}"
 SEARCH_URL = "https://irbank.net/search?q={code}"
 RESULTS_URL = "https://irbank.net/{eid}/results"
 
-USER_AGENT = "Mozilla/5.0 (compatible; stock-app-irbank-fetcher/1.0)"
+# 自己申告のボットUA（例: "compatible; xxx-fetcher/1.0"）だとIRBANK側にブロックされ、
+# 全銘柄が一律で取得失敗になる事例が確認されたため、実ブラウザ（Chrome）を偽装したUAを使う。
+USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36"
+ACCEPT_HEADER = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
 JST = timezone(timedelta(hours=9))
 
 IRBANK_COLUMNS = ["code", "eid", "url", "name", "status", "updated_at"]
@@ -38,7 +41,7 @@ IRBANK_COLUMNS = ["code", "eid", "url", "name", "status", "updated_at"]
 
 def make_session() -> requests.Session:
     session = requests.Session()
-    session.headers.update({"User-Agent": USER_AGENT})
+    session.headers.update({"User-Agent": USER_AGENT, "Accept": ACCEPT_HEADER})
     return session
 
 

@@ -76,7 +76,7 @@ document.getElementById('tab-dataupdate')?.addEventListener('click', () => {
     if (getTokenValue()) loadFreshnessStatus();
 });
 
-// ===== データ更新：更新対象の切り替え（株価更新／EID更新） =====
+// ===== データ更新：更新対象の切り替え（株価更新／企業ID） =====
 const DATAUPDATE_MODES = ['price', 'irbank'];
 
 function renderDataupdateMode(mode) {
@@ -92,7 +92,7 @@ function renderDataupdateMode(mode) {
 DATAUPDATE_MODES.forEach(mode => {
     document.getElementById(`dataupdate-mode-${mode}`)?.addEventListener('click', () => {
         renderDataupdateMode(mode);
-        // EID更新に切り替えたとき、トークンが入力済みならその場で状態パネルを自動更新する
+        // 「企業ID」に切り替えたとき、トークンが入力済みならその場で状態パネルを自動更新する
         if (mode === 'irbank' && getTokenValue()) loadIrbankStatus();
     });
 });
