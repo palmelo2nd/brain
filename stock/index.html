@@ -156,86 +156,100 @@
         <!-- データ更新：IRBANK業績情報・yfinance株価のGitHub Actions更新トリガーと実行状況確認 -->
         <div id="view-dataupdate" class="view-panel" style="display:none">
             <p class="section-label">データ更新</p>
-            <p class="placeholder-text">業績情報（IRBANK）の更新は今後追加予定です。まずは株価（yfinance）のみ。</p>
 
-            <!-- 現在の状態：株価データの鮮度を常時表示（行単位の詳細な検証は詳細設定の「データ品質チェック」で行う） -->
-            <div class="update-form status-panel">
-                <p class="update-form-title">現在の状態（株価）</p>
-                <div class="status-actions">
-                    <button type="button" id="status-check-btn" class="run-btn">チェック</button>
-                </div>
-                <div id="status-summary" class="update-status">トークンを入力し「チェック」を押してください。</div>
+            <!-- 更新対象の切り替え（株価更新／EID更新） -->
+            <div class="view-toggle">
+                <button type="button" id="dataupdate-mode-price"  class="view-btn view-btn--active" data-mode="price">株価更新</button>
+                <button type="button" id="dataupdate-mode-irbank" class="view-btn" data-mode="irbank">EID更新</button>
             </div>
 
-            <!-- 更新：日常運用はこのボタン1つ。対象銘柄すべてを差分更新する -->
-            <div class="update-form">
-                <p class="update-form-title">株価の更新</p>
-                <button type="button" id="price-update-all-btn" class="run-btn">最新株価取得</button>
-                <div id="price-update-all-progress" class="progress-wrap" style="display:none">
-                    <progress id="price-update-all-bar" max="100" value="0"></progress>
-                    <span id="price-update-all-percent" class="progress-percent"></span>
+            <!-- 株価更新：yfinance由来の株価データ -->
+            <div id="dataupdate-price-panel">
+                <!-- 現在の状態：株価データの鮮度を常時表示（行単位の詳細な検証は詳細設定の「データ品質チェック」で行う） -->
+                <div class="update-form status-panel">
+                    <p class="update-form-title">現在の状態（株価）</p>
+                    <div class="status-actions">
+                        <button type="button" id="status-check-btn" class="run-btn">チェック</button>
+                    </div>
+                    <div id="status-summary" class="update-status">トークンを入力し「チェック」を押してください。</div>
                 </div>
-                <p id="price-update-all-status" class="update-status"></p>
+
+                <!-- 更新：日常運用はこのボタン1つ。対象銘柄すべてを差分更新する -->
+                <div class="update-form">
+                    <p class="update-form-title">株価の更新</p>
+                    <button type="button" id="price-update-all-btn" class="run-btn">最新株価取得</button>
+                    <div id="price-update-all-progress" class="progress-wrap" style="display:none">
+                        <progress id="price-update-all-bar" max="100" value="0"></progress>
+                        <span id="price-update-all-percent" class="progress-percent"></span>
+                    </div>
+                    <p id="price-update-all-status" class="update-status"></p>
+                </div>
+
+                <!-- 詳細設定：日常運用では使わない操作（個別コード指定・新規銘柄の初回取得・データ品質チェック） -->
+                <details class="advanced-settings">
+                    <summary>株価取得</summary>
+
+                    <div class="update-form">
+                        <p class="update-form-title">株価取得（銘柄コードを直接指定）</p>
+                        <div class="update-form-row">
+                            <label>証券コード</label>
+                            <input type="text" id="price-update-code" value="7203" placeholder="例: 7203,9984,6758（日経平均はN225）">
+                        </div>
+                        <div class="update-form-row">
+                            <label>取得期間</label>
+                            <input type="text" id="price-update-period" value="" placeholder="空欄で2013年以降の全期間（例: 5d, 1mo）">
+                        </div>
+                        <button type="button" id="price-update-run-btn" class="run-btn run-btn--secondary">株価取得を実行</button>
+                        <p id="price-update-status" class="update-status"></p>
+                    </div>
+
+                    <div class="update-form">
+                        <p class="update-form-title">株価一括取得（銘柄マスタ master.csv から範囲指定）</p>
+                        <p class="placeholder-text">新規上場銘柄の初回取得など、範囲を区切って処理したい場合に使います。日常の差分更新は上の「最新株価取得」で十分です。</p>
+                        <div class="update-form-row">
+                            <label>モード</label>
+                            <select id="bulk-update-mode">
+                                <option value="initial">初回取得（未取得銘柄向け・全期間）</option>
+                                <option value="update">差分更新（既存銘柄を最新に）</option>
+                            </select>
+                        </div>
+                        <button type="button" id="bulk-update-check-btn" class="run-btn run-btn--secondary">取得状況を確認</button>
+                        <p id="bulk-update-progress" class="update-status"></p>
+                        <div class="update-form-row">
+                            <label>開始位置</label>
+                            <input type="number" id="bulk-update-offset" value="0" min="0" step="1">
+                        </div>
+                        <div class="update-form-row">
+                            <label>件数</label>
+                            <input type="number" id="bulk-update-limit" value="200" min="1" step="1">
+                        </div>
+                        <button type="button" id="bulk-update-run-btn" class="run-btn run-btn--secondary">一括取得を実行</button>
+                        <p id="bulk-update-status" class="update-status"></p>
+                    </div>
+                </details>
             </div>
 
-            <!-- 詳細設定：日常運用では使わない操作（個別コード指定・新規銘柄の初回取得・データ品質チェック） -->
-            <details class="advanced-settings">
-                <summary>株価取得</summary>
-
-                <div class="update-form">
-                    <p class="update-form-title">株価取得（銘柄コードを直接指定）</p>
-                    <div class="update-form-row">
-                        <label>証券コード</label>
-                        <input type="text" id="price-update-code" value="7203" placeholder="例: 7203,9984,6758（日経平均はN225）">
-                    </div>
-                    <div class="update-form-row">
-                        <label>取得期間</label>
-                        <input type="text" id="price-update-period" value="" placeholder="空欄で2013年以降の全期間（例: 5d, 1mo）">
-                    </div>
-                    <button type="button" id="price-update-run-btn" class="run-btn run-btn--secondary">株価取得を実行</button>
-                    <p id="price-update-status" class="update-status"></p>
-                </div>
-
-                <div class="update-form">
-                    <p class="update-form-title">株価一括取得（銘柄マスタ master.csv から範囲指定）</p>
-                    <p class="placeholder-text">新規上場銘柄の初回取得など、範囲を区切って処理したい場合に使います。日常の差分更新は上の「最新株価取得」で十分です。</p>
-                    <div class="update-form-row">
-                        <label>モード</label>
-                        <select id="bulk-update-mode">
-                            <option value="initial">初回取得（未取得銘柄向け・全期間）</option>
-                            <option value="update">差分更新（既存銘柄を最新に）</option>
-                        </select>
-                    </div>
-                    <button type="button" id="bulk-update-check-btn" class="run-btn run-btn--secondary">取得状況を確認</button>
-                    <p id="bulk-update-progress" class="update-status"></p>
-                    <div class="update-form-row">
-                        <label>開始位置</label>
-                        <input type="number" id="bulk-update-offset" value="0" min="0" step="1">
-                    </div>
-                    <div class="update-form-row">
-                        <label>件数</label>
-                        <input type="number" id="bulk-update-limit" value="200" min="1" step="1">
-                    </div>
-                    <button type="button" id="bulk-update-run-btn" class="run-btn run-btn--secondary">一括取得を実行</button>
-                    <p id="bulk-update-status" class="update-status"></p>
-                </div>
-            </details>
-
-            <!-- IRBANK企業ID取得：内国株式の企業ID(EID)・URL・社名を取得し、stock/irbank.csvを更新する。
+            <!-- EID更新：IRBANK企業ID取得。内国株式の企業ID(EID)・URL・社名を取得し、stock/irbank.csvを更新する。
                  将来の業績情報（配当等）取得の前提データ（EIDが無いとIRBANKの個別ページを特定できない） -->
-            <div class="update-form status-panel">
-                <p class="update-form-title">現在の状態（IRBANK企業ID）</p>
-                <div class="status-actions">
-                    <button type="button" id="irbank-status-check-btn" class="run-btn">チェック</button>
+            <div id="dataupdate-irbank-panel" style="display:none">
+                <div class="update-form status-panel">
+                    <p class="update-form-title">現在の状態（IRBANK企業ID）</p>
+                    <div class="status-actions">
+                        <button type="button" id="irbank-status-check-btn" class="run-btn">チェック</button>
+                    </div>
+                    <div id="irbank-status-summary" class="update-status">トークンを入力し「チェック」を押してください。</div>
                 </div>
-                <div id="irbank-status-summary" class="update-status">トークンを入力し「チェック」を押してください。</div>
-            </div>
 
-            <div class="update-form">
-                <p class="update-form-title">IRBANK企業IDの取得</p>
-                <p class="placeholder-text">内国株式の銘柄マスタを対象に、IRBANKの企業ID（EID）・URL・社名を取得します（取得済みの銘柄は再取得しません）。</p>
-                <button type="button" id="irbank-update-all-btn" class="run-btn">未取得分をまとめて取得</button>
-                <p id="irbank-update-all-status" class="update-status"></p>
+                <div class="update-form">
+                    <p class="update-form-title">IRBANK企業IDの取得</p>
+                    <p class="placeholder-text">内国株式の銘柄マスタを対象に、IRBANKの企業ID（EID）・URL・社名を取得します（取得済みの銘柄は再取得しません）。</p>
+                    <button type="button" id="irbank-update-all-btn" class="run-btn">未取得分をまとめて取得</button>
+                    <div id="irbank-update-all-progress" class="progress-wrap" style="display:none">
+                        <progress id="irbank-update-all-bar" max="100" value="0"></progress>
+                        <span id="irbank-update-all-percent" class="progress-percent"></span>
+                    </div>
+                    <p id="irbank-update-all-status" class="update-status"></p>
+                </div>
             </div>
         </div>
 
