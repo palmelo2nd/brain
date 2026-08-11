@@ -68,8 +68,12 @@ def extract_name_from_html(html: str) -> str | None:
     return text or None
 
 
-def resolve_eid(code: str, session: requests.Session, sleep_sec: float) -> str | None:
-    """証券コードから企業ID（EID）を解決する。直URL→検索の順で試し、見つからなければNone。"""
+def resolve_eid(code: str, session: requests.Session, sleep_sec: float) -> tuple[str | None, str]:
+    """証券コードから企業ID（EID）を解決する。直URL→検索の順で試す。
+    見つかれば (EID, "")、見つからなければ (None, 診断用の失敗理由) を返す。
+    """
+    reasons: list[str] = []
+
     try:
         html = fetch_html(BASE_BY_CODE.format(code=code), session)
         soup = BeautifulSoup(html, "html.parser")
@@ -77,9 +81,13 @@ def resolve_eid(code: str, session: requests.Session, sleep_sec: float) -> str |
         if a and a.get("href"):
             m = re.search(r"/(E\d+)", a["href"])
             if m:
-                return m.group(1)
-    except Exception:
-        pass
+                return m.group(1), ""
+        reasons.append(f"直URL: EIDリンクが見つからない（取得HTML長={len(html)}文字、先頭100文字: {html[:100]!r}）")
+    except requests.HTTPError as e:
+        status = e.response.status_code if e.response is not None else "?"
+        reasons.append(f"直URL: HTTPエラー status={status}")
+    except Exception as e:
+        reasons.append(f"直URL: {type(e).__name__}: {e}")
 
     try:
         polite_sleep(sleep_sec)
@@ -88,11 +96,15 @@ def resolve_eid(code: str, session: requests.Session, sleep_sec: float) -> str |
         for a in soup.select('a[href^="/E"]'):
             m = re.search(r"^/?(E\d+)", a.get("href", ""))
             if m:
-                return m.group(1)
-    except Exception:
-        pass
+                return m.group(1), ""
+        reasons.append(f"検索: EIDリンクが見つからない（取得HTML長={len(html)}文字）")
+    except requests.HTTPError as e:
+        status = e.response.status_code if e.response is not None else "?"
+        reasons.append(f"検索: HTTPエラー status={status}")
+    except Exception as e:
+        reasons.append(f"検索: {type(e).__name__}: {e}")
 
-    return None
+    return None, " / ".join(reasons)
 
 
 def load_existing(irbank_csv: Path) -> dict[str, dict]:
@@ -163,13 +175,13 @@ def main():
 
         called_api = False
         try:
-            eid = resolve_eid(code, session, args.sleep)
+            eid, reason = resolve_eid(code, session, args.sleep)
             called_api = True
             now = datetime.now(JST).strftime("%Y-%m-%d %H:%M:%S")
 
             if not eid:
                 existing[code] = {"code": code, "eid": "", "url": "", "name": "", "status": "not_found", "updated_at": now}
-                print(f"[not_found] コード: {code}")
+                print(f"[not_found] コード: {code}（{reason}）")
                 failed.append(code)
             else:
                 url = RESULTS_URL.format(eid=eid)
