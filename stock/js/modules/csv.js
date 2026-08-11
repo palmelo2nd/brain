@@ -45,3 +45,23 @@ export function parseCsv(text) {
         return Object.fromEntries(headers.map((h, i) => [h, values[i] ?? '']));
     });
 }
+
+/**
+ * オブジェクトの配列をCSV文字列に変換する（parseCsvの逆変換）。1行目はheadersをそのままヘッダー行にする。
+ * 値にカンマ・ダブルクォート・改行が含まれる場合はダブルクォートでエスケープする。
+ *
+ * (2) インプット: rows — Array<Object>、headers — 出力する列名の配列（この順序で出力する）
+ * (3) メイン: 各行を headers の順に取り出し、必要な値だけエスケープしてカンマ区切りに組み立てる
+ * (4) アウトプット: CSV文字列（各行末に改行。末尾にも改行を1つ付与）
+ */
+export function stringifyCsv(rows, headers) {
+    const escapeValue = (value) => {
+        const s = value == null ? '' : String(value);
+        return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const lines = [headers.map(escapeValue).join(',')];
+    rows.forEach(row => {
+        lines.push(headers.map(h => escapeValue(row[h])).join(','));
+    });
+    return lines.join('\n') + '\n';
+}

@@ -41,7 +41,60 @@
         <!-- 保有・履歴：証券会社ごとの保有銘柄インプット、売買履歴CSVインポート -->
         <div id="view-holdings" class="view-panel" style="display:none">
             <p class="section-label">保有・履歴</p>
-            <p class="placeholder-text">証券会社ごとの保有銘柄インプット、売買履歴CSVのインポートをここで行う予定です。</p>
+            <p class="placeholder-text">売買履歴CSVのインポートは今後追加予定です。まずは保有銘柄の手入力登録のみ。</p>
+
+            <!-- 保有銘柄一覧：stock/holdings.csv（データリポジトリ）の内容を一覧表示。行クリックで下のフォームへ読み込む -->
+            <div class="update-form">
+                <p class="update-form-title">保有銘柄</p>
+                <button type="button" id="holdings-reload-btn" class="run-btn run-btn--secondary">読込</button>
+                <div class="table-wrapper">
+                    <table id="holdings-table" class="data-table"></table>
+                </div>
+                <p id="holdings-list-status" class="update-status">IDとPWを入力し「保有・履歴」タブを開くと一覧を読み込みます。</p>
+            </div>
+
+            <!-- 入力フォーム：新規登録・既存行編集の両方で使う共通フォーム -->
+            <div class="update-form">
+                <p class="update-form-title" id="holdings-form-title">新規登録</p>
+                <div class="update-form-row">
+                    <label>所有者</label>
+                    <input type="text" id="holdings-owner" list="holdings-owner-list" placeholder="例: Y">
+                    <datalist id="holdings-owner-list"></datalist>
+                </div>
+                <div class="update-form-row">
+                    <label>証券会社</label>
+                    <input type="text" id="holdings-broker" list="holdings-broker-list" placeholder="例: SBI">
+                    <datalist id="holdings-broker-list"></datalist>
+                </div>
+                <div class="update-form-row">
+                    <label>口座区分</label>
+                    <input type="text" id="holdings-account" list="holdings-account-list" placeholder="例: NISA">
+                    <datalist id="holdings-account-list"></datalist>
+                </div>
+                <div class="update-form-row">
+                    <label>証券コード</label>
+                    <input type="text" id="holdings-code" placeholder="例: 7203">
+                </div>
+                <p id="holdings-code-name" class="update-status"></p>
+                <div class="update-form-row">
+                    <label>株数</label>
+                    <input type="number" id="holdings-shares" step="any" min="0">
+                </div>
+                <div class="update-form-row">
+                    <label>取得単価</label>
+                    <input type="number" id="holdings-avg-cost" step="any" min="0">
+                </div>
+                <input type="hidden" id="holdings-edit-id">
+                <button type="button" id="holdings-new-btn" class="run-btn run-btn--secondary">新規</button>
+                <button type="button" id="holdings-apply-btn" class="run-btn">適用</button>
+                <button type="button" id="holdings-delete-btn" class="run-btn run-btn--danger">削除</button>
+            </div>
+
+            <!-- 保存：フォーム操作はここまでメモリ上のみ。押すまでGitHubへは反映されない -->
+            <div class="update-form">
+                <button type="button" id="holdings-save-btn" class="run-btn">保存（GitHubへ反映）</button>
+                <p id="holdings-save-status" class="update-status"></p>
+            </div>
         </div>
 
         <!-- データ更新：IRBANK業績情報・yfinance株価のGitHub Actions更新トリガーと実行状況確認 -->

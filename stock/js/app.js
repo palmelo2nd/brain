@@ -1,9 +1,9 @@
 import { loadIdToken, saveIdToken, loadPwToken, savePwToken } from './modules/storage.js';
 import {
-    dispatchWorkflow, fetchFile, fetchFileIfExists, listFilesRecursive,
+    dispatchWorkflow, fetchFile, fetchFileIfExists, listFilesRecursive, commitFile,
     getLatestWorkflowRun, getWorkflowRun, getLatestCommit
 } from './modules/github.js';
-import { parseCsv } from './modules/csv.js';
+import { parseCsv, stringifyCsv } from './modules/csv.js';
 
 const OWNER              = 'palmelo2nd';
 const CODE_REPO          = 'brain';        // ワークフローファイルが置かれているコードリポジトリ
@@ -20,6 +20,8 @@ const PRICES_DIR    = 'stock/prices';
 const VALIDATION_REPORT_PATH = 'stock/validation_report.json';
 const FRESHNESS_REPORT_PATH  = 'stock/freshness_report.json';
 const README_PATH   = 'stock/README.md'; // コードリポジトリ側（アプリ概要ドキュメント）
+const HOLDINGS_PATH = 'stock/holdings.csv';
+const HOLDINGS_HEADERS = ['id', 'owner', 'broker', 'account', 'code', 'shares', 'avg_cost'];
 const BULK_ASSET_TYPES = ['内国株式', 'ETF・ETN']; // fetch_prices.pyの--asset-types既定値と揃えている
 
 // ===== ID/PW（GitHub PAT）入力欄 =====
@@ -76,6 +78,11 @@ STOCK_VIEWS.forEach(v => {
 // データ更新タブを開いたとき、PWが入力済みなら状態パネルを自動更新する
 document.getElementById('tab-dataupdate')?.addEventListener('click', () => {
     if (getDataTokenValue()) loadFreshnessStatus();
+});
+
+// 保有・履歴タブを開いたとき、PWが入力済みなら保有銘柄一覧を自動読み込みする
+document.getElementById('tab-holdings')?.addEventListener('click', () => {
+    if (getDataTokenValue()) loadHoldings();
 });
 
 // ===== Info：コードリポジトリのREADME.md（アプリ概要）を取得しMarkdownとして表示 =====
@@ -674,3 +681,231 @@ async function refetchIssueCodes(codes, buttonEl) {
         alert(`再取得の実行に失敗しました: ${error.message}`);
     }
 }
+
+// ===== 保有・履歴：保有銘柄（stock/holdings.csv）の手入力登録 =====
+// 行単位で編集可能なテーブル（brainアプリの編集タブと同じ操作感: 一覧クリック→フォーム→新規/適用/削除）。
+// 「適用」「削除」の時点ではholdingsRows（メモリ上）だけが変わり、GitHubへは反映されない。
+// 「保存」を押した時点で初めてstock/holdings.csv（データリポジトリ）へコミットする。
+
+let holdingsRows = [];          // 保有銘柄一覧（メモリ上の編集対象）
+let holdingsLoaded = false;     // 一度でも読み込み（新規ファイルの場合は0件読み込み）が済んだか
+let selectedHoldingId = null;   // 一覧で選択中の行ID（フォームの編集対象）
+let masterNameMapPromise = null; // 証券コード→銘柄名のMap（Promise）。セッション中は初回取得分を使い回す
+
+/** master.csv を取得し、証券コード→銘柄名のMapを返す（保有銘柄一覧・入力フォームでの銘柄名表示に使用）。 */
+function getMasterNameMap(token) {
+    if (!masterNameMapPromise) {
+        masterNameMapPromise = fetchFile(token, OWNER, DATA_REPO, MASTER_PATH)
+            .then(text => new Map(parseCsv(text).map(r => [r.code, r.name])))
+            .catch(error => { masterNameMapPromise = null; throw error; });
+    }
+    return masterNameMapPromise;
+}
+
+/** holdingsRows内の最大id（数値部分）+1を返す（新規行のid採番用）。 */
+function nextHoldingId(rows) {
+    const maxId = rows.reduce((max, r) => {
+        const n = parseInt(r.id, 10);
+        return Number.isNaN(n) ? max : Math.max(max, n);
+    }, 0);
+    return maxId + 1;
+}
+
+/** 保有銘柄一覧テーブルを描画する。銘柄名はmaster.csvから解決できた場合のみ表示する（未解決でもコード自体は表示する）。 */
+async function renderHoldingsTable() {
+    const table = document.getElementById('holdings-table');
+    if (!table) return;
+
+    const token = getDataTokenValue();
+    let nameMap = new Map();
+    if (token) {
+        try { nameMap = await getMasterNameMap(token); } catch (error) { console.error(error); }
+    }
+
+    const cols = ['所有者', '証券会社', '口座区分', 'コード', '銘柄名', '株数', '取得単価'];
+    const thead = document.createElement('thead');
+    const hRow = document.createElement('tr');
+    cols.forEach(col => { const th = document.createElement('th'); th.textContent = col; hRow.appendChild(th); });
+    thead.appendChild(hRow);
+
+    const tbody = document.createElement('tbody');
+    if (holdingsRows.length === 0) {
+        const tr = document.createElement('tr');
+        const td = document.createElement('td');
+        td.colSpan = cols.length;
+        td.className = 'empty-cell';
+        td.textContent = '保有銘柄が登録されていません';
+        tr.appendChild(td);
+        tbody.appendChild(tr);
+    } else {
+        holdingsRows.forEach(row => {
+            const tr = document.createElement('tr');
+            if (String(row.id) === String(selectedHoldingId)) tr.classList.add('selected-row');
+            [row.owner, row.broker, row.account, row.code, nameMap.get(row.code) || '', row.shares, row.avg_cost]
+                .forEach(value => {
+                    const td = document.createElement('td');
+                    td.textContent = value ?? '';
+                    tr.appendChild(td);
+                });
+            tr.addEventListener('click', () => loadHoldingIntoForm(row.id));
+            tbody.appendChild(tr);
+        });
+    }
+    table.replaceChildren(thead, tbody);
+}
+
+/** 所有者／証券会社／口座区分の入力補助（datalist）を、現在のholdingsRowsに実在する値から再構築する。 */
+function renderHoldingsDatalists() {
+    const fillDatalist = (elId, values) => {
+        const el = document.getElementById(elId);
+        if (!el) return;
+        el.innerHTML = '';
+        [...new Set(values.filter(Boolean))].sort().forEach(value => {
+            const option = document.createElement('option');
+            option.value = value;
+            el.appendChild(option);
+        });
+    };
+    fillDatalist('holdings-owner-list',   holdingsRows.map(r => r.owner));
+    fillDatalist('holdings-broker-list',  holdingsRows.map(r => r.broker));
+    fillDatalist('holdings-account-list', holdingsRows.map(r => r.account));
+}
+
+/** 入力フォームを新規登録モードにリセットする。 */
+function clearHoldingsForm() {
+    selectedHoldingId = null;
+    document.getElementById('holdings-edit-id').value = '';
+    document.getElementById('holdings-owner').value = '';
+    document.getElementById('holdings-broker').value = '';
+    document.getElementById('holdings-account').value = '';
+    document.getElementById('holdings-code').value = '';
+    document.getElementById('holdings-code-name').textContent = '';
+    document.getElementById('holdings-shares').value = '';
+    document.getElementById('holdings-avg-cost').value = '';
+    document.getElementById('holdings-form-title').textContent = '新規登録';
+    renderHoldingsTable();
+}
+
+/** 指定idの保有銘柄を入力フォームへ読み込む（一覧クリック時）。 */
+function loadHoldingIntoForm(id) {
+    const row = holdingsRows.find(r => String(r.id) === String(id));
+    if (!row) return;
+
+    selectedHoldingId = row.id;
+    document.getElementById('holdings-edit-id').value = row.id;
+    document.getElementById('holdings-owner').value   = row.owner   || '';
+    document.getElementById('holdings-broker').value  = row.broker  || '';
+    document.getElementById('holdings-account').value = row.account || '';
+    document.getElementById('holdings-code').value    = row.code    || '';
+    document.getElementById('holdings-shares').value  = row.shares  || '';
+    document.getElementById('holdings-avg-cost').value = row.avg_cost || '';
+    document.getElementById('holdings-form-title').textContent = `編集（ID: ${row.id}）`;
+    document.getElementById('holdings-code').dispatchEvent(new Event('input')); // 銘柄名プレビューを更新
+    renderHoldingsTable();
+}
+
+/** stock/holdings.csv を読み込む（未作成の場合は0件として扱う）。 */
+async function loadHoldings() {
+    const listStatusEl = document.getElementById('holdings-list-status');
+    const token = getDataTokenValue();
+    if (!token) { listStatusEl.textContent = 'PWを入力してください。'; return; }
+
+    listStatusEl.textContent = '読み込み中...';
+
+    try {
+        const text = await fetchFileIfExists(token, OWNER, DATA_REPO, HOLDINGS_PATH);
+        holdingsRows = text ? parseCsv(text) : [];
+        holdingsLoaded = true;
+        clearHoldingsForm();
+        renderHoldingsDatalists();
+        listStatusEl.textContent = text
+            ? `${holdingsRows.length}件を読み込みました。`
+            : 'まだ保有銘柄が登録されていません（「保存」を押すとstock/holdings.csvが新規作成されます）。';
+    } catch (error) {
+        console.error(error);
+        listStatusEl.textContent = `読み込みに失敗しました: ${error.message}`;
+    }
+}
+
+document.getElementById('holdings-reload-btn')?.addEventListener('click', loadHoldings);
+
+// 証券コード入力のたびに、master.csvから引ける銘柄名をプレビュー表示する
+document.getElementById('holdings-code')?.addEventListener('input', async () => {
+    const codeInput = document.getElementById('holdings-code');
+    const nameEl = document.getElementById('holdings-code-name');
+    const code = codeInput.value.trim();
+    const token = getDataTokenValue();
+    if (!code || !token) { nameEl.textContent = ''; return; }
+
+    try {
+        const nameMap = await getMasterNameMap(token);
+        if (codeInput.value.trim() !== code) return; // 取得中に入力内容が変わっていたら破棄
+        nameEl.textContent = nameMap.has(code) ? nameMap.get(code) : '（銘柄マスタに見つかりません）';
+    } catch (error) {
+        console.error(error);
+        nameEl.textContent = '';
+    }
+});
+
+document.getElementById('holdings-new-btn')?.addEventListener('click', clearHoldingsForm);
+
+document.getElementById('holdings-apply-btn')?.addEventListener('click', () => {
+    const code   = document.getElementById('holdings-code').value.trim();
+    const shares = document.getElementById('holdings-shares').value.trim();
+    if (!code)   { alert('証券コードを入力してください'); return; }
+    if (!shares) { alert('株数を入力してください'); return; }
+
+    const editId = document.getElementById('holdings-edit-id').value;
+    const record = {
+        id:      editId || String(nextHoldingId(holdingsRows)),
+        owner:   document.getElementById('holdings-owner').value.trim(),
+        broker:  document.getElementById('holdings-broker').value.trim(),
+        account: document.getElementById('holdings-account').value.trim(),
+        code,
+        shares,
+        avg_cost: document.getElementById('holdings-avg-cost').value.trim(),
+    };
+
+    if (editId) {
+        const idx = holdingsRows.findIndex(r => String(r.id) === String(editId));
+        if (idx !== -1) holdingsRows[idx] = record;
+    } else {
+        holdingsRows.push(record);
+    }
+
+    clearHoldingsForm();
+    renderHoldingsDatalists();
+    document.getElementById('holdings-list-status').textContent =
+        `${holdingsRows.length}件（未保存の変更があります。「保存」を押すとGitHubへ反映されます）。`;
+});
+
+document.getElementById('holdings-delete-btn')?.addEventListener('click', () => {
+    const editId = document.getElementById('holdings-edit-id').value;
+    if (!editId) { alert('削除する行を一覧から選択してください'); return; }
+    if (!confirm('選択中の保有銘柄を削除します。よろしいですか？（この時点ではGitHubへは反映されません。反映するには「保存」を押してください）')) return;
+
+    holdingsRows = holdingsRows.filter(r => String(r.id) !== String(editId));
+    clearHoldingsForm();
+    renderHoldingsDatalists();
+    document.getElementById('holdings-list-status').textContent =
+        `${holdingsRows.length}件（未保存の変更があります。「保存」を押すとGitHubへ反映されます）。`;
+});
+
+document.getElementById('holdings-save-btn')?.addEventListener('click', async () => {
+    const statusEl = document.getElementById('holdings-save-status');
+    const token = getDataTokenValue();
+    if (!token) { alert('PWを入力してください'); return; }
+    if (!holdingsLoaded) { alert('先に一覧の「読込」を押してから保存してください（既存データを取りこぼして上書きするのを防ぐため）'); return; }
+
+    statusEl.textContent = '保存中...';
+
+    try {
+        const content = stringifyCsv(holdingsRows, HOLDINGS_HEADERS);
+        await commitFile(token, OWNER, DATA_REPO, HOLDINGS_PATH, DATA_REPO_BRANCH, content, 'chore: 保有銘柄を更新');
+        statusEl.textContent = `保存しました（${holdingsRows.length}件）。`;
+        document.getElementById('holdings-list-status').textContent = `${holdingsRows.length}件を読み込みました。`;
+    } catch (error) {
+        console.error(error);
+        statusEl.textContent = `保存に失敗しました: ${error.message}`;
+    }
+});

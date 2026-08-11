@@ -143,6 +143,41 @@ body {
 .run-btn--secondary { background: #0d6efd; }
 .run-btn--secondary:hover { background: #0b5ed7; }
 
+.run-btn--danger { background: #d73a49; }
+.run-btn--danger:hover { background: #b0202f; }
+
+/* ===== 行編集可能なテーブル（保有銘柄など） ===== */
+.table-wrapper {
+    overflow-x: auto;
+    margin-top: 10px;
+}
+
+.data-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12.5px;
+}
+
+.data-table th,
+.data-table td {
+    padding: 6px 8px;
+    border: 1px solid #e1e4e8;
+    text-align: left;
+    white-space: nowrap;
+}
+
+.data-table th { background: #f6f8fa; }
+
+.data-table tbody tr { cursor: pointer; }
+.data-table tbody tr:hover { background: #f6f8fa; }
+.data-table tbody tr.selected-row { background: #eef6ff; }
+
+.data-table .empty-cell {
+    text-align: center;
+    color: #8b949e;
+    cursor: default;
+}
+
 .update-status {
     margin: 10px 0 0;
     font-size: 12.5px;
