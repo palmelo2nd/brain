@@ -19,6 +19,7 @@ const MASTER_PATH   = 'stock/master.csv';
 const PRICES_DIR    = 'stock/prices';
 const VALIDATION_REPORT_PATH = 'stock/validation_report.json';
 const FRESHNESS_REPORT_PATH  = 'stock/freshness_report.json';
+const README_PATH   = 'stock/README.md'; // コードリポジトリ側（アプリ概要ドキュメント）
 const BULK_ASSET_TYPES = ['内国株式', 'ETF・ETN']; // fetch_prices.pyの--asset-types既定値と揃えている
 
 // ===== ID/PW（GitHub PAT）入力欄 =====
@@ -58,7 +59,7 @@ pwInput?.addEventListener('input', () => {
 // ===== ページ切り替え（タブ） =====
 // 現時点ではレイアウトの土台のみ。各ページの実装は今後 modules/ 配下に追加していく。
 
-const STOCK_VIEWS = ['dashboard', 'holdings', 'dataupdate', 'attributes', 'score', 'suggest'];
+const STOCK_VIEWS = ['dashboard', 'holdings', 'dataupdate', 'attributes', 'score', 'suggest', 'info'];
 
 function renderStockView(view) {
     STOCK_VIEWS.forEach(v => {
@@ -76,6 +77,30 @@ STOCK_VIEWS.forEach(v => {
 document.getElementById('tab-dataupdate')?.addEventListener('click', () => {
     if (getDataTokenValue()) loadFreshnessStatus();
 });
+
+// ===== Info：コードリポジトリのREADME.md（アプリ概要）を取得しMarkdownとして表示 =====
+async function loadInfoReadme() {
+    const el = document.getElementById('info-content');
+    const token = getCodeTokenValue();
+    if (!token) { el.textContent = 'IDを入力してください。'; return; }
+
+    el.textContent = '読み込み中...';
+
+    try {
+        const text = await fetchFile(token, OWNER, CODE_REPO, README_PATH);
+        el.innerHTML = window.marked.parse(text);
+    } catch (error) {
+        console.error(error);
+        el.textContent = `読み込みに失敗しました: ${error.message}`;
+    }
+}
+
+// Infoタブを開いたとき、IDが入力済みなら自動的に読み込む
+document.getElementById('tab-info')?.addEventListener('click', () => {
+    if (getCodeTokenValue()) loadInfoReadme();
+});
+
+document.getElementById('info-reload-btn')?.addEventListener('click', loadInfoReadme);
 
 // ===== データ更新：株価取得（yfinance）のGitHub Actionsワークフローを起動 =====
 document.getElementById('price-update-run-btn')?.addEventListener('click', async () => {
