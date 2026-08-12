@@ -126,6 +126,19 @@ body {
     background: #fff;
 }
 
+/* フォーム内の2カラムレイアウト（例: 銘柄属性のラベル編集＋適用済みプレビュー）。
+   画面が狭い場合は自動的に縦積みになる（スマートフォン対応） */
+.form-columns {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 20px;
+}
+
+.form-column {
+    flex: 1 1 260px;
+    min-width: 0;
+}
+
 .run-btn {
     padding: 8px 20px;
     font-size: 13px;

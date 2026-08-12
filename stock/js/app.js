@@ -1215,11 +1215,14 @@ document.getElementById('irbank-status-check-btn')?.addEventListener('click', lo
 // ===== 銘柄属性：高配当・優待ラベル（stock/labels.csv） =====
 // master.csvとは別ファイルにする理由: master.csvはJPX公式データから毎回作り直される派生データだが、
 // ラベルは人手で積み上げる再取得コストの高いデータのため（過去のirbank.csvと同じ判断。詳細はCLAUDE.md参照）。
-// 対象は全上場銘柄のうちごく一部（過去実装で高配当約120件・優待約30件程度）のため、一覧表示ではなく
-// 証券コード検索＋トグル方式で編集する（holdings.csvの手動入力と同じく、「登録」を押すまでGitHubへは反映されない）。
+// 「追加」「削除」はどちらもlabelsRows（登録対象・GitHubへ送る内容）を更新するが、上部の「登録済み一覧」表示には
+// 反映しない（holdings.csvの手動入力と違い、編集中に何度でも上書きしうるため）。代わりに右側の「変更予定（未登録）」欄に
+// 内容を追記していき、「登録」でコミットが成功した時点で初めて登録済み一覧に反映・変更予定一覧をクリアする。
 
-let labelsRows = [];      // ラベル一覧（メモリ上の編集対象）
-let labelsLoaded = false; // 一度でも読み込みが済んだか（未読み込みでの「登録」による取りこぼし上書きを防ぐ）
+let labelsRows = [];             // ラベル一覧（メモリ上の編集対象。「登録」でこの内容をまるごとコミットする）
+let labelsLoaded = false;        // 一度でも読み込みが済んだか（未読み込みでの「登録」による取りこぼし上書きを防ぐ）
+let labelsBaseline = new Map();  // 直近の読込/登録時点でのcode→行。「削除」がGitHub上に既に存在するコード対象かどうかの判定に使う
+let pendingLabelChanges = [];    // 直近の読込/登録以降に「追加」「削除」した内容（表示専用。コードごとに最新の内容で上書き）
 
 /** 現在時刻をJST・"YYYY-MM-DD HH:MM:SS"形式で返す（irbank.csvのupdated_atと表記を揃えている）。 */
 function formatJstTimestamp() {
@@ -1228,15 +1231,15 @@ function formatJstTimestamp() {
     return `${iso.slice(0, 10)} ${iso.slice(11, 19)}`;
 }
 
-// 登録済み一覧（Expander内）：高配当・優待のON/OFF絞り込み（空文字＝絞り込みなし）。
+// 登録済み一覧（Expander内）：高配当・優待の絞り込み（チェックON時のみそのラベルが1の行に絞る。OFFは絞り込みなし）。
 // 業績情報をもとにした絞り込みは将来追加予定（ここに条件を足していく想定）。
-const attributesFilters = { highDiv: '', perk: '' };
+const attributesFilters = { highDiv: false, perk: false };
 
 /** attributesFiltersを適用した一覧を返す。 */
 function getFilteredLabelsRows() {
     return labelsRows.filter(row =>
-        (!attributesFilters.highDiv || row['L_高配当'] === attributesFilters.highDiv) &&
-        (!attributesFilters.perk    || row['L_優待']   === attributesFilters.perk)
+        (!attributesFilters.highDiv || row['L_高配当'] === '1') &&
+        (!attributesFilters.perk    || row['L_優待']   === '1')
     );
 }
 
@@ -1289,12 +1292,61 @@ async function renderAttributesTable() {
     table.replaceChildren(thead, tbody);
 }
 
+/** 「変更予定（未登録）」テーブルを描画する。pendingLabelChanges（表示専用）の内容をそのまま出す。 */
+async function renderAttributesPendingTable() {
+    const table = document.getElementById('attributes-pending-table');
+    if (!table) return;
+
+    const token = getTokenValue();
+    let nameMap = new Map();
+    if (token) {
+        try { nameMap = await getMasterNameMap(token); } catch (error) { console.error(error); }
+    }
+
+    const cols = ['コード', '銘柄名', '高配当', '優待', '状態'];
+    const thead = document.createElement('thead');
+    const hRow = document.createElement('tr');
+    cols.forEach(col => { const th = document.createElement('th'); th.textContent = col; hRow.appendChild(th); });
+    thead.appendChild(hRow);
+
+    const tbody = document.createElement('tbody');
+    if (pendingLabelChanges.length === 0) {
+        const tr = document.createElement('tr');
+        const td = document.createElement('td');
+        td.colSpan = cols.length;
+        td.className = 'empty-cell';
+        td.textContent = '「追加」「削除」を押すと、ここに追記されます';
+        tr.appendChild(td);
+        tbody.appendChild(tr);
+    } else {
+        pendingLabelChanges.forEach(change => {
+            const tr = document.createElement('tr');
+            const values = [
+                change.code,
+                nameMap.get(change.code) || '',
+                !change.deleted && change.highDiv ? '○' : '',
+                !change.deleted && change.perk ? '○' : '',
+                change.deleted ? '削除' : '追加',
+            ];
+            values.forEach(value => {
+                const td = document.createElement('td');
+                td.textContent = value;
+                tr.appendChild(td);
+            });
+
+            tr.addEventListener('click', () => loadLabelIntoForm(change.code));
+            tbody.appendChild(tr);
+        });
+    }
+    table.replaceChildren(thead, tbody);
+}
+
 document.getElementById('attributes-filter-high-div')?.addEventListener('change', (event) => {
-    attributesFilters.highDiv = event.target.value;
+    attributesFilters.highDiv = event.target.checked;
     renderAttributesTable();
 });
 document.getElementById('attributes-filter-perk')?.addEventListener('change', (event) => {
-    attributesFilters.perk = event.target.value;
+    attributesFilters.perk = event.target.checked;
     renderAttributesTable();
 });
 
@@ -1318,12 +1370,15 @@ async function loadLabels() {
         const text = await fetchFileIfExists(token, OWNER, DATA_REPO, LABELS_PATH);
         labelsRows = text ? parseCsv(text) : [];
         labelsLoaded = true;
+        labelsBaseline = new Map(labelsRows.map(r => [r.code, r]));
+        pendingLabelChanges = []; // 再読込により未登録の変更予定は破棄される（labelsRows自体を読み込み直すため）
         statusEl.textContent = text
             ? `${labelsRows.length}件を読み込みました。`
             : 'まだラベルが登録されていません（「登録」を押すとstock/labels.csvが新規作成されます）。';
         // 検索欄に既にコードが入力済みなら、読み込んだ内容でチェック状態を再反映する
         document.getElementById('attributes-code')?.dispatchEvent(new Event('input'));
         renderAttributesTable();
+        renderAttributesPendingTable();
     } catch (error) {
         console.error(error);
         statusEl.textContent = `読み込みに失敗しました: ${error.message}`;
@@ -1332,53 +1387,105 @@ async function loadLabels() {
 
 document.getElementById('attributes-reload-btn')?.addEventListener('click', loadLabels);
 
-// 証券コード入力のたびに、master.csvから引ける銘柄名と、labelsRowsに既存のラベル状態をプレビュー表示する
+/** 証券コード欄の入力値を、カンマ区切り（前後の空白は許容）でコード配列に分解する。空要素は除く。 */
+function parseAttributesCodes(raw) {
+    return raw.split(',').map(s => s.trim()).filter(Boolean);
+}
+
+// 証券コード入力のたびに、master.csvから引ける銘柄名と、labelsRowsに既存のラベル状態をプレビュー表示する。
+// 複数コード（カンマ区切り）の場合は、一括適用先の確認用に銘柄名一覧のみ表示し、チェック状態の自動反映は行わない
+// （コードごとに既存状態が異なりうるため、単一コードの場合のみ意味を持つ）。
 document.getElementById('attributes-code')?.addEventListener('input', async () => {
     const codeInput = document.getElementById('attributes-code');
     const nameEl = document.getElementById('attributes-code-name');
     const highDivEl = document.getElementById('attributes-label-high-div');
     const perkEl = document.getElementById('attributes-label-perk');
-    const code = codeInput.value.trim();
+    const raw = codeInput.value.trim();
+    const codes = parseAttributesCodes(raw);
 
-    const existing = labelsRows.find(r => r.code === code);
-    highDivEl.checked = existing ? existing['L_高配当'] === '1' : false;
-    perkEl.checked = existing ? existing['L_優待'] === '1' : false;
+    if (codes.length === 1) {
+        const existing = labelsRows.find(r => r.code === codes[0]);
+        highDivEl.checked = existing ? existing['L_高配当'] === '1' : false;
+        perkEl.checked = existing ? existing['L_優待'] === '1' : false;
+    }
 
     const token = getTokenValue();
-    if (!code || !token) { nameEl.textContent = ''; return; }
+    if (codes.length === 0 || !token) { nameEl.textContent = ''; return; }
 
     try {
         const nameMap = await getMasterNameMap(token);
-        if (codeInput.value.trim() !== code) return; // 取得中に入力内容が変わっていたら破棄
-        nameEl.textContent = nameMap.has(code) ? nameMap.get(code) : '（銘柄マスタに見つかりません）';
+        if (codeInput.value.trim() !== raw) return; // 取得中に入力内容が変わっていたら破棄
+        if (codes.length === 1) {
+            nameEl.textContent = nameMap.has(codes[0]) ? nameMap.get(codes[0]) : '（銘柄マスタに見つかりません）';
+        } else {
+            nameEl.textContent = `${codes.length}件: ` + codes
+                .map(c => `${c}（${nameMap.has(c) ? nameMap.get(c) : '銘柄マスタに見つかりません'}）`)
+                .join('、');
+        }
     } catch (error) {
         console.error(error);
         nameEl.textContent = '';
     }
 });
 
-// 「適用」：入力中のコードのラベル状態をlabelsRowsへ反映する（GitHubへはまだ反映されない）。
-// 両ラベルともOFFになった場合は行自体を削除する（積み上げるデータを不要な0/0行で肥大化させないため）。
-document.getElementById('attributes-apply-btn')?.addEventListener('click', () => {
+// 「追加」：入力中のコード（カンマ区切りで複数可）すべてに、同じラベル状態をlabelsRowsへ反映する
+// （GitHubへはまだ反映されない）。いずれかのラベルがONであることが前提（両方OFFでの削除は「削除」ボタンを使う）。
+// 上部の「登録済み一覧」はここでは更新せず、代わりに右側の「変更予定（未登録）」に今回の内容を追記する
+// （同じコードを再度「追加」した場合は最新の内容で上書き）。
+document.getElementById('attributes-add-btn')?.addEventListener('click', () => {
     if (!labelsLoaded) { alert('先に「読込」を押してから編集してください（既存データを取りこぼして上書きするのを防ぐため）'); return; }
 
-    const code = document.getElementById('attributes-code').value.trim();
-    if (!code) { alert('証券コードを入力してください'); return; }
+    const codes = parseAttributesCodes(document.getElementById('attributes-code').value.trim());
+    if (codes.length === 0) { alert('証券コードを入力してください'); return; }
 
     const highDiv = document.getElementById('attributes-label-high-div').checked;
     const perk = document.getElementById('attributes-label-perk').checked;
+    if (!highDiv && !perk) { alert('「追加」はいずれかのラベルをONにしてから押してください（削除する場合は「削除」ボタンを使ってください）'); return; }
 
-    const idx = labelsRows.findIndex(r => r.code === code);
-    if (!highDiv && !perk) {
-        if (idx !== -1) labelsRows.splice(idx, 1);
-    } else {
-        const row = { code, 'L_高配当': highDiv ? '1' : '0', 'L_優待': perk ? '1' : '0', updated_at: formatJstTimestamp() };
+    const now = formatJstTimestamp();
+
+    codes.forEach(code => {
+        const idx = labelsRows.findIndex(r => r.code === code);
+        const row = { code, 'L_高配当': highDiv ? '1' : '0', 'L_優待': perk ? '1' : '0', updated_at: now };
         if (idx !== -1) labelsRows[idx] = row; else labelsRows.push(row);
-    }
 
-    renderAttributesTable();
+        const pendingIdx = pendingLabelChanges.findIndex(p => p.code === code);
+        const pendingEntry = { code, highDiv, perk, deleted: false };
+        if (pendingIdx !== -1) pendingLabelChanges[pendingIdx] = pendingEntry; else pendingLabelChanges.push(pendingEntry);
+    });
+
+    renderAttributesPendingTable();
     document.getElementById('attributes-edit-status').textContent =
-        `${labelsRows.length}件（未保存の変更があります。「登録」を押すとGitHubへ反映されます）。`;
+        `${codes.length}件を追加しました（右側に追記。累計${pendingLabelChanges.length}件）。「登録」を押すとGitHubへ反映されます。`;
+});
+
+// 「削除」：入力中のコード（カンマ区切りで複数可）をlabelsRowsから取り除く（GitHubへはまだ反映されない）。
+// GitHub上に既に存在するコード（labelsBaseline）は「削除予定」として右側に残し、「登録」を押すまで確定しない。
+// まだ登録されていない（今回「追加」しただけの）コードは、追加自体を取り消して変更予定一覧からも消す。
+document.getElementById('attributes-delete-btn')?.addEventListener('click', () => {
+    if (!labelsLoaded) { alert('先に「読込」を押してから編集してください（既存データを取りこぼして上書きするのを防ぐため）'); return; }
+
+    const codes = parseAttributesCodes(document.getElementById('attributes-code').value.trim());
+    if (codes.length === 0) { alert('証券コードを入力してください'); return; }
+
+    if (!confirm(`${codes.length}件を削除対象にします。よろしいですか？（この時点ではGitHubへは反映されません。反映するには「登録」を押してください）`)) return;
+
+    codes.forEach(code => {
+        const idx = labelsRows.findIndex(r => r.code === code);
+        if (idx !== -1) labelsRows.splice(idx, 1);
+
+        const pendingIdx = pendingLabelChanges.findIndex(p => p.code === code);
+        if (labelsBaseline.has(code)) {
+            const pendingEntry = { code, highDiv: false, perk: false, deleted: true };
+            if (pendingIdx !== -1) pendingLabelChanges[pendingIdx] = pendingEntry; else pendingLabelChanges.push(pendingEntry);
+        } else if (pendingIdx !== -1) {
+            pendingLabelChanges.splice(pendingIdx, 1); // 未登録の追加を取り消すだけなので、変更予定一覧からも消す
+        }
+    });
+
+    renderAttributesPendingTable();
+    document.getElementById('attributes-edit-status').textContent =
+        `${codes.length}件を削除対象にしました（累計${pendingLabelChanges.length}件）。「登録」を押すとGitHubへ反映されます。`;
 });
 
 document.getElementById('attributes-save-btn')?.addEventListener('click', async () => {
@@ -1394,7 +1501,11 @@ document.getElementById('attributes-save-btn')?.addEventListener('click', async 
         await commitFile(token, OWNER, DATA_REPO, LABELS_PATH, DATA_REPO_BRANCH, content, 'chore: 銘柄属性ラベルを更新');
         statusEl.textContent = `保存しました（${labelsRows.length}件）。`;
         document.getElementById('attributes-list-status').textContent = `${labelsRows.length}件を読み込みました。`;
+        labelsBaseline = new Map(labelsRows.map(r => [r.code, r]));
+        pendingLabelChanges = []; // 登録済み一覧に反映されたので、変更予定（未登録）一覧はクリアする
+        document.getElementById('attributes-edit-status').textContent = '';
         renderAttributesTable();
+        renderAttributesPendingTable();
     } catch (error) {
         console.error(error);
         statusEl.textContent = `保存に失敗しました: ${error.message}`;

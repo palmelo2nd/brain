@@ -257,10 +257,10 @@
              一覧全体をstock/labels.csvへコミットする（保有銘柄と同じ操作感） -->
         <div id="view-attributes" class="view-panel" style="display:none">
             <p class="section-label">銘柄属性</p>
-            <p class="placeholder-text">証券コードで銘柄を検索し、高配当・優待のラベルをON/OFFして登録します（NG認定等は今後追加予定）。</p>
+            <p class="placeholder-text">証券コードで銘柄を検索し、高配当・優待のラベルをON/OFFして「追加」（いずれかONの場合）または「削除」（両方OFFの場合）で仮登録し、「登録」でまとめてGitHubへ反映します（NG認定等は今後追加予定）。証券コードはカンマ区切りで複数指定すると、同じ操作を一括で行えます。</p>
 
             <!-- 登録済み一覧：デフォルト閉のExpander。開くとstock/labels.csvの登録済み銘柄を一覧表示し、
-                 フィルタ（高配当・優待のON/OFF）で絞り込める。行クリックで下の編集フォームへ読み込む -->
+                 フィルタ（高配当・優待のチェックON時のみ絞り込み）で絞り込める。行クリックで下の編集フォームへ読み込む -->
             <details class="advanced-settings">
                 <summary>登録済み一覧</summary>
                 <div class="update-form">
@@ -268,19 +268,11 @@
                     <button type="button" id="attributes-reload-btn" class="run-btn run-btn--secondary">読込</button>
                     <div class="update-form-row">
                         <label>高配当</label>
-                        <select id="attributes-filter-high-div">
-                            <option value="">すべて</option>
-                            <option value="1">ON</option>
-                            <option value="0">OFF</option>
-                        </select>
+                        <input type="checkbox" id="attributes-filter-high-div">
                     </div>
                     <div class="update-form-row">
                         <label>優待</label>
-                        <select id="attributes-filter-perk">
-                            <option value="">すべて</option>
-                            <option value="1">ON</option>
-                            <option value="0">OFF</option>
-                        </select>
+                        <input type="checkbox" id="attributes-filter-perk">
                     </div>
                     <div class="table-wrapper table-wrapper--limited">
                         <table id="attributes-table" class="data-table"></table>
@@ -289,23 +281,38 @@
                 </div>
             </details>
 
+            <!-- ラベル編集：「追加」「削除」はどちらもlabelsRows（登録対象）を更新しつつ、その内容を右側の
+                 「変更予定（未登録）」に追記表示するのみで、「登録済み一覧」（stock/labels.csvの表示）には反映しない。
+                 「登録」でコミットが成功した時点で初めて登録済み一覧に反映し、変更予定一覧はクリアする。
+                 一覧（登録済み・変更予定どちらも）の行クリックでこのフォームへ読み込める -->
             <div class="update-form">
                 <p class="update-form-title">ラベル編集</p>
-                <div class="update-form-row">
-                    <label>証券コード</label>
-                    <input type="text" id="attributes-code" placeholder="例: 7203">
+                <div class="form-columns">
+                    <div class="form-column">
+                        <div class="update-form-row">
+                            <label>証券コード</label>
+                            <input type="text" id="attributes-code" placeholder="例: 7203 または 7203, 9984">
+                        </div>
+                        <p id="attributes-code-name" class="update-status"></p>
+                        <div class="update-form-row">
+                            <label>高配当</label>
+                            <input type="checkbox" id="attributes-label-high-div">
+                        </div>
+                        <div class="update-form-row">
+                            <label>優待</label>
+                            <input type="checkbox" id="attributes-label-perk">
+                        </div>
+                        <button type="button" id="attributes-add-btn" class="run-btn">追加</button>
+                        <button type="button" id="attributes-delete-btn" class="run-btn run-btn--danger">削除</button>
+                        <p id="attributes-edit-status" class="update-status"></p>
+                    </div>
+                    <div class="form-column">
+                        <p class="update-form-title">変更予定（未登録）</p>
+                        <div class="table-wrapper table-wrapper--limited">
+                            <table id="attributes-pending-table" class="data-table"></table>
+                        </div>
+                    </div>
                 </div>
-                <p id="attributes-code-name" class="update-status"></p>
-                <div class="update-form-row">
-                    <label>高配当</label>
-                    <input type="checkbox" id="attributes-label-high-div">
-                </div>
-                <div class="update-form-row">
-                    <label>優待</label>
-                    <input type="checkbox" id="attributes-label-perk">
-                </div>
-                <button type="button" id="attributes-apply-btn" class="run-btn">適用</button>
-                <p id="attributes-edit-status" class="update-status"></p>
             </div>
 
             <!-- 保存：フォーム操作はここまでメモリ上のみ。押すまでGitHubへは反映されない -->
