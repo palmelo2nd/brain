@@ -259,9 +259,38 @@
             <p class="section-label">銘柄属性</p>
             <p class="placeholder-text">証券コードで銘柄を検索し、高配当・優待のラベルをON/OFFして登録します（NG認定等は今後追加予定）。</p>
 
+            <!-- 登録済み一覧：デフォルト閉のExpander。開くとstock/labels.csvの登録済み銘柄を一覧表示し、
+                 フィルタ（高配当・優待のON/OFF）で絞り込める。行クリックで下の編集フォームへ読み込む -->
+            <details class="advanced-settings">
+                <summary>登録済み一覧</summary>
+                <div class="update-form">
+                    <p class="update-form-title">登録済みラベル一覧</p>
+                    <button type="button" id="attributes-reload-btn" class="run-btn run-btn--secondary">読込</button>
+                    <div class="update-form-row">
+                        <label>高配当</label>
+                        <select id="attributes-filter-high-div">
+                            <option value="">すべて</option>
+                            <option value="1">ON</option>
+                            <option value="0">OFF</option>
+                        </select>
+                    </div>
+                    <div class="update-form-row">
+                        <label>優待</label>
+                        <select id="attributes-filter-perk">
+                            <option value="">すべて</option>
+                            <option value="1">ON</option>
+                            <option value="0">OFF</option>
+                        </select>
+                    </div>
+                    <div class="table-wrapper table-wrapper--limited">
+                        <table id="attributes-table" class="data-table"></table>
+                    </div>
+                    <p id="attributes-list-status" class="update-status">トークンを入力し「銘柄属性」タブを開くと読み込みます。</p>
+                </div>
+            </details>
+
             <div class="update-form">
                 <p class="update-form-title">ラベル編集</p>
-                <button type="button" id="attributes-reload-btn" class="run-btn run-btn--secondary">読込</button>
                 <div class="update-form-row">
                     <label>証券コード</label>
                     <input type="text" id="attributes-code" placeholder="例: 7203">
@@ -276,7 +305,7 @@
                     <input type="checkbox" id="attributes-label-perk">
                 </div>
                 <button type="button" id="attributes-apply-btn" class="run-btn">適用</button>
-                <p id="attributes-list-status" class="update-status">トークンを入力し「銘柄属性」タブを開くと読み込みます。</p>
+                <p id="attributes-edit-status" class="update-status"></p>
             </div>
 
             <!-- 保存：フォーム操作はここまでメモリ上のみ。押すまでGitHubへは反映されない -->

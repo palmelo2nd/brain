@@ -1228,6 +1228,84 @@ function formatJstTimestamp() {
     return `${iso.slice(0, 10)} ${iso.slice(11, 19)}`;
 }
 
+// 登録済み一覧（Expander内）：高配当・優待のON/OFF絞り込み（空文字＝絞り込みなし）。
+// 業績情報をもとにした絞り込みは将来追加予定（ここに条件を足していく想定）。
+const attributesFilters = { highDiv: '', perk: '' };
+
+/** attributesFiltersを適用した一覧を返す。 */
+function getFilteredLabelsRows() {
+    return labelsRows.filter(row =>
+        (!attributesFilters.highDiv || row['L_高配当'] === attributesFilters.highDiv) &&
+        (!attributesFilters.perk    || row['L_優待']   === attributesFilters.perk)
+    );
+}
+
+/** 登録済みラベル一覧テーブルを描画する。銘柄名はmaster.csvから解決できた場合のみ表示する。 */
+async function renderAttributesTable() {
+    const table = document.getElementById('attributes-table');
+    if (!table) return;
+
+    const token = getTokenValue();
+    let nameMap = new Map();
+    if (token) {
+        try { nameMap = await getMasterNameMap(token); } catch (error) { console.error(error); }
+    }
+
+    const cols = ['コード', '銘柄名', '高配当', '優待', '更新日時'];
+    const thead = document.createElement('thead');
+    const hRow = document.createElement('tr');
+    cols.forEach(col => { const th = document.createElement('th'); th.textContent = col; hRow.appendChild(th); });
+    thead.appendChild(hRow);
+
+    const tbody = document.createElement('tbody');
+    const rows = getFilteredLabelsRows();
+    const selectedCode = document.getElementById('attributes-code').value.trim();
+    if (rows.length === 0) {
+        const tr = document.createElement('tr');
+        const td = document.createElement('td');
+        td.colSpan = cols.length;
+        td.className = 'empty-cell';
+        td.textContent = labelsRows.length === 0
+            ? 'ラベルが登録されていません'
+            : '絞り込み条件に一致する銘柄がありません';
+        tr.appendChild(td);
+        tbody.appendChild(tr);
+    } else {
+        rows.forEach(row => {
+            const tr = document.createElement('tr');
+            if (row.code === selectedCode) tr.classList.add('selected-row');
+
+            const values = [row.code, nameMap.get(row.code) || '', row['L_高配当'] === '1' ? '○' : '', row['L_優待'] === '1' ? '○' : '', row.updated_at || ''];
+            values.forEach(value => {
+                const td = document.createElement('td');
+                td.textContent = value;
+                tr.appendChild(td);
+            });
+
+            tr.addEventListener('click', () => loadLabelIntoForm(row.code));
+            tbody.appendChild(tr);
+        });
+    }
+    table.replaceChildren(thead, tbody);
+}
+
+document.getElementById('attributes-filter-high-div')?.addEventListener('change', (event) => {
+    attributesFilters.highDiv = event.target.value;
+    renderAttributesTable();
+});
+document.getElementById('attributes-filter-perk')?.addEventListener('change', (event) => {
+    attributesFilters.perk = event.target.value;
+    renderAttributesTable();
+});
+
+/** 一覧クリック時：指定コードを編集フォームへ読み込む（銘柄名・チェック状態のプレビューはinputイベントに委譲）。 */
+function loadLabelIntoForm(code) {
+    const codeInput = document.getElementById('attributes-code');
+    codeInput.value = code;
+    codeInput.dispatchEvent(new Event('input'));
+    renderAttributesTable(); // 選択行のハイライトを更新
+}
+
 /** stock/labels.csv を読み込む（未作成の場合は0件として扱う）。 */
 async function loadLabels() {
     const statusEl = document.getElementById('attributes-list-status');
@@ -1245,6 +1323,7 @@ async function loadLabels() {
             : 'まだラベルが登録されていません（「登録」を押すとstock/labels.csvが新規作成されます）。';
         // 検索欄に既にコードが入力済みなら、読み込んだ内容でチェック状態を再反映する
         document.getElementById('attributes-code')?.dispatchEvent(new Event('input'));
+        renderAttributesTable();
     } catch (error) {
         console.error(error);
         statusEl.textContent = `読み込みに失敗しました: ${error.message}`;
@@ -1297,7 +1376,8 @@ document.getElementById('attributes-apply-btn')?.addEventListener('click', () =>
         if (idx !== -1) labelsRows[idx] = row; else labelsRows.push(row);
     }
 
-    document.getElementById('attributes-list-status').textContent =
+    renderAttributesTable();
+    document.getElementById('attributes-edit-status').textContent =
         `${labelsRows.length}件（未保存の変更があります。「登録」を押すとGitHubへ反映されます）。`;
 });
 
@@ -1314,6 +1394,7 @@ document.getElementById('attributes-save-btn')?.addEventListener('click', async 
         await commitFile(token, OWNER, DATA_REPO, LABELS_PATH, DATA_REPO_BRANCH, content, 'chore: 銘柄属性ラベルを更新');
         statusEl.textContent = `保存しました（${labelsRows.length}件）。`;
         document.getElementById('attributes-list-status').textContent = `${labelsRows.length}件を読み込みました。`;
+        renderAttributesTable();
     } catch (error) {
         console.error(error);
         statusEl.textContent = `保存に失敗しました: ${error.message}`;
