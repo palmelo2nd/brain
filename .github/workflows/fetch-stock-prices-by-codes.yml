@@ -10,13 +10,21 @@ on:
         description: "証券コード（カンマ区切り。例: 7203,9984,6758）"
         required: true
       mode:
-        description: "full: --start-date以降の全期間を取得（欠損の穴埋めを兼ねる）。update: 既存データの最終日付の翌日〜今日だけ差分取得"
+        description: "full: --start-date〜--end-dateの期間を取得（欠損の穴埋めを兼ねる）。update: 既存データの最終日付の翌日〜今日だけ差分取得"
         required: true
         type: choice
         options:
           - full
           - update
         default: full
+      start_date:
+        description: "取得開始日（YYYY-MM-DD）。modeがfullの時のみ有効。空欄なら2013-01-01"
+        required: false
+        default: ""
+      end_date:
+        description: "取得終了日（YYYY-MM-DD）。modeがfullの時のみ有効。空欄なら現在まで。データ品質の欠損箇所だけを狙い撃ちで再取得する用途"
+        required: false
+        default: ""
 
 # stock/prices へ書き込む他のワークフロー（単体取得・一括取得）と同じグループ名にすることで、
 # GitHub Actions自身に排他制御させる（同時書き込みによるgit rebaseのコンテンツ競合を防ぐ）。
@@ -61,6 +69,15 @@ jobs:
           SUB_BATCH=20
           TOTAL=${#ALL_CODES[@]}
 
+          # データ品質側のピンポイント再取得用。空欄ならデフォルト（--start-date省略時は2013-01-01、--end-date省略時は現在まで）
+          DATE_ARGS=()
+          if [ -n "${{ inputs.start_date }}" ]; then
+            DATE_ARGS+=(--start-date "${{ inputs.start_date }}")
+          fi
+          if [ -n "${{ inputs.end_date }}" ]; then
+            DATE_ARGS+=(--end-date "${{ inputs.end_date }}")
+          fi
+
           for (( start=0; start<TOTAL; start+=SUB_BATCH )); do
             batch=("${ALL_CODES[@]:start:SUB_BATCH}")
             batch_codes=$(IFS=,; echo "${batch[*]}")
@@ -71,6 +88,7 @@ jobs:
             python code-repo/stock/scripts/fetch_prices.py \
               --codes "$batch_codes" \
               --mode "${{ inputs.mode }}" \
+              "${DATE_ARGS[@]}" \
               --output-dir "${{ github.workspace }}/data-repo/stock/prices" \
               || echo "一部の銘柄で取得に失敗しましたが、成功分のコミットは継続します"
 

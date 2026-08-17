@@ -55,15 +55,19 @@ def code_to_ticker(code: str, ticker_overrides: dict[str, str] | None = None) ->
     return special if special else f"{code}{TSE_SUFFIX}"
 
 
-def fetch_close_prices(code: str, start_date: str, period: str | None, ticker_overrides: dict[str, str] | None = None):
+def fetch_close_prices(
+    code: str, start_date: str, period: str | None, ticker_overrides: dict[str, str] | None = None, end_date: str | None = None
+):
     """指定した証券コードの日足終値をDataFrameで返す（列: close、インデックス: 日付）。
-    period が指定されていればそちらを優先し、無ければ start_date 以降の全期間を取得する。
+    period が指定されていればそちらを優先し、無ければ start_date（〜end_date指定時はそこまで、
+    未指定なら現在まで）の期間を取得する。end_dateはピンポイントな期間の絞り込み用
+    （データ品質の欠損箇所だけを狙い撃ちで再取得する用途。欠損期間が広い場合は指定しない＝現在まで取得）。
     """
     ticker = code_to_ticker(code, ticker_overrides)
     if period:
         data = yf.Ticker(ticker).history(period=period)
     else:
-        data = yf.Ticker(ticker).history(start=start_date)
+        data = yf.Ticker(ticker).history(start=start_date, end=end_date)
     if data.empty:
         return data
 
@@ -183,7 +187,8 @@ def main():
     parser.add_argument("--offset", type=int, default=0, help="--master指定時、対象銘柄一覧の何件目から処理するか（0始まり）")
     parser.add_argument("--limit", type=int, default=None, help="--master指定時、対象銘柄一覧を何件処理するか（省略時は末尾まで）")
     parser.add_argument("--start-date", default="2013-01-01", help="取得開始日（YYYY-MM-DD）。--period未指定時に使用")
-    parser.add_argument("--period", default=None, help="相対期間指定（yfinance形式。例: 5d, 1mo）。指定時は--start-dateより優先")
+    parser.add_argument("--end-date", default=None, help="取得終了日（YYYY-MM-DD）。--period未指定時のみ有効。省略時は現在まで取得（データ品質の欠損箇所だけを狙い撃ちで再取得する用途）")
+    parser.add_argument("--period", default=None, help="相対期間指定（yfinance形式。例: 5d, 1mo）。指定時は--start-date/--end-dateより優先")
     parser.add_argument(
         "--mode", choices=["full", "update"], default="full",
         help="full: --period/--start-dateに従って取得（既定）。"
@@ -238,7 +243,7 @@ def main():
                 new_df = fetch_close_prices(code, fetch_start.strftime("%Y-%m-%d"), None, ticker_overrides)
                 called_api = True
             else:
-                new_df = fetch_close_prices(code, args.start_date, args.period, ticker_overrides)
+                new_df = fetch_close_prices(code, args.start_date, args.period, ticker_overrides, args.end_date)
                 called_api = True
 
             merged = merge_prices(existing_df, new_df)

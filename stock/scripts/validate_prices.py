@@ -67,16 +67,20 @@ def validate_file(path: Path, reference_dates: set) -> list[dict]:
 
     missing = df[df["close"].isna()]
     if not missing.empty:
+        missing_close_dates = sorted(d.strftime("%Y-%m-%d") for d in missing["date"].dt.date)
         issues.append({
             "code": code, "type": "missing_close",
             "detail": f"終値が空の行が{len(missing)}件あります（例: {missing['date'].iloc[0].date()}）",
+            "dates": missing_close_dates,
         })
 
     dup = df[df["date"].duplicated()]
     if not dup.empty:
+        dup_dates = sorted(d.strftime("%Y-%m-%d") for d in dup["date"].dt.date)
         issues.append({
             "code": code, "type": "duplicate_date",
             "detail": f"重複した日付が{len(dup)}件あります（例: {dup['date'].iloc[0].date()}）",
+            "dates": dup_dates,
         })
 
     if not df["date"].is_monotonic_increasing:
@@ -94,6 +98,7 @@ def validate_file(path: Path, reference_dates: set) -> list[dict]:
                 issues.append({
                     "code": code, "type": "missing_date",
                     "detail": f"N225の取引日のうち{len(missing_dates)}日分のデータがありません（例: {missing_dates[0]}）",
+                    "dates": [d.strftime("%Y-%m-%d") for d in missing_dates],
                 })
 
     return issues

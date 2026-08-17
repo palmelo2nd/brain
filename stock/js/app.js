@@ -729,18 +729,40 @@ function buildExpandableListItem(summaryText, codes, trailingButton) {
     return li;
 }
 
+/**
+ * 欠損等の日付リストから、再取得に使う日付範囲（前後3日バッファ付き）を計算する。
+ * datesが空・未指定なら null を返す（呼び出し側は全期間取得にフォールバックする）。
+ * バッファは週末・祝日をまたぐケースやyfinanceのend日付の扱い（境界の取りこぼし）に対する安全マージン。
+ */
+function buildRefetchDateRange(dates) {
+    if (!dates || dates.length === 0) return null;
+    const sorted = [...dates].sort();
+    const addDays = (dateStr, days) => {
+        const d = new Date(`${dateStr}T00:00:00Z`);
+        d.setUTCDate(d.getUTCDate() + days);
+        return d.toISOString().slice(0, 10);
+    };
+    return { start: addDays(sorted[0], -3), end: addDays(sorted[sorted.length - 1], 3) };
+}
+
 // 指定した銘柄コード群だけを取得し直す。共通関数で2通りの用途に使う：
 //   mode='update'（既定）: 更新最終日側の日付グループ再取得。単なる取得漏れの解消が目的なので、
 //                          最終日の翌日〜今日だけの差分取得で十分かつ軽い。
 //   mode='full'          : データ品質側の問題（欠損・重複等）修繕用。行の途中に問題があるケースを
-//                          直すには、差分取得では直せないため2013年以降の全期間を取得し直す。
+//                          直すには差分取得では直せないため、dateRangeがあればその期間だけピンポイントで、
+//                          無ければ2013年以降の全期間を取得し直す。
 // 完了後はチェック全体（runFullCheck）を再実行して結果を反映する。
-async function refetchCodesGroup(description, codes, buttonEl, mode = 'update') {
+async function refetchCodesGroup(description, codes, buttonEl, mode = 'update', dateRange = null) {
     if (codes.length === 0) return;
 
-    const actionText = mode === 'full'
-        ? '2013年以降の全期間を取得し直します（銘柄数によっては時間がかかります）'
-        : '最新まで差分取得します';
+    let actionText;
+    if (mode === 'full' && dateRange) {
+        actionText = `${dateRange.start}〜${dateRange.end}の期間だけ取得し直します（ピンポイント再取得）`;
+    } else if (mode === 'full') {
+        actionText = '2013年以降の全期間を取得し直します（銘柄数によっては時間がかかります）';
+    } else {
+        actionText = '最新まで差分取得します';
+    }
     const ok = confirm(`${description}（${codes.length}件）を、${actionText}。よろしいですか？`);
     if (!ok) return;
 
@@ -754,10 +776,12 @@ async function refetchCodesGroup(description, codes, buttonEl, mode = 'update') 
     try {
         const baseline = await getLatestWorkflowRun(token, OWNER, CODE_REPO, PRICE_ISSUES_WORKFLOW_FILE).catch(() => null);
 
-        await dispatchWorkflow(token, OWNER, CODE_REPO, PRICE_ISSUES_WORKFLOW_FILE, CODE_REPO_BRANCH, {
-            codes: codes.join(','),
-            mode
-        });
+        const workflowInputs = { codes: codes.join(','), mode };
+        if (mode === 'full' && dateRange) {
+            workflowInputs.start_date = dateRange.start;
+            workflowInputs.end_date = dateRange.end;
+        }
+        await dispatchWorkflow(token, OWNER, CODE_REPO, PRICE_ISSUES_WORKFLOW_FILE, CODE_REPO_BRANCH, workflowInputs);
 
         buttonEl.textContent = `再取得の完了を待っています...（${codes.length}件・数分かかります）`;
         const run = await waitForWorkflowRun(token, PRICE_ISSUES_WORKFLOW_FILE, baseline ? baseline.id : null);
@@ -988,24 +1012,29 @@ function renderValidationIssues(container, validation) {
     const groups = new Map();
     validation.issues.forEach(issue => {
         const key = `${issue.type}::${issue.detail}`;
-        if (!groups.has(key)) groups.set(key, { type: issue.type, detail: issue.detail, count: 0, codes: [] });
+        if (!groups.has(key)) groups.set(key, { type: issue.type, detail: issue.detail, count: 0, codes: [], dates: [] });
         const group = groups.get(key);
         group.count += 1;
         group.codes.push(issue.code);
+        if (issue.dates) group.dates.push(...issue.dates); // missing_close/duplicate_date/missing_dateのみ持つ
     });
     const sortedGroups = Array.from(groups.values()).sort((a, b) => b.count - a.count);
 
     const list = document.createElement('ul');
     list.className = 'status-distribution';
     sortedGroups.forEach(group => {
-        // 差分取得（mode=update）では直せない（問題が既存データの途中にあるため）ので、mode=fullで
-        // 2013年以降の全期間を取得し直す。銘柄ごとに問題の期間・内容が異なりうるが、このグループの
-        // 該当銘柄をまとめて全期間取り直せば、どのケースでも一律に直せる
+        // 差分取得（mode=update）では直せない（問題が既存データの途中にあるため）ので、mode=fullで取り直す。
+        // group.datesがあれば、その最小〜最大日付（前後3日バッファ）だけをピンポイントで再取得する
+        // （無駄な全期間取得を避ける）。datesが無い問題（unsorted等、特定の日付を持たない）は
+        // 従来通り2013年以降の全期間を取得し直す
         const refetchBtn = document.createElement('button');
         refetchBtn.type = 'button';
         refetchBtn.className = 'run-btn run-btn--secondary status-inline-btn';
         refetchBtn.textContent = '再取得';
-        refetchBtn.addEventListener('click', () => refetchCodesGroup(`「${group.detail}」に該当する銘柄`, group.codes, refetchBtn, 'full'));
+        refetchBtn.addEventListener('click', () => {
+            const dateRange = buildRefetchDateRange(group.dates);
+            refetchCodesGroup(`「${group.detail}」に該当する銘柄`, group.codes, refetchBtn, 'full', dateRange);
+        });
         list.appendChild(buildExpandableListItem(`${group.count}件：${group.detail}`, group.codes, refetchBtn));
     });
     container.appendChild(list);
