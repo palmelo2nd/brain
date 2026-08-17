@@ -85,16 +85,35 @@ def save_to_csv(df, output_dir: Path, code: str) -> Path:
     return output_path
 
 
-def load_codes_from_master(master_path: Path, asset_types: list[str], offset: int, limit: int | None) -> list[str]:
+def load_excluded_codes(exclude_file: str | None) -> set[str]:
+    """除外対象の証券コード一覧CSV（code列。stock/delisted.csv想定）を読み込み、コードのsetを返す。
+    パス未指定・ファイル未作成（まだ1件も登録されていない）の場合は空setを返す。
+    """
+    if not exclude_file:
+        return set()
+    path = Path(exclude_file)
+    if not path.exists():
+        return set()
+    df = pd.read_csv(path, dtype=str)
+    if "code" not in df.columns:
+        return set()
+    return set(df["code"].dropna().astype(str).str.strip())
+
+
+def load_codes_from_master(
+    master_path: Path, asset_types: list[str], offset: int, limit: int | None, exclude_codes: set[str] | None = None
+) -> list[str]:
     """銘柄マスタCSV（master.csv）から、指定したasset_typeに絞って証券コードの一覧を返し、
     offset/limitで範囲を切り出す（大量銘柄を小分けに処理するためのバッチ指定）。
-    listed（上場中）のみを対象とする。
+    listed（上場中）のみを対象とする。exclude_codes（上場廃止銘柄など）はoffset/limit切り出し前に除外する。
     """
     df = pd.read_csv(master_path, dtype=str)
     df = df[df["status"] == "listed"]
     if asset_types:
         df = df[df["asset_type"].isin(asset_types)]
     codes = df["code"].tolist()
+    if exclude_codes:
+        codes = [c for c in codes if c not in exclude_codes]
 
     if limit is not None:
         return codes[offset:offset + limit]
@@ -106,6 +125,7 @@ def main():
     parser.add_argument("--codes", default=None, help="証券コード（カンマ区切りで複数指定可。例: 7203,9984,6758）。--master指定時は無視される")
     parser.add_argument("--master", default=None, help="銘柄マスタCSV（master.csv）のパス。指定時はこちらから証券コードを読み込む")
     parser.add_argument("--asset-types", default="内国株式,ETF・ETN", help="--master指定時、対象とするasset_type（カンマ区切り）")
+    parser.add_argument("--exclude-file", default=None, help="除外する証券コード一覧CSV（code列。上場廃止銘柄など。--master指定時のみ有効）")
     parser.add_argument("--offset", type=int, default=0, help="--master指定時、対象銘柄一覧の何件目から処理するか（0始まり）")
     parser.add_argument("--limit", type=int, default=None, help="--master指定時、対象銘柄一覧を何件処理するか（省略時は末尾まで）")
     parser.add_argument("--start-date", default="2013-01-01", help="取得開始日（YYYY-MM-DD）。--period未指定時に使用")
@@ -126,7 +146,12 @@ def main():
 
     if args.master:
         asset_types = [a.strip() for a in args.asset_types.split(",") if a.strip()]
-        codes = load_codes_from_master(Path(args.master), asset_types, args.offset, args.limit)
+        exclude_codes = load_excluded_codes(args.exclude_file)
+        codes = load_codes_from_master(Path(args.master), asset_types, args.offset, args.limit, exclude_codes)
+        if args.offset == 0:
+            # 日経平均（N225）はmaster.csvに存在しない特殊ティッカーのため、bulk実行の先頭サブバッチ
+            # （offset=0）にだけ追加する。以降のサブバッチ（offset>0）では追加しないため重複取得しない
+            codes.append("N225")
     else:
         codes = [c.strip() for c in (args.codes or "").split(",") if c.strip()]
 

@@ -27,10 +27,26 @@ def get_last_date(path: Path):
     return df["date"].max()
 
 
+def load_excluded_codes(exclude_file: str | None) -> set[str]:
+    """除外対象の証券コード一覧CSV（code列。stock/delisted.csv想定）を読み込み、コードのsetを返す。
+    パス未指定・ファイル未作成（まだ1件も登録されていない）の場合は空setを返す。
+    """
+    if not exclude_file:
+        return set()
+    path = Path(exclude_file)
+    if not path.exists():
+        return set()
+    df = pd.read_csv(path, dtype=str)
+    if "code" not in df.columns:
+        return set()
+    return set(df["code"].dropna().astype(str).str.strip())
+
+
 def main():
     parser = argparse.ArgumentParser(description="株価CSVの最終日付を集計し、鮮度サマリーを出力する")
     parser.add_argument("--dir", default="../../../brain_data/stock/prices", help="対象のCSVが入ったディレクトリ")
     parser.add_argument("--codes", default=None, help="対象の証券コード（カンマ区切り。省略時はディレクトリ内の全CSV）")
+    parser.add_argument("--exclude-file", default=None, help="除外する証券コード一覧CSV（code列。上場廃止銘柄など）")
     parser.add_argument(
         "--stale-days", type=int, default=DEFAULT_STALE_DAYS,
         help="最終日付からこれを超える日数が経っている銘柄を「要更新」とみなす",
@@ -38,11 +54,13 @@ def main():
     parser.add_argument("--report", default=None, help="結果をJSON形式で書き出すファイルパス（省略時は書き出さない）")
     args = parser.parse_args()
 
+    exclude_codes = load_excluded_codes(args.exclude_file)
+
     target_dir = Path(args.dir)
     if args.codes:
-        files = [target_dir / f"{c.strip()}.csv" for c in args.codes.split(",") if c.strip()]
+        files = [target_dir / f"{c.strip()}.csv" for c in args.codes.split(",") if c.strip() and c.strip() not in exclude_codes]
     else:
-        files = sorted(target_dir.glob("*.csv"))
+        files = sorted(f for f in target_dir.glob("*.csv") if f.stem not in exclude_codes)
 
     if not files:
         print(f"対象のCSVが見つかりませんでした: {target_dir}", file=sys.stderr)

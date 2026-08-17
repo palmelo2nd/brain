@@ -70,7 +70,7 @@
 ### トークン（常時表示バー）
 
 - コードリポジトリ（`brain`）・データリポジトリ（`brain_data`）の両方に対して、**Actions・Contentsをread/writeできる単一のPAT**を使う。ワークフロー起動（`dispatchWorkflow`＝Actions権限）、ファイル読み書き（`fetchFile`／`commitFile`等＝Contents権限）のすべてに共通で使う。
-- 入力するとLocalStorageに自動保存（キー：`stock_token`）。旧・ID/PW2欄時代の値（`stock_id_token`／`stock_pw_token`）、さらに旧い単一PAT欄時代の値（`stock_pat_token`）が残っている場合は引き継ぐ。
+- PW欄右の「保存」ボタンを押した時点でLocalStorageに保存（キー：`stock_token`）。入力するたびに自動保存する方式ではない（2026-08-17変更：ローカルに一度保存すれば十分なため、不要な書き込みをなくした）。旧・ID/PW2欄時代の値（`stock_id_token`／`stock_pw_token`）、さらに旧い単一PAT欄時代の値（`stock_pat_token`）が残っている場合は引き継ぐ。
 - **経緯（2026-08-11）**：以前はリポジトリごとにID（`brain`用）／PW（`brain_data`用）の2欄に分け、最小権限の原則を意図していた。しかし[保有銘柄の保存機能](./README.md#31-保有銘柄)（`commitFile`でブラウザから直接データリポジトリへ書き込む初めての機能）を追加した際、PW側PATのContents書き込み権限が不足していることが判明し（`fetchFile`等の読み取りは動いていたため気づかれていなかった）、調査の過程で両リポジトリ・両権限をまとめた単一トークン運用に切り替える方針になった。最小権限の原則より運用の単純さを優先した判断であり、意図的な設計変更である（元に戻す場合は`getTokenValue`を`getCodeTokenValue`/`getDataTokenValue`に再分割し、呼び出し箇所ごとに正しいリポジトリの権限を持つトークンを渡すよう戻すこと）。
 
 ### オフライン対応方針（データの重さで扱いを分ける）
@@ -91,6 +91,11 @@ brainアプリと異なり、stockは銘柄数×期間で合計データ量が�
 
 - **Why（2026-08-11判断）:** `master.csv`はJPX公式データ（`data_j_*.xls`）から`build_stock_master.py`が毎回まるごと再生成する、決定論的に作り直せる派生データ。一方、IRBANKスクレイピングで取得するID/URL（`stock/irbank.csv`）や、将来の人手ラベル（`stock/labels.csv`想定）は、再取得・再入力のコストが高い「積み上げ型」のデータ。両者を同じファイルに同居させると、`master.csv`の再生成ロジックが「全列保持マージ」のような複雑な処理を持たざるを得なくなる（旧Jupyter実装が複雑化した直接の原因）。
 - **How to apply:** `master.csv`に列を追加する形で新しいデータを持たせようとしていないか、実装前に必ず確認する。「作り直せるデータ」か「積み上げるデータ」かで判断し、後者は必ず別ファイル（`code`列で結合）にする。書き込み元（GitHub Actions＝スクリプト側／ブラウザ＝UI側）が異なるデータは、可能な限り別ファイルに分ける（同時書き込みの競合を避けるため。[.github/workflows/*.ymlの規約](#githubworkflowsymlの規約)のconcurrencyグループ分けとも対応させる）。
+
+### 上場廃止銘柄は自動判定せず、人が確認して手動登録する（`stock/delisted.csv`）
+
+- **Why（2026-08-17判断）:** yfinanceでの株価取得失敗だけを根拠に上場廃止と自動判定すると、一時的な取得エラーを誤って上場廃止と判定するリスクがある（旧`past/`実装で問題視されていた点）。この誤検知リスクを避けるため、自動判定は行わず、鮮度チェックの「更新最終日」で取得が止まっている銘柄をユーザー自身が確認し、`stock/delisted.csv`（`code, note, updated_at`）へ手動登録する方式にした。登録は「作り直せるデータ」ではなく「積み上げるデータ」なので、[データファイルの分離方針](#データファイルの分離方針作り直せるデータと積み上げるデータを混ぜない)に従い`master.csv`とは別ファイルにしている。
+- **How to apply:** `scripts/fetch_prices.py`（`--master`モード）・`scripts/check_freshness.py`はどちらも`--exclude-file`引数でこのファイルを受け取り、対象コードの絞り込み（`fetch_prices.py`）・スキャン対象ファイルの除外（`check_freshness.py`）に使う。ファイルが存在しない（1件も登録されていない）場合は空集合として扱い、エラーにはしない。ブラウザ側（`js/app.js`の`delisted-register-btn`）は`commitFile`で直接この一覧を書き換える（labels.csv等と異なり、仮登録の中間状態を持たない単純な追加・削除）。将来的に`master.csv`の再生成でコードが消えたことを根拠にした自動判定を追加する場合も、この手動登録と共存させる方針（[README.md 添付6](./README.md#添付6-保留事項今後の検討課題)参照）。
 
 ### IRBANK企業ID取得（`notebooks/C01_IRBANK企業ID取得.ipynb`）はローカル（Jupyter）実行専用
 

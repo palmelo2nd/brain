@@ -6,6 +6,7 @@ import {
 import { parseCsv, stringifyCsv } from './modules/csv.js';
 import { parseSbiHoldingsCsv, parseRakutenHoldingsCsv } from './modules/brokerCsv.js';
 import { summarizeHoldingsHierarchy } from './modules/holdingsSummary.js';
+import { calcDefensiveScore, REFERENCE_LABELS, buildHistogramBins } from './modules/defensiveScore.js';
 
 const OWNER              = 'palmelo2nd';
 const CODE_REPO          = 'brain';        // ワークフローファイルが置かれているコードリポジトリ
@@ -14,7 +15,7 @@ const CODE_REPO_BRANCH   = 'main';
 const DATA_REPO_BRANCH   = 'main';
 const PRICE_WORKFLOW_FILE      = 'fetch-stock-prices.yml';
 const PRICE_BULK_WORKFLOW_FILE = 'fetch-stock-prices-bulk.yml';
-const PRICE_ISSUES_WORKFLOW_FILE = 'fetch-stock-prices-by-codes.yml'; // データ品質チェックで検出された銘柄コードの一括再取得
+const PRICE_ISSUES_WORKFLOW_FILE = 'fetch-stock-prices-by-codes.yml'; // 日付グループ単位の再取得で使う（証券コードを指定して起動）
 const VALIDATE_WORKFLOW_FILE   = 'validate-stock-prices.yml';
 const FRESHNESS_WORKFLOW_FILE  = 'check-price-freshness.yml';
 const MASTER_PATH   = 'stock/master.csv';
@@ -30,6 +31,8 @@ const IRBANK_PATH = 'stock/irbank.csv';
 const IRBANK_ASSET_TYPE = '内国株式'; // notebooks/C01_IRBANK企業ID取得.ipynbの対象絞り込みと揃えている（ETF・REIT等はIRBANKの個別企業ページを持たない）
 const LABELS_PATH = 'stock/labels.csv';
 const LABEL_HEADERS = ['code', 'L_高配当', 'L_優待', 'updated_at'];
+const DELISTED_PATH = 'stock/delisted.csv'; // 上場廃止銘柄一覧。人が確認して登録する（自動判定はしない）
+const DELISTED_HEADERS = ['code', 'note', 'updated_at'];
 
 // ===== GitHub PAT入力欄 =====
 // brain（コードリポジトリ）・brain_data（データリポジトリ）の両方に対して
@@ -51,14 +54,14 @@ window.addEventListener('DOMContentLoaded', () => {
     if (saved) loadDashboardSummary();
 });
 
-tokenInput?.addEventListener('input', () => {
-    saveToken(tokenInput.value.trim());
+document.getElementById('token-save-btn')?.addEventListener('click', () => {
+    saveToken(getTokenValue());
 });
 
 // ===== ページ切り替え（タブ） =====
 // 現時点ではレイアウトの土台のみ。各ページの実装は今後 modules/ 配下に追加していく。
 
-const STOCK_VIEWS = ['dashboard', 'holdings', 'dataupdate', 'attributes', 'score', 'suggest', 'info'];
+const STOCK_VIEWS = ['dashboard', 'holdings', 'dataupdate', 'attributes', 'score', 'sim', 'suggest', 'info'];
 
 function renderStockView(view) {
     STOCK_VIEWS.forEach(v => {
@@ -368,13 +371,18 @@ document.getElementById('price-update-all-btn')?.addEventListener('click', async
     setBulkUpdateBanner('running', '対象銘柄数を確認中...');
 
     try {
-        const masterText = await fetchFile(token, OWNER, DATA_REPO, MASTER_PATH);
+        const [masterText, delistedText] = await Promise.all([
+            fetchFile(token, OWNER, DATA_REPO, MASTER_PATH),
+            fetchFileIfExists(token, OWNER, DATA_REPO, DELISTED_PATH),
+        ]);
         const allRows = parseCsv(masterText);
-        const targetCount = allRows.filter(r =>
-            r.status === 'listed' && BULK_ASSET_TYPES.includes(r.asset_type)
-        ).length;
+        const delistedCodes = new Set((delistedText ? parseCsv(delistedText) : []).map(r => r.code));
+        const listedRows = allRows.filter(r => r.status === 'listed' && BULK_ASSET_TYPES.includes(r.asset_type));
+        // 上場廃止として登録済みのコードは対象から除く（fetch_prices.py側の--exclude-fileと揃えることで、
+        // 進捗バーの分母（targetCount）が実際に処理される件数と一致するようにする）
+        const targetCount = listedRows.filter(r => !delistedCodes.has(r.code)).length;
 
-        if (targetCount === 0) {
+        if (listedRows.length === 0) {
             // master.csvは取得できたが対象銘柄が0件 ＝ 内容が想定と異なる可能性が高い（権限エラーなら例外で分かる）。
             // 開発者ツールを開かなくても原因調査できるよう、実際に取得できた内容をバナーに直接表示する。ワークフローは起動しない。
             const headSnippet = masterText.slice(0, 200).replace(/\s+/g, ' ').trim();
@@ -502,7 +510,11 @@ document.getElementById('bulk-update-check-btn')?.addEventListener('click', asyn
     }
 });
 
-// ===== データ更新：現在の状態パネル（freshness_report.json・validation_report.jsonを読み込んで常時表示用に整形） =====
+// ===== データ更新：上場廃止銘柄の登録（stock/delisted.csv）。人が確認して登録する方式（自動判定はしない） =====
+let delistedRows = [];     // 上場廃止銘柄一覧（メモリ上。読込/登録のたびに最新化）
+let delistedLoaded = false; // 一度でも読み込みが済んだか（未読み込みでの登録による取りこぼし上書きを防ぐ）
+
+// ===== データ更新：現在の状態パネル（freshness_report.json・validation_report.json・delisted.csvを読み込んで常時表示用に整形） =====
 async function loadFreshnessStatus() {
     const summaryEl = document.getElementById('status-summary');
     const token = getTokenValue();
@@ -511,83 +523,111 @@ async function loadFreshnessStatus() {
     summaryEl.textContent = '状態を確認中...';
 
     try {
-        // 品質チェックの結果は未実行だとファイル自体が存在しないため、fetchFileIfExistsでnull許容にする
-        const [reportText, validationText] = await Promise.all([
+        // 品質チェックの結果・上場廃止一覧は未実行/未登録だとファイル自体が存在しないため、fetchFileIfExistsでnull許容にする
+        const [reportText, validationText, delistedText] = await Promise.all([
             fetchFile(token, OWNER, DATA_REPO, FRESHNESS_REPORT_PATH),
             fetchFileIfExists(token, OWNER, DATA_REPO, VALIDATION_REPORT_PATH),
+            fetchFileIfExists(token, OWNER, DATA_REPO, DELISTED_PATH),
         ]);
         const report = JSON.parse(reportText);
         const validation = validationText ? JSON.parse(validationText) : null;
+        delistedRows = delistedText ? parseCsv(delistedText) : [];
+        delistedLoaded = true;
 
         summaryEl.innerHTML = '';
 
-        // ----- 更新最終日 -----
+        // ----- 常時表示サマリー（更新最終日・データ品質・上場廃止の要点をまとめて出す） -----
+        const lines = document.createElement('div');
+        lines.className = 'status-lines';
+        [
+            { text: `チェック日時：${formatUtcIsoToJst(report.checked_at)} / 対象：${report.total_files}件` },
+            { text: `全体の最新日付/最古日付：${report.latest_date}/${report.oldest_last_date}` },
+            { text: `日付問題（${report.stale_days}日超過）：${report.stale_count}件`, warning: report.stale_count > 0 },
+            { text: `品質問題：${validation ? `${validation.issue_count}件` : '未実行'}`, warning: !!validation && validation.issue_count > 0 },
+            { text: `上場廃止（除外）：${delistedRows.length}件` },
+        ].forEach(({ text, warning }) => {
+            const p = document.createElement('p');
+            p.textContent = text;
+            if (warning) p.classList.add('status-line--warning');
+            lines.appendChild(p);
+        });
+        summaryEl.appendChild(lines);
+
+        // ----- 詳細（更新最終日／データ品質を2列。どちらもExpander閉が既定） -----
+        const columns = document.createElement('div');
+        columns.className = 'form-columns';
+
+        // 更新最終日：銘柄ごとの最終日付の分布（新しい日付が上に来るように降順）。
+        // 大半が最新日付に揃っていれば正常、古い日付に銘柄が散っていれば取りこぼしがあると分かる。
+        // codes_by_date（日付ごとの該当銘柄コード一覧）があれば、行ごとに折りたたみで内訳を出す
+        // （古いcheck_freshness.pyで作られたレポートにはこのフィールドが無いので、その場合は件数のみ表示する）。
+        // 該当銘柄コードが分かる行には「再取得」ボタンを添え、その日付グループだけを差分取得し直せるようにする。
+        const freshnessColumn = document.createElement('div');
+        freshnessColumn.className = 'form-column';
         const freshnessSection = document.createElement('details');
         freshnessSection.className = 'status-section';
-
         const freshnessTitle = document.createElement('summary');
         freshnessTitle.className = 'update-form-title';
         freshnessTitle.textContent = '更新最終日';
         freshnessSection.appendChild(freshnessTitle);
-
-        const lines = document.createElement('div');
-        lines.className = 'status-lines';
-        [
-            `チェック日時: ${report.checked_at}`,
-            `対象: ${report.total_files}銘柄 / 全体の最新日付: ${report.latest_date}`,
-            `要更新（${report.stale_days}日超過）: ${report.stale_count}件 / 最も遅れている銘柄: ${report.oldest_last_date_code}（${report.oldest_last_date}）`,
-        ].forEach(text => {
-            const p = document.createElement('p');
-            p.textContent = text;
-            lines.appendChild(p);
-        });
-        freshnessSection.appendChild(lines);
-
-        // 銘柄ごとの最終日付の分布（新しい日付が上に来るように降順）。
-        // 大半が最新日付に揃っていれば正常、古い日付に銘柄が散っていれば取りこぼしがあると分かる。
-        // codes_by_date（日付ごとの該当銘柄コード一覧）があれば、行ごとに折りたたみで内訳を出す
-        // （古いcheck_freshness.pyで作られたレポートにはこのフィールドが無いので、その場合は件数のみ表示する）。
         if (report.distribution) {
             const entries = Object.entries(report.distribution).sort((a, b) => b[0].localeCompare(a[0]));
             const list = document.createElement('ul');
             list.className = 'status-distribution';
             entries.forEach(([date, count]) => {
                 const codes = report.codes_by_date ? report.codes_by_date[date] : null;
-                list.appendChild(buildExpandableListItem(`${date}: ${count}銘柄`, codes));
+                let refetchBtn = null;
+                if (codes && codes.length > 0) {
+                    refetchBtn = document.createElement('button');
+                    refetchBtn.type = 'button';
+                    refetchBtn.className = 'run-btn run-btn--secondary status-inline-btn';
+                    refetchBtn.textContent = '再取得';
+                    refetchBtn.addEventListener('click', () => refetchDateGroup(date, codes, refetchBtn));
+                }
+                list.appendChild(buildExpandableListItem(`${date}: ${count}銘柄`, codes, refetchBtn));
             });
             freshnessSection.appendChild(list);
         }
+        // 登録済み上場廃止銘柄の一覧（削除で登録取り消し可能）
+        if (delistedRows.length > 0) {
+            const delistedTitle = document.createElement('p');
+            delistedTitle.className = 'update-form-title';
+            delistedTitle.textContent = `登録済み上場廃止銘柄（${delistedRows.length}件）`;
+            freshnessSection.appendChild(delistedTitle);
+            const delistedList = document.createElement('ul');
+            delistedList.className = 'status-distribution';
+            delistedRows.forEach(row => {
+                const li = document.createElement('li');
+                li.textContent = `${row.code}（${row.updated_at || ''}） `;
+                const delBtn = document.createElement('button');
+                delBtn.type = 'button';
+                delBtn.className = 'run-btn run-btn--danger status-inline-btn';
+                delBtn.textContent = '削除';
+                delBtn.addEventListener('click', () => removeDelistedCode(row.code, delBtn));
+                li.appendChild(delBtn);
+                delistedList.appendChild(li);
+            });
+            freshnessSection.appendChild(delistedList);
+        }
+        freshnessColumn.appendChild(freshnessSection);
+        columns.appendChild(freshnessColumn);
 
-        summaryEl.appendChild(freshnessSection);
-
-        // ----- データ品質 -----
+        // データ品質：問題の種類・内容ごとの内訳（問題が無ければ内訳無し）
+        const qualityColumn = document.createElement('div');
+        qualityColumn.className = 'form-column';
         const qualitySection = document.createElement('details');
         qualitySection.className = 'status-section';
-
         const qualityTitle = document.createElement('summary');
         qualityTitle.className = 'update-form-title';
         qualityTitle.textContent = 'データ品質';
         qualitySection.appendChild(qualityTitle);
-
-        const qualityLines = document.createElement('div');
-        qualityLines.className = 'status-lines';
-        const qualityP = document.createElement('p');
-        if (!validation) {
-            qualityP.textContent = '品質チェック: 未実行です';
-        } else if (validation.issue_count > 0) {
-            qualityP.textContent = `品質チェック（${validation.checked_at}時点）: 問題 ${validation.issue_count}件`;
-            qualityP.classList.add('status-line--warning');
-        } else {
-            qualityP.textContent = `品質チェック（${validation.checked_at}時点）: 問題なし`;
-        }
-        qualityLines.appendChild(qualityP);
-        qualitySection.appendChild(qualityLines);
-
         if (validation && validation.issue_count > 0) {
             renderValidationIssues(qualitySection, validation);
         }
+        qualityColumn.appendChild(qualitySection);
+        columns.appendChild(qualityColumn);
 
-        summaryEl.appendChild(qualitySection);
+        summaryEl.appendChild(columns);
     } catch (error) {
         console.error(error);
         summaryEl.textContent = `状態の取得に失敗しました: ${error.message}`;
@@ -597,8 +637,10 @@ async function loadFreshnessStatus() {
 // 件数テキスト（summaryText）を表示するリスト項目（<li>）を作る。
 // codesが1件以上あればExpander（<details>）にして、開くと該当銘柄コードの一覧が見える形にする。
 // codesが無ければ（古い形式のレポート等）文字列だけの<li>にする。
+// trailingButtonを渡すと、<details>/テキストの外側（summaryの中ではない）にボタンを添える
+// （<summary>内に置くとクリックがExpanderの開閉と競合するため）。
 // 「更新最終日」の日付ごとの内訳・「データ品質」の問題ごとの内訳の両方で共通して使い、見た目を揃えている。
-function buildExpandableListItem(summaryText, codes) {
+function buildExpandableListItem(summaryText, codes, trailingButton) {
     const li = document.createElement('li');
     if (codes && codes.length > 0) {
         const details = document.createElement('details');
@@ -614,7 +656,101 @@ function buildExpandableListItem(summaryText, codes) {
     } else {
         li.textContent = summaryText;
     }
+    if (trailingButton) li.appendChild(trailingButton);
     return li;
+}
+
+// 指定した日付グループ（その日付で止まっている銘柄コード群）だけを差分取得し直す。
+// データ品質の不整合修繕（mode=full・全期間取り直し）とは異なり、単なる取得漏れの解消が目的なので
+// mode=update（最終日の翌日〜今日のみ）で十分かつ軽い。完了後はチェック全体を再実行して結果を反映する。
+async function refetchDateGroup(date, codes, buttonEl) {
+    if (codes.length === 0) return;
+
+    const ok = confirm(`${date}時点で止まっている${codes.length}件を、最新まで差分取得します。よろしいですか？`);
+    if (!ok) return;
+
+    const token = getTokenValue();
+    if (!token) { alert('トークンを入力してください'); return; }
+
+    buttonEl.disabled = true;
+    const originalText = buttonEl.textContent;
+    buttonEl.textContent = '実行をリクエスト中...';
+
+    try {
+        const baseline = await getLatestWorkflowRun(token, OWNER, CODE_REPO, PRICE_ISSUES_WORKFLOW_FILE).catch(() => null);
+
+        await dispatchWorkflow(token, OWNER, CODE_REPO, PRICE_ISSUES_WORKFLOW_FILE, CODE_REPO_BRANCH, {
+            codes: codes.join(','),
+            mode: 'update'
+        });
+
+        buttonEl.textContent = `再取得の完了を待っています...（${codes.length}件・数分かかります）`;
+        const run = await waitForWorkflowRun(token, PRICE_ISSUES_WORKFLOW_FILE, baseline ? baseline.id : null);
+
+        if (!run) {
+            alert('再取得の実行が見つかりませんでした。リクエスト自体は送信済みです。GitHubのActionsタブから状況を確認してください。');
+        } else if (run.conclusion !== 'success') {
+            alert(`再取得が完了しましたが、一部失敗した可能性があります（結果: ${run.conclusion}）。詳細はGitHubのActionsタブで確認してください。`);
+        }
+
+        await runFullCheck(); // 完了後、状態パネル全体が再描画されるためbuttonElへの参照はここで役目を終える
+    } catch (error) {
+        console.error(error);
+        buttonEl.disabled = false;
+        buttonEl.textContent = originalText;
+        alert(`再取得の実行に失敗しました: ${error.message}`);
+    }
+}
+
+// ===== 上場廃止銘柄の登録（stock/delisted.csv）。登録は即コミット（labels.csv等と違い仮登録の中間状態を持たない単純な追加/削除リスト） =====
+document.getElementById('delisted-register-btn')?.addEventListener('click', async () => {
+    const codesInput = document.getElementById('delisted-codes');
+    const statusEl = document.getElementById('delisted-status');
+    const codes = codesInput.value.split(',').map(s => s.trim()).filter(Boolean);
+    if (codes.length === 0) { alert('証券コードを入力してください'); return; }
+
+    const token = getTokenValue();
+    if (!token) { alert('トークンを入力してください'); return; }
+    if (!delistedLoaded) { alert('先に「チェック」を実行してから登録してください（既存データを取りこぼして上書きするのを防ぐため）'); return; }
+
+    statusEl.textContent = '登録中...';
+    try {
+        const now = formatJstTimestamp();
+        codes.forEach(code => {
+            const existing = delistedRows.find(r => r.code === code);
+            if (existing) existing.updated_at = now;
+            else delistedRows.push({ code, note: '', updated_at: now });
+        });
+        const content = stringifyCsv(delistedRows, DELISTED_HEADERS);
+        await commitFile(token, OWNER, DATA_REPO, DELISTED_PATH, DATA_REPO_BRANCH, content, 'chore: 上場廃止銘柄を登録');
+        codesInput.value = '';
+        statusEl.textContent = `登録しました（現在${delistedRows.length}件）。`;
+        await loadFreshnessStatus();
+    } catch (error) {
+        console.error(error);
+        statusEl.textContent = `登録に失敗しました: ${error.message}`;
+    }
+});
+
+/** 上場廃止登録の取り消し（誤登録の訂正用）。確認の上、対象コードを除いて即コミットする。 */
+async function removeDelistedCode(code, buttonEl) {
+    const ok = confirm(`${code}の上場廃止登録を取り消します。よろしいですか？`);
+    if (!ok) return;
+
+    const token = getTokenValue();
+    if (!token) { alert('トークンを入力してください'); return; }
+
+    buttonEl.disabled = true;
+    try {
+        delistedRows = delistedRows.filter(r => r.code !== code);
+        const content = stringifyCsv(delistedRows, DELISTED_HEADERS);
+        await commitFile(token, OWNER, DATA_REPO, DELISTED_PATH, DATA_REPO_BRANCH, content, 'chore: 上場廃止銘柄の登録を取り消し');
+        await loadFreshnessStatus();
+    } catch (error) {
+        console.error(error);
+        buttonEl.disabled = false;
+        alert(`取り消しに失敗しました: ${error.message}`);
+    }
 }
 
 // 指定ワークフローの実行が完了するまで待つ（バックグラウンドで並行して待てるようPromiseを返す）。
@@ -708,22 +844,10 @@ document.getElementById('status-check-btn')?.addEventListener('click', async (ev
     }
 });
 
-// データ品質チェックの問題内訳（再取得ボタン付き）をcontainerに描画する。
+// データ品質チェックの問題内訳をcontainerに描画する。
 // 状態パネルの「チェック」実行後、問題が1件以上あるときにloadFreshnessStatusから呼ばれる。
+// 検出銘柄の再取得（データ修繕）機能は一旦削除。修繕方法は改めて検討する。
 function renderValidationIssues(container, validation) {
-    // 検出された銘柄コード（重複除去）をまとめて再取得するボタン。2013年以降の全期間を取得し直すことで、
-    // 差分更新（末尾への追記のみ）では直せない途中の欠損・終値空欄・重複日付なども穴埋めする。
-    const issueCodes = Array.from(new Set(validation.issues.map(issue => issue.code)));
-    const refetchBar = document.createElement('div');
-    refetchBar.className = 'validate-refetch-bar';
-    const refetchBtn = document.createElement('button');
-    refetchBtn.type = 'button';
-    refetchBtn.className = 'run-btn';
-    refetchBtn.textContent = `検出銘柄${issueCodes.length}件をまとめて再取得`;
-    refetchBtn.addEventListener('click', () => refetchIssueCodes(issueCodes, refetchBtn));
-    refetchBar.appendChild(refetchBtn);
-    container.appendChild(refetchBar);
-
     // 同一内容（type+detail）の問題は銘柄をまたいで多発しやすい（例: 特定期間の連休による欠損）ため、
     // 件数付きのサマリーとしてまとめ、該当銘柄コードはExpanderの中に入れる（「更新最終日」と同じ見た目にする）
     const groups = new Map();
@@ -742,49 +866,6 @@ function renderValidationIssues(container, validation) {
         list.appendChild(buildExpandableListItem(`${group.count}件：${group.detail}`, group.codes));
     });
     container.appendChild(list);
-}
-
-// データ品質チェックで検出された銘柄コードをまとめて再取得するワークフロー（fetch-stock-prices-by-codes.yml）を起動する。
-// mode=fullで2013年以降の全期間を取得し直すため、差分更新では直せない途中の欠損等も穴埋めできる。
-// 20件ごとに自動コミットされるワークフロー側の仕組みにより、対象が多くても途中失敗で全て失うことはない。
-// 完了後は「チェック」と同じくrunFullCheck()を実行し、再取得で直ったかどうかを自動で確認・反映する。
-async function refetchIssueCodes(codes, buttonEl) {
-    if (codes.length === 0) return;
-
-    const ok = confirm(`${codes.length}件の銘柄を2013年以降の全期間で再取得します。よろしいですか？`);
-    if (!ok) return;
-
-    const token = getTokenValue();
-    if (!token) { alert('トークンを入力してください'); return; }
-
-    buttonEl.disabled = true;
-    buttonEl.textContent = '実行をリクエスト中...';
-
-    try {
-        const baseline = await getLatestWorkflowRun(token, OWNER, CODE_REPO, PRICE_ISSUES_WORKFLOW_FILE).catch(() => null);
-
-        await dispatchWorkflow(token, OWNER, CODE_REPO, PRICE_ISSUES_WORKFLOW_FILE, CODE_REPO_BRANCH, {
-            codes: codes.join(','),
-            mode: 'full'
-        });
-
-        buttonEl.textContent = `再取得の完了を待っています...（${codes.length}件・数分かかります）`;
-        const run = await waitForWorkflowRun(token, PRICE_ISSUES_WORKFLOW_FILE, baseline ? baseline.id : null);
-
-        if (!run) {
-            alert('再取得の実行が見つかりませんでした。リクエスト自体は送信済みです。GitHubのActionsタブから状況を確認してください。');
-        } else if (run.conclusion !== 'success') {
-            alert(`再取得が完了しましたが、一部失敗した可能性があります（結果: ${run.conclusion}）。詳細はGitHubのActionsタブで確認してください。`);
-        }
-
-        buttonEl.textContent = 'チェックを実行中...（完了を待っています。数分かかります）';
-        await runFullCheck(); // 完了後、状態パネル全体が再描画されるためbuttonElへの参照はここで役目を終える
-    } catch (error) {
-        console.error(error);
-        buttonEl.disabled = false;
-        buttonEl.textContent = `検出銘柄${codes.length}件をまとめて再取得`;
-        alert(`再取得の実行に失敗しました: ${error.message}`);
-    }
 }
 
 // ===== 保有・履歴：保有銘柄（stock/holdings.csv）の手入力登録 =====
@@ -1231,6 +1312,20 @@ function formatJstTimestamp() {
     return `${iso.slice(0, 10)} ${iso.slice(11, 19)}`;
 }
 
+/**
+ * freshness_report.json/validation_report.jsonのchecked_at（例: "2026-08-17T05:03:27"）をJSTの
+ * "YYYY/MM/DD HH:MM:SS"形式に変換する。scripts/*.pyはGitHub ActionsランナーのUTC時刻をタイムゾーン変換せず
+ * そのままisoformat()で出力しているため、末尾に'Z'を補ってUTCとして明示的にパースしてからJSTへ変換する。
+ */
+function formatUtcIsoToJst(isoString) {
+    if (!isoString) return isoString;
+    const date = new Date(`${isoString}Z`);
+    if (Number.isNaN(date.getTime())) return isoString;
+    const jst = new Date(date.getTime() + 9 * 60 * 60 * 1000);
+    const iso = jst.toISOString();
+    return `${iso.slice(0, 10).replace(/-/g, '/')} ${iso.slice(11, 19)}`;
+}
+
 // 登録済み一覧（Expander内）：高配当・優待の絞り込み（チェックON時のみそのラベルが1の行に絞る。OFFは絞り込みなし）。
 // 業績情報をもとにした絞り込みは将来追加予定（ここに条件を足していく想定）。
 const attributesFilters = { highDiv: false, perk: false };
@@ -1511,4 +1606,206 @@ document.getElementById('attributes-save-btn')?.addEventListener('click', async 
         statusEl.textContent = `保存に失敗しました: ${error.message}`;
     }
 });
+
+// ===== SIM：ディフェンシブ度（景気連動度）シミュレータ =====
+// past/C02-2_ディフェンシブ判定ラベル付け.ipynbのスコアリングロジックを移植したもの（js/modules/defensiveScore.js）。
+// 旧実装の手動教師ラベル（L_def）は廃止し、連続スコアで評価する方針に変更した。
+// 「改善①〜④」等の調整ロジック（MDDクリップ・条件付き重み変更・救済ルール）は未移植（まずは素の3指標のみ）。
+// このページはあくまで試算用で、結果はどこにもコミットしない（読み取り専用）。
+// 旧手動ラベル（REFERENCE_LABELS）は、保存先を持たない比較表示専用の参考データ。
+
+const SIM_FETCH_BATCH_SIZE = 6; // 株価CSVの並列取得数（多すぎるとGitHub APIのレート制限に触れやすいため控えめに）
+let simResults = []; // 直近の計算結果（{ code, name, score, scoreDown, scoreVol, scoreMdd, corrDown, volRatio, mddRatio, months, refLabel, error }）
+
+/** SIM入力欄からパラメータを読み取る（未入力・不正値はデフォルト値にフォールバック）。 */
+function getSimParams() {
+    const num = (id, fallback) => {
+        const v = Number(document.getElementById(id)?.value);
+        return Number.isFinite(v) ? v : fallback;
+    };
+    return {
+        years:    num('sim-years', 10),
+        wDown:    num('sim-w-down', 0.4),
+        wVol:     num('sim-w-vol', 0.3),
+        wMdd:     num('sim-w-mdd', 0.3),
+        downGood: num('sim-down-good', 0.2),
+        downBad:  num('sim-down-bad', 0.8),
+        volGood:  num('sim-vol-good', 0.9),
+        volBad:   num('sim-vol-bad', 1.5),
+        mddGood:  num('sim-mdd-good', 0.8),
+        mddBad:   num('sim-mdd-bad', 1.2),
+    };
+}
+
+/** 対象銘柄コード一覧を返す。手入力があればそれを優先し、空欄ならlabels.csvのL_高配当=1銘柄を対象にする。 */
+async function resolveSimTargetCodes(token) {
+    const raw = document.getElementById('sim-codes').value.trim();
+    if (raw) return [...new Set(raw.split(',').map(s => s.trim()).filter(Boolean))];
+
+    const labelsText = await fetchFileIfExists(token, OWNER, DATA_REPO, LABELS_PATH);
+    const rows = labelsText ? parseCsv(labelsText) : [];
+    return rows.filter(r => r['L_高配当'] === '1').map(r => r.code);
+}
+
+async function runSimCalculation() {
+    const statusEl = document.getElementById('sim-status');
+    const progressWrap = document.getElementById('sim-progress');
+    const progressBar = document.getElementById('sim-progress-bar');
+    const progressPercent = document.getElementById('sim-progress-percent');
+    const runBtn = document.getElementById('sim-run-btn');
+    const token = getTokenValue();
+    if (!token) { statusEl.textContent = 'トークンを入力してください。'; return; }
+
+    runBtn.disabled = true;
+    progressWrap.style.display = '';
+    progressBar.value = 0;
+    progressPercent.textContent = '0%';
+    statusEl.textContent = '対象銘柄を確認中...';
+
+    try {
+        const [codes, n225Text, nameMap] = await Promise.all([
+            resolveSimTargetCodes(token),
+            fetchFileIfExists(token, OWNER, DATA_REPO, `${PRICES_DIR}/N225.csv`),
+            getMasterNameMap(token).catch(() => new Map()),
+        ]);
+        if (codes.length === 0) { statusEl.textContent = '対象銘柄が0件です（証券コードを指定するか、labels.csvに高配当銘柄を登録してください）。'; return; }
+        if (!n225Text) {
+            statusEl.textContent = '日経平均（N225）の株価データがまだ取得されていません。「データ更新」タブ→詳細設定「株価取得（銘柄コードを直接指定）」で証券コードに N225 と入力して取得してから、再度お試しください。';
+            return;
+        }
+
+        const n225Rows = parseCsv(n225Text);
+        const params = getSimParams();
+
+        const results = [];
+        let done = 0;
+        for (let i = 0; i < codes.length; i += SIM_FETCH_BATCH_SIZE) {
+            const batch = codes.slice(i, i + SIM_FETCH_BATCH_SIZE);
+            const batchResults = await Promise.all(batch.map(async code => {
+                try {
+                    const text = await fetchFile(token, OWNER, DATA_REPO, `${PRICES_DIR}/${code}.csv`);
+                    const result = calcDefensiveScore(parseCsv(text), n225Rows, params);
+                    return { code, name: nameMap.get(code) || '', ...result, refLabel: REFERENCE_LABELS.get(code) || null, error: null };
+                } catch (error) {
+                    return { code, name: nameMap.get(code) || '', score: null, months: 0, refLabel: REFERENCE_LABELS.get(code) || null, error: error.message };
+                }
+            }));
+            results.push(...batchResults);
+            done += batch.length;
+            const pct = Math.round((done / codes.length) * 100);
+            progressBar.value = pct;
+            progressPercent.textContent = `${pct}%（${done}/${codes.length}）`;
+        }
+
+        simResults = results;
+        const okCount = results.filter(r => Number.isFinite(r.score)).length;
+        statusEl.textContent = `計算完了：${results.length}件中 ${okCount}件でスコアを算出しました（データ不足・取得エラー: ${results.length - okCount}件）。`;
+        renderSimResults();
+    } catch (error) {
+        console.error(error);
+        statusEl.textContent = `エラー: ${error.message}`;
+    } finally {
+        runBtn.disabled = false;
+        progressWrap.style.display = 'none';
+    }
+}
+
+document.getElementById('sim-run-btn')?.addEventListener('click', runSimCalculation);
+document.getElementById('sim-threshold')?.addEventListener('input', renderSimResults);
+
+function getSimThreshold() {
+    const v = Number(document.getElementById('sim-threshold')?.value);
+    return Number.isFinite(v) ? v : 50;
+}
+
+function renderSimResults() {
+    renderSimHistogram();
+    renderSimTable();
+}
+
+/** スコア分布をdiv要素の棒グラフで描く（外部チャートライブラリは使わない簡易実装）。 */
+function renderSimHistogram() {
+    const container = document.getElementById('sim-histogram');
+    if (!container) return;
+    container.replaceChildren();
+
+    const scores = simResults.map(r => r.score).filter(s => Number.isFinite(s));
+    if (scores.length === 0) {
+        container.textContent = 'スコアを計算するとヒストグラムが表示されます。';
+        return;
+    }
+
+    const threshold = getSimThreshold();
+    const bins = buildHistogramBins(scores, 5);
+    const maxCount = Math.max(...bins.map(b => b.count), 1);
+
+    bins.forEach(bin => {
+        const col = document.createElement('div');
+        col.className = 'sim-hist-col';
+
+        const count = document.createElement('div');
+        count.className = 'sim-hist-count';
+        count.textContent = bin.count > 0 ? String(bin.count) : '';
+
+        const bar = document.createElement('div');
+        bar.className = 'sim-hist-bar' + (bin.from >= threshold ? ' sim-hist-bar--defensive' : ' sim-hist-bar--offensive');
+        bar.style.height = `${(bin.count / maxCount) * 100}%`;
+        bar.title = `${bin.from}〜${bin.to}点: ${bin.count}件`;
+
+        const label = document.createElement('div');
+        label.className = 'sim-hist-label';
+        label.textContent = bin.from % 10 === 0 ? String(bin.from) : '';
+
+        col.append(count, bar, label);
+        container.appendChild(col);
+    });
+}
+
+/** 結果一覧テーブル（スコア降順）。旧実装の手動ラベル（REFERENCE_LABELS）との一致・不一致も表示する。 */
+function renderSimTable() {
+    const table = document.getElementById('sim-table');
+    if (!table) return;
+
+    const threshold = getSimThreshold();
+    const cols = ['コード', '銘柄名', 'スコア', '下落局面相関', 'ボラ比', '最大下落比', '判定', '参考ラベル(旧)', '対象月数'];
+    const thead = document.createElement('thead');
+    const hRow = document.createElement('tr');
+    cols.forEach(c => { const th = document.createElement('th'); th.textContent = c; hRow.appendChild(th); });
+    thead.appendChild(hRow);
+
+    const tbody = document.createElement('tbody');
+    const sorted = [...simResults].sort((a, b) => (b.score ?? -1) - (a.score ?? -1));
+
+    if (sorted.length === 0) {
+        const tr = document.createElement('tr');
+        const td = document.createElement('td');
+        td.colSpan = cols.length;
+        td.className = 'empty-cell';
+        td.textContent = '計算結果がありません';
+        tr.appendChild(td);
+        tbody.appendChild(tr);
+    } else {
+        sorted.forEach(r => {
+            const tr = document.createElement('tr');
+            const judge = Number.isFinite(r.score) ? (r.score >= threshold ? 'ディフェンシブ' : 'オフェンシブ') : (r.error ? 'エラー' : 'データ不足');
+            const refLabelText = r.refLabel === 'defensive' ? 'ディフェンシブ' : r.refLabel === 'offensive' ? 'オフェンシブ' : '－';
+            const mismatch = r.refLabel && Number.isFinite(r.score) &&
+                ((r.refLabel === 'defensive' && r.score < threshold) || (r.refLabel === 'offensive' && r.score >= threshold));
+            if (mismatch) tr.classList.add('sim-row-mismatch');
+
+            const values = [
+                r.code, r.name,
+                Number.isFinite(r.score) ? r.score.toFixed(1) : (r.error || '－'),
+                Number.isFinite(r.corrDown) ? r.corrDown.toFixed(2) : '－',
+                Number.isFinite(r.volRatio) ? r.volRatio.toFixed(2) : '－',
+                Number.isFinite(r.mddRatio) ? r.mddRatio.toFixed(2) : '－',
+                judge, refLabelText,
+                r.months ?? '－',
+            ];
+            values.forEach(v => { const td = document.createElement('td'); td.textContent = v; tr.appendChild(td); });
+            tbody.appendChild(tr);
+        });
+    }
+    table.replaceChildren(thead, tbody);
+}
 

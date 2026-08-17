@@ -85,6 +85,7 @@ jobs:
             python code-repo/stock/scripts/fetch_prices.py \
               --master "${{ github.workspace }}/data-repo/stock/master.csv" \
               --asset-types "${{ inputs.asset_types }}" \
+              --exclude-file "${{ github.workspace }}/data-repo/stock/delisted.csv" \
               --offset "$start" \
               --limit "$count" \
               --mode "${{ inputs.mode }}" \
