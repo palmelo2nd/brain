@@ -582,18 +582,51 @@ async function loadFreshnessStatus() {
                     refetchBtn.type = 'button';
                     refetchBtn.className = 'run-btn run-btn--secondary status-inline-btn';
                     refetchBtn.textContent = '再取得';
-                    refetchBtn.addEventListener('click', () => refetchDateGroup(date, codes, refetchBtn));
+                    refetchBtn.addEventListener('click', () => refetchCodesGroup(date, codes, refetchBtn));
                 }
                 list.appendChild(buildExpandableListItem(`${date}: ${count}銘柄`, codes, refetchBtn));
             });
             freshnessSection.appendChild(list);
         }
-        // 登録済み上場廃止銘柄の一覧（削除で登録取り消し可能）
+        // まとめて修正：最新日付（report.latest_date）のグループを含めるかどうかを切り替えられるようにする。
+        // 同日中の実行では、既に最新日付まで届いている銘柄を再取得しても（当日分は保存されないため）
+        // 無駄になるので既定は除外。一方、最新日付自体が2営業日以上前で止まっている状況では、
+        // そのグループも含めて丸ごと再取得したいことがあるため、チェックボックスで選べるようにする。
+        if (report.codes_by_date && Object.keys(report.codes_by_date).length > 0) {
+            const bulkFixWrap = document.createElement('div');
+            bulkFixWrap.className = 'status-bulk-fix';
+
+            const includeLabel = document.createElement('label');
+            const includeCheckbox = document.createElement('input');
+            includeCheckbox.type = 'checkbox';
+            includeLabel.appendChild(includeCheckbox);
+            includeLabel.append(`最新日付（${report.latest_date}）のグループも含める`);
+
+            const bulkBtn = document.createElement('button');
+            bulkBtn.type = 'button';
+            bulkBtn.className = 'run-btn run-btn--secondary status-inline-btn';
+            bulkBtn.textContent = 'まとめて再取得';
+            bulkBtn.addEventListener('click', () => {
+                const codes = Object.entries(report.codes_by_date)
+                    .filter(([date]) => includeCheckbox.checked || date !== report.latest_date)
+                    .flatMap(([, codeList]) => codeList);
+                if (codes.length === 0) {
+                    alert('対象銘柄が0件です（最新日付のグループしか無く、それを含めない設定になっています）。');
+                    return;
+                }
+                refetchCodesGroup('今日以前の分をまとめて', codes, bulkBtn);
+            });
+
+            bulkFixWrap.append(includeLabel, bulkBtn);
+            freshnessSection.appendChild(bulkFixWrap);
+        }
+        // 登録済み上場廃止銘柄の一覧（削除で登録取り消し可能）。デフォルト閉のサブExpanderにする
         if (delistedRows.length > 0) {
-            const delistedTitle = document.createElement('p');
-            delistedTitle.className = 'update-form-title';
-            delistedTitle.textContent = `登録済み上場廃止銘柄（${delistedRows.length}件）`;
-            freshnessSection.appendChild(delistedTitle);
+            const delistedDetail = document.createElement('details');
+            delistedDetail.className = 'status-date-detail';
+            const delistedSummary = document.createElement('summary');
+            delistedSummary.textContent = `登録済み上場廃止銘柄（${delistedRows.length}件）`;
+            delistedDetail.appendChild(delistedSummary);
             const delistedList = document.createElement('ul');
             delistedList.className = 'status-distribution';
             delistedRows.forEach(row => {
@@ -607,7 +640,8 @@ async function loadFreshnessStatus() {
                 li.appendChild(delBtn);
                 delistedList.appendChild(li);
             });
-            freshnessSection.appendChild(delistedList);
+            delistedDetail.appendChild(delistedList);
+            freshnessSection.appendChild(delistedDetail);
         }
         freshnessColumn.appendChild(freshnessSection);
         columns.appendChild(freshnessColumn);
@@ -660,13 +694,13 @@ function buildExpandableListItem(summaryText, codes, trailingButton) {
     return li;
 }
 
-// 指定した日付グループ（その日付で止まっている銘柄コード群）だけを差分取得し直す。
+// 指定した銘柄コード群（1つの日付グループ、または複数日付グループをまとめたもの）だけを差分取得し直す。
 // データ品質の不整合修繕（mode=full・全期間取り直し）とは異なり、単なる取得漏れの解消が目的なので
 // mode=update（最終日の翌日〜今日のみ）で十分かつ軽い。完了後はチェック全体を再実行して結果を反映する。
-async function refetchDateGroup(date, codes, buttonEl) {
+async function refetchCodesGroup(label, codes, buttonEl) {
     if (codes.length === 0) return;
 
-    const ok = confirm(`${date}時点で止まっている${codes.length}件を、最新まで差分取得します。よろしいですか？`);
+    const ok = confirm(`${label}で止まっている${codes.length}件を、最新まで差分取得します。よろしいですか？`);
     if (!ok) return;
 
     const token = getTokenValue();
