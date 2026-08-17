@@ -97,6 +97,11 @@ brainアプリと異なり、stockは銘柄数×期間で合計データ量が�
 - **Why（2026-08-17判断）:** yfinanceでの株価取得失敗だけを根拠に上場廃止と自動判定すると、一時的な取得エラーを誤って上場廃止と判定するリスクがある（旧`past/`実装で問題視されていた点）。この誤検知リスクを避けるため、自動判定は行わず、鮮度チェックの「更新最終日」で取得が止まっている銘柄をユーザー自身が確認し、`stock/delisted.csv`（`code, note, updated_at`）へ手動登録する方式にした。登録は「作り直せるデータ」ではなく「積み上げるデータ」なので、[データファイルの分離方針](#データファイルの分離方針作り直せるデータと積み上げるデータを混ぜない)に従い`master.csv`とは別ファイルにしている。
 - **How to apply:** `scripts/fetch_prices.py`（`--master`モード）・`scripts/check_freshness.py`・`scripts/validate_prices.py`はいずれも`--exclude-file`引数でこのファイルを受け取り、対象コードの絞り込み（`fetch_prices.py`）・スキャン対象ファイルの除外（`check_freshness.py`／`validate_prices.py`）に使う。ファイルが存在しない（1件も登録されていない）場合は空集合として扱い、エラーにはしない。ブラウザ側（`js/app.js`の`delisted-register-btn`）は`commitFile`で直接この一覧を書き換える（labels.csv等と異なり、仮登録の中間状態を持たない単純な追加・削除）。将来的に`master.csv`の再生成でコードが消えたことを根拠にした自動判定を追加する場合も、この手動登録と共存させる方針（[README.md 添付6](./README.md#添付6-保留事項今後の検討課題)参照）。
 
+### master.csvに無いが継続更新したい対象は`stock/extra_targets.csv`で管理する（N225・未反映の新規上場銘柄）
+
+- **Why（2026-08-17判断）:** bulk更新（`fetch_prices.py --master`）の対象は`master.csv`（JPX公式データから機械的に再生成される「作り直せるデータ」）だけを見て決まるため、①N225のような指数（そもそも銘柄ではなくmaster.csvには載らない）や、②新規上場銘柄でまだ`master.csv`に反映されていないもの（`build_stock_master.py`の実行頻度に依存する）は、`master.csv`を更新しない限り自動更新の対象に含められない。これらは「継続的に差分更新したい」という点で共通しており、`stock/delisted.csv`（更新を止めたい対象の除外リスト）とは正反対の「母集団に追加したい対象の登録リスト」として、別ファイルで管理する方針にした。
+- **How to apply:** `stock/extra_targets.csv`（列：`code, yf_ticker, note, updated_at`）。`scripts/fetch_prices.py`の`load_extra_targets`が読み込み、(a) `code_to_ticker`が使うティッカー上書き辞書（`yf_ticker`列。空欄なら`INDEX_TICKERS`の既定値→通常銘柄`{code}.T`の順で解決）と、(b) `--master`モード・`offset=0`のサブバッチにのみ合流させる追加コードリスト、の2つの用途に使う（`offset>0`では合流させないため重複取得を防止。`master.csv`側に後から反映されて重複しても、合流時に`dict.fromkeys`で除去するため実害は無い）。N225の`^N225`変換自体は`INDEX_TICKERS`にハードコードされたまま残しており、`extra_targets.csv`が空でもN225は動く（後方互換・ブートストラップ対策）。ブラウザ側（`js/app.js`の`extra-target-register-btn`）は`delisted-register-btn`と全く同じ操作感（`commitFile`で即コミット、仮登録の中間状態なし）で、`yf_ticker`列は空欄のまま登録する（東証の通常銘柄は上書き不要なため。特殊ティッカーが必要な場合はGitHub側でファイルを直接編集する想定）。
+
 ### 株価取得は当日（JST）分を常に保存しない（取引時間中の途中価格を確定値として残さない）
 
 - **Why（2026-08-17判断）:** `fetch_prices.py`は取引時間中に実行されると、yfinanceから返る当日分の`Close`が「実行時点の途中価格」であるにもかかわらず、これをそのまま確定値として保存してしまっていた。`mode=update`は「既存CSVの最終日付の翌日〜今日」だけを取得する差分方式のため、一度当日分（途中価格）が保存されると最終日付が当日になり、以降の実行では当日が二度と再取得対象に含まれず、誤った値が残り続けるという不具合があった。

@@ -86,6 +86,7 @@ jobs:
               --master "${{ github.workspace }}/data-repo/stock/master.csv" \
               --asset-types "${{ inputs.asset_types }}" \
               --exclude-file "${{ github.workspace }}/data-repo/stock/delisted.csv" \
+              --extra-targets-file "${{ github.workspace }}/data-repo/stock/extra_targets.csv" \
               --offset "$start" \
               --limit "$count" \
               --mode "${{ inputs.mode }}" \

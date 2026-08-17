@@ -33,6 +33,8 @@ const LABELS_PATH = 'stock/labels.csv';
 const LABEL_HEADERS = ['code', 'L_高配当', 'L_優待', 'updated_at'];
 const DELISTED_PATH = 'stock/delisted.csv'; // 上場廃止銘柄一覧。人が確認して登録する（自動判定はしない）
 const DELISTED_HEADERS = ['code', 'note', 'updated_at'];
+const EXTRA_TARGETS_PATH = 'stock/extra_targets.csv'; // master.csvには無いが継続更新したい追加対象（N225・未反映の新規上場銘柄など）
+const EXTRA_TARGETS_HEADERS = ['code', 'yf_ticker', 'note', 'updated_at'];
 
 // ===== GitHub PAT入力欄 =====
 // brain（コードリポジトリ）・brain_data（データリポジトリ）の両方に対して
@@ -514,7 +516,13 @@ document.getElementById('bulk-update-check-btn')?.addEventListener('click', asyn
 let delistedRows = [];     // 上場廃止銘柄一覧（メモリ上。読込/登録のたびに最新化）
 let delistedLoaded = false; // 一度でも読み込みが済んだか（未読み込みでの登録による取りこぼし上書きを防ぐ）
 
-// ===== データ更新：現在の状態パネル（freshness_report.json・validation_report.json・delisted.csvを読み込んで常時表示用に整形） =====
+// ===== データ更新：追加対象銘柄の登録（stock/extra_targets.csv）。master.csvには無いが継続更新したい対象
+// （N225のような指数、master.csvにまだ反映されていない新規上場銘柄など）を人が登録する =====
+let extraTargetsRows = [];     // 追加対象銘柄一覧（メモリ上。読込/登録のたびに最新化）
+let extraTargetsLoaded = false; // 一度でも読み込みが済んだか（未読み込みでの登録による取りこぼし上書きを防ぐ）
+
+// ===== データ更新：現在の状態パネル（freshness_report.json・validation_report.json・delisted.csv・
+// extra_targets.csvを読み込んで常時表示用に整形） =====
 async function loadFreshnessStatus() {
     const summaryEl = document.getElementById('status-summary');
     const token = getTokenValue();
@@ -523,16 +531,20 @@ async function loadFreshnessStatus() {
     summaryEl.textContent = '状態を確認中...';
 
     try {
-        // 品質チェックの結果・上場廃止一覧は未実行/未登録だとファイル自体が存在しないため、fetchFileIfExistsでnull許容にする
-        const [reportText, validationText, delistedText] = await Promise.all([
+        // 品質チェックの結果・上場廃止一覧・追加対象一覧は未実行/未登録だとファイル自体が存在しないため、
+        // fetchFileIfExistsでnull許容にする
+        const [reportText, validationText, delistedText, extraTargetsText] = await Promise.all([
             fetchFile(token, OWNER, DATA_REPO, FRESHNESS_REPORT_PATH),
             fetchFileIfExists(token, OWNER, DATA_REPO, VALIDATION_REPORT_PATH),
             fetchFileIfExists(token, OWNER, DATA_REPO, DELISTED_PATH),
+            fetchFileIfExists(token, OWNER, DATA_REPO, EXTRA_TARGETS_PATH),
         ]);
         const report = JSON.parse(reportText);
         const validation = validationText ? JSON.parse(validationText) : null;
         delistedRows = delistedText ? parseCsv(delistedText) : [];
         delistedLoaded = true;
+        extraTargetsRows = extraTargetsText ? parseCsv(extraTargetsText) : [];
+        extraTargetsLoaded = true;
 
         summaryEl.innerHTML = '';
 
@@ -642,6 +654,29 @@ async function loadFreshnessStatus() {
             });
             delistedDetail.appendChild(delistedList);
             freshnessSection.appendChild(delistedDetail);
+        }
+        // 登録済み追加対象銘柄の一覧（削除で登録取り消し可能）。デフォルト閉のサブExpanderにする
+        if (extraTargetsRows.length > 0) {
+            const extraDetail = document.createElement('details');
+            extraDetail.className = 'status-date-detail';
+            const extraSummary = document.createElement('summary');
+            extraSummary.textContent = `登録済み追加対象銘柄（${extraTargetsRows.length}件）`;
+            extraDetail.appendChild(extraSummary);
+            const extraList = document.createElement('ul');
+            extraList.className = 'status-distribution';
+            extraTargetsRows.forEach(row => {
+                const li = document.createElement('li');
+                li.textContent = `${row.code}（${row.updated_at || ''}） `;
+                const delBtn = document.createElement('button');
+                delBtn.type = 'button';
+                delBtn.className = 'run-btn run-btn--danger status-inline-btn';
+                delBtn.textContent = '削除';
+                delBtn.addEventListener('click', () => removeExtraTargetCode(row.code, delBtn));
+                li.appendChild(delBtn);
+                extraList.appendChild(li);
+            });
+            extraDetail.appendChild(extraList);
+            freshnessSection.appendChild(extraDetail);
         }
         freshnessColumn.appendChild(freshnessSection);
         columns.appendChild(freshnessColumn);
@@ -783,6 +818,63 @@ async function removeDelistedCode(code, buttonEl) {
         delistedRows = delistedRows.filter(r => r.code !== code);
         const content = stringifyCsv(delistedRows, DELISTED_HEADERS);
         await commitFile(token, OWNER, DATA_REPO, DELISTED_PATH, DATA_REPO_BRANCH, content, 'chore: 上場廃止銘柄の登録を取り消し');
+        await loadFreshnessStatus();
+    } catch (error) {
+        console.error(error);
+        buttonEl.disabled = false;
+        alert(`取り消しに失敗しました: ${error.message}`);
+    }
+}
+
+// ===== 追加対象銘柄の登録（stock/extra_targets.csv）。上場廃止銘柄の登録と同じ操作感（登録は即コミット、
+// 仮登録の中間状態を持たない単純な追加/削除リスト）。master.csvには無いが継続更新したい対象
+// （N225等の指数、master.csvにまだ反映されていない新規上場銘柄など）を登録する =====
+document.getElementById('extra-target-register-btn')?.addEventListener('click', async (event) => {
+    const btn = event.currentTarget;
+    const codesInput = document.getElementById('extra-target-codes');
+    const statusEl = document.getElementById('extra-target-status');
+    const codes = codesInput.value.split(',').map(s => s.trim()).filter(Boolean);
+    if (codes.length === 0) { alert('証券コードを入力してください'); return; }
+
+    const token = getTokenValue();
+    if (!token) { alert('トークンを入力してください'); return; }
+    if (!extraTargetsLoaded) { alert('先に「チェック」を実行してから登録してください（既存データを取りこぼして上書きするのを防ぐため）'); return; }
+
+    // 連打による二重コミット（GitHub側でshaの競合＝409エラーになる）を防ぐ
+    btn.disabled = true;
+    statusEl.textContent = '登録中...';
+    try {
+        const now = formatJstTimestamp();
+        codes.forEach(code => {
+            const existing = extraTargetsRows.find(r => r.code === code);
+            if (existing) existing.updated_at = now;
+            else extraTargetsRows.push({ code, yf_ticker: '', note: '', updated_at: now });
+        });
+        const content = stringifyCsv(extraTargetsRows, EXTRA_TARGETS_HEADERS);
+        await commitFile(token, OWNER, DATA_REPO, EXTRA_TARGETS_PATH, DATA_REPO_BRANCH, content, 'chore: 追加対象銘柄を登録');
+        codesInput.value = '';
+        statusEl.textContent = `登録しました（現在${extraTargetsRows.length}件）。`;
+        await loadFreshnessStatus(); // 状態パネル全体が再描画されるためbtnへの参照はここで役目を終える
+    } catch (error) {
+        console.error(error);
+        btn.disabled = false;
+        statusEl.textContent = `登録に失敗しました: ${error.message}`;
+    }
+});
+
+/** 追加対象登録の取り消し。確認の上、対象コードを除いて即コミットする。 */
+async function removeExtraTargetCode(code, buttonEl) {
+    const ok = confirm(`${code}の追加対象登録を取り消します。よろしいですか？`);
+    if (!ok) return;
+
+    const token = getTokenValue();
+    if (!token) { alert('トークンを入力してください'); return; }
+
+    buttonEl.disabled = true;
+    try {
+        extraTargetsRows = extraTargetsRows.filter(r => r.code !== code);
+        const content = stringifyCsv(extraTargetsRows, EXTRA_TARGETS_HEADERS);
+        await commitFile(token, OWNER, DATA_REPO, EXTRA_TARGETS_PATH, DATA_REPO_BRANCH, content, 'chore: 追加対象銘柄の登録を取り消し');
         await loadFreshnessStatus();
     } catch (error) {
         console.error(error);

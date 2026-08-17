@@ -187,6 +187,20 @@
                     <p id="delisted-status" class="update-status"></p>
                 </div>
 
+                <!-- 追加対象銘柄の登録：master.csvには無いが継続更新したい対象（N225のような指数、master.csvにまだ
+                     反映されていない新規上場銘柄など）を登録する（stock/extra_targets.csv）。登録すると、最新株価取得
+                     （bulk更新）のoffset=0実行時にmaster.csv由来の対象へ合流させて継続的に差分更新する -->
+                <div class="update-form">
+                    <p class="update-form-title">追加対象銘柄の登録</p>
+                    <p class="placeholder-text">master.csvには無いが継続更新したい銘柄（N225等の指数、master.csvにまだ反映されていない新規上場銘柄など）を登録します。先に「チェック」を1回実行してから登録してください（登録済み一覧は「更新最終日」の中に表示されます）。</p>
+                    <div class="update-form-row">
+                        <label>証券コード</label>
+                        <input type="text" id="extra-target-codes" placeholder="例: N225, 9999">
+                    </div>
+                    <button type="button" id="extra-target-register-btn" class="run-btn">登録</button>
+                    <p id="extra-target-status" class="update-status"></p>
+                </div>
+
                 <!-- 更新：日常運用はこのボタン1つ。対象銘柄すべてを差分更新する -->
                 <div class="update-form">
                     <p class="update-form-title">株価の更新</p>
