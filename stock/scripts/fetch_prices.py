@@ -15,15 +15,20 @@ Yahoo Finance側への負荷・アクセス制限を避けるため、銘柄ご�
 
 --codes に "N225" を指定すると日経平均株価（yfinanceティッカー ^N225）を取得できる（INDEX_TICKERS参照）。
 ベンチマーク比較用で、他の銘柄コードと同じ形式（date, close）でstock/prices/N225.csvに保存される。
+
+当日（JST基準）分は、取引時間中の途中価格を確定値として保存してしまわないよう、常に除外する
+（前営業日以前の確定済みデータのみ保存し、当日分は翌日以降の実行で自然に取得し直す）。
 """
 import argparse
 import sys
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pandas as pd
 import yfinance as yf
+
+JST = timezone(timedelta(hours=9))
 
 # 東証上場銘柄はyfinance（Yahoo Finance）上でこのサフィックスを付けたティッカーになる
 TSE_SUFFIX = ".T"
@@ -55,6 +60,14 @@ def fetch_close_prices(code: str, start_date: str, period: str | None):
     closes["close"] = closes["close"].round(2)  # 株式分割調整の影響で細かい小数が出るため丸める
     closes.index = closes.index.tz_localize(None).normalize()  # タイムゾーン・時刻を落として日付のみにする
     closes.index.name = "date"
+
+    # 取引時間中に実行すると、当日分は確定した終値ではなく実行時点の途中価格が返ってくる。
+    # これを保存すると、次回以降のupdateモード（最終日の翌日から取得）では当日が再取得対象に
+    # ならず、途中価格のまま永久に残ってしまう。そのため当日（JST基準）の行は常に除外し、
+    # 確定済みの前営業日以前のみ保存する（翌日以降の実行で自然に取得し直される）。
+    today_jst = datetime.now(JST).date()
+    closes = closes[closes.index.date < today_jst]
+
     return closes
 
 

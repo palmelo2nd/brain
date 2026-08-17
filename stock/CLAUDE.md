@@ -97,6 +97,11 @@ brainアプリと異なり、stockは銘柄数×期間で合計データ量が�
 - **Why（2026-08-17判断）:** yfinanceでの株価取得失敗だけを根拠に上場廃止と自動判定すると、一時的な取得エラーを誤って上場廃止と判定するリスクがある（旧`past/`実装で問題視されていた点）。この誤検知リスクを避けるため、自動判定は行わず、鮮度チェックの「更新最終日」で取得が止まっている銘柄をユーザー自身が確認し、`stock/delisted.csv`（`code, note, updated_at`）へ手動登録する方式にした。登録は「作り直せるデータ」ではなく「積み上げるデータ」なので、[データファイルの分離方針](#データファイルの分離方針作り直せるデータと積み上げるデータを混ぜない)に従い`master.csv`とは別ファイルにしている。
 - **How to apply:** `scripts/fetch_prices.py`（`--master`モード）・`scripts/check_freshness.py`はどちらも`--exclude-file`引数でこのファイルを受け取り、対象コードの絞り込み（`fetch_prices.py`）・スキャン対象ファイルの除外（`check_freshness.py`）に使う。ファイルが存在しない（1件も登録されていない）場合は空集合として扱い、エラーにはしない。ブラウザ側（`js/app.js`の`delisted-register-btn`）は`commitFile`で直接この一覧を書き換える（labels.csv等と異なり、仮登録の中間状態を持たない単純な追加・削除）。将来的に`master.csv`の再生成でコードが消えたことを根拠にした自動判定を追加する場合も、この手動登録と共存させる方針（[README.md 添付6](./README.md#添付6-保留事項今後の検討課題)参照）。
 
+### 株価取得は当日（JST）分を常に保存しない（取引時間中の途中価格を確定値として残さない）
+
+- **Why（2026-08-17判断）:** `fetch_prices.py`は取引時間中に実行されると、yfinanceから返る当日分の`Close`が「実行時点の途中価格」であるにもかかわらず、これをそのまま確定値として保存してしまっていた。`mode=update`は「既存CSVの最終日付の翌日〜今日」だけを取得する差分方式のため、一度当日分（途中価格）が保存されると最終日付が当日になり、以降の実行では当日が二度と再取得対象に含まれず、誤った値が残り続けるという不具合があった。
+- **How to apply:** `fetch_close_prices`内で、取得結果から当日（`datetime.now(JST).date()`基準）の行を常に除外してから返す。結果として保存されるのは常に前営業日以前の確定値のみで、当日分は翌日以降の実行で「最終日の翌日」として自然に再取得される（1日分の遅延と引き換えに、常に確定値のみを保存する）。修正前に保存されてしまった途中価格の行は自動では直らないため、`scripts/remove_price_dates.py`（`remove-price-dates.yml`、GitHub Actionsタブから手動実行）で該当日付の行を削除してから、翌日以降の`fetch_prices.py`実行で埋め直す。
+
 ### IRBANK企業ID取得（`notebooks/C01_IRBANK企業ID取得.ipynb`）はローカル（Jupyter）実行専用
 
 - **Why（2026-08-11判断）:** GitHub Actionsのランナーから`irbank.net`へアクセスすると、robots.txtで`Allow: /`とされている直URL（`https://irbank.net/{code}`）ですら一律403 Forbiddenが返ることを診断ログ付きで確認した（User-Agent変更では回避できず、同じページがローカルからの通常アクセスでは問題なく取得できたことから、IRBANK側がGitHub ActionsのデータセンターIPレンジをブロックしていると判断）。プロキシ・IP偽装等でこのブロックを回避する実装は行わない方針（サイト側のアクセス制御を尊重する）。当初は`scripts/fetch_irbank_ids.py`というCLIスクリプトとして実装したが、この機能はGitHub Actionsで動かせず`scripts/*.py`の役割（GitHub Actions上で実行するスクリプト）に合致しないため、[notebooks/*.ipynb](#notebooksipynbの規約)に一本化し、CLIスクリプトは削除した。

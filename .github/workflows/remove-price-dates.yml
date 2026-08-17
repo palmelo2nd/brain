@@ -1,0 +1,75 @@
+name: Remove Price Dates
+
+# 取引時間中の実行等で確定前の途中価格が保存されてしまった日付の行を、
+# stock/prices/配下のCSVから一括除去する修復用ワークフロー。
+# GitHubのActionsタブから手動実行する（アプリ側にはボタンを用意していない）。
+on:
+  workflow_dispatch:
+    inputs:
+      dates:
+        description: "除去する日付（カンマ区切り、YYYY-MM-DD形式。例: 2026-08-17,2026-08-16）"
+        required: true
+      codes:
+        description: "対象の証券コード（カンマ区切り。空欄なら全銘柄が対象）"
+        required: false
+        default: ""
+
+# stock/prices へ書き込む他のワークフローと同じグループ名にすることで、GitHub Actions自身に排他制御させる
+concurrency:
+  group: stock-prices-write
+  cancel-in-progress: false
+
+jobs:
+  remove-dates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: コードリポジトリをチェックアウト
+        uses: actions/checkout@v4
+        with:
+          path: code-repo
+
+      - name: データリポジトリをチェックアウト
+        uses: actions/checkout@v4
+        with:
+          repository: palmelo2nd/brain_data
+          token: ${{ secrets.DATA_REPO_TOKEN }}
+          path: data-repo
+
+      - name: Python セットアップ
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 依存パッケージをインストール
+        run: pip install -r code-repo/stock/scripts/requirements.txt
+
+      - name: 指定日付の行を除去
+        run: |
+          python code-repo/stock/scripts/remove_price_dates.py \
+            --dir "${{ github.workspace }}/data-repo/stock/prices" \
+            --dates "${{ inputs.dates }}" \
+            --codes "${{ inputs.codes }}"
+
+      - name: Git ユーザー設定
+        working-directory: data-repo
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: 変更をコミット・プッシュ
+        working-directory: data-repo
+        run: |
+          git add stock/prices
+          if git diff --cached --quiet; then
+            echo "変更なし。コミットをスキップします。"
+          else
+            git commit -m "chore: 指定日付の株価データを除去（${{ inputs.dates }}）"
+            for i in 1 2 3 4 5; do
+              if git push; then
+                break
+              fi
+              echo "pushに失敗しました。リモートの変更を取り込んで再試行します（${i}回目）"
+              git pull --rebase origin main
+            done
+          fi

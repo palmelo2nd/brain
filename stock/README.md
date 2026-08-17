@@ -144,6 +144,7 @@ modules配下の関数は4段落構成でexportする：(1) インポート → 
 - 進捗バー：20件処理するごとに自動コミットされる仕組みを利用し、直近のコミットメッセージから処理済み件数を読み取って表示する。
 - 前回実行がまだ進行中の場合は、同時実行によるデータリポジトリへのコミット競合の恐れがある旨を警告し、続行確認を挟む。
 - ブラウザを閉じてもワークフロー自体はGitHub側で継続する（再度開いて「チェック」を押せば結果を確認できる）。
+- **取引時間中に実行しても、当日分は保存しない**（2026-08-17判断）：`fetch_prices.py`はyfinanceから返る当日分の終値を「取引時間中の途中価格」とみなし、常に除外して保存する（前営業日以前の確定値のみ保存）。日中に何度実行しても当日は次回以降の実行で再取得対象になり続け、確定後の値で自然に埋まる。詳細は[CLAUDE.md](./CLAUDE.md)を参照。
 
 ### 4.3 詳細設定（株価取得）
 
@@ -238,6 +239,7 @@ IRBANK（irbank.net）から内国株式の企業ID（EID）・URL・社名を�
 | `check-price-freshness.yml` | `check_freshness.py --exclude-file`（`stock/delisted.csv`） | [4.1](#41-保存データの確認)の「チェック」 | 銘柄ごとの最終日付を集計し`stock/freshness_report.json`を出力（上場廃止登録銘柄は除外） |
 | `validate-stock-prices.yml` | `validate_prices.py` | [4.1](#41-保存データの確認)の「チェック」 | 欠損・重複・日付間隔異常等を検出し`stock/validation_report.json`を出力 |
 | `clean-missing-close.yml` | `clean_missing_close.py` | アプリ未接続（GitHub Actionsタブから手動実行） | 旧`fetch_prices.py`が保存した終値空行を一括除去する一回限りの修復用 |
+| `remove-price-dates.yml` | `remove_price_dates.py` | アプリ未接続（GitHub Actionsタブから手動実行） | 指定日付（複数可）の行をstock/prices配下の全CSV（または指定銘柄）から除去する修復用。取引時間中の実行で途中価格が保存されてしまった日を削除する用途 |
 
 その他のスクリプト：
 
