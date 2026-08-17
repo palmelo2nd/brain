@@ -1,14 +1,11 @@
 name: Validate Stock Prices
 
-# stock/prices/配下のCSVのデータ品質チェック（欠損・重複・古さ等）を行い、
+# stock/prices/配下のCSVのデータ品質チェック（欠損・重複・並び順）を行い、
 # 結果をJSONレポートとしてデータリポジトリにコミットする。
+# 欠損検出はN225（日経平均）の取引日カレンダーとの突き合わせで行うため、
+# ゴールデンウィーク等の正当な休場は異常として検出されない。
 on:
   workflow_dispatch:
-    inputs:
-      max_gap_days:
-        description: "これを超える日数の間隔を異常とみなす"
-        required: false
-        default: "10"
 
 jobs:
   validate:
@@ -45,7 +42,7 @@ jobs:
         run: |
           python code-repo/stock/scripts/validate_prices.py \
             --dir "${{ github.workspace }}/data-repo/stock/prices" \
-            --max-gap-days "${{ inputs.max_gap_days }}" \
+            --exclude-file "${{ github.workspace }}/data-repo/stock/delisted.csv" \
             --report "${{ github.workspace }}/data-repo/stock/validation_report.json" \
             || echo "問題が見つかりましたが、レポートのコミットは継続します"
 
