@@ -594,7 +594,7 @@ async function loadFreshnessStatus() {
                     refetchBtn.type = 'button';
                     refetchBtn.className = 'run-btn run-btn--secondary status-inline-btn';
                     refetchBtn.textContent = '再取得';
-                    refetchBtn.addEventListener('click', () => refetchCodesGroup(date, codes, refetchBtn));
+                    refetchBtn.addEventListener('click', () => refetchCodesGroup(`${date}で止まっている銘柄`, codes, refetchBtn));
                 }
                 list.appendChild(buildExpandableListItem(`${date}: ${count}銘柄`, codes, refetchBtn));
             });
@@ -626,7 +626,7 @@ async function loadFreshnessStatus() {
                     alert('対象銘柄が0件です（最新日付のグループしか無く、それを含めない設定になっています）。');
                     return;
                 }
-                refetchCodesGroup('今日以前の分をまとめて', codes, bulkBtn);
+                refetchCodesGroup('今日以前の分をまとめた銘柄', codes, bulkBtn);
             });
 
             bulkFixWrap.append(includeLabel, bulkBtn);
@@ -729,13 +729,19 @@ function buildExpandableListItem(summaryText, codes, trailingButton) {
     return li;
 }
 
-// 指定した銘柄コード群（1つの日付グループ、または複数日付グループをまとめたもの）だけを差分取得し直す。
-// データ品質の不整合修繕（mode=full・全期間取り直し）とは異なり、単なる取得漏れの解消が目的なので
-// mode=update（最終日の翌日〜今日のみ）で十分かつ軽い。完了後はチェック全体を再実行して結果を反映する。
-async function refetchCodesGroup(label, codes, buttonEl) {
+// 指定した銘柄コード群だけを取得し直す。共通関数で2通りの用途に使う：
+//   mode='update'（既定）: 更新最終日側の日付グループ再取得。単なる取得漏れの解消が目的なので、
+//                          最終日の翌日〜今日だけの差分取得で十分かつ軽い。
+//   mode='full'          : データ品質側の問題（欠損・重複等）修繕用。行の途中に問題があるケースを
+//                          直すには、差分取得では直せないため2013年以降の全期間を取得し直す。
+// 完了後はチェック全体（runFullCheck）を再実行して結果を反映する。
+async function refetchCodesGroup(description, codes, buttonEl, mode = 'update') {
     if (codes.length === 0) return;
 
-    const ok = confirm(`${label}で止まっている${codes.length}件を、最新まで差分取得します。よろしいですか？`);
+    const actionText = mode === 'full'
+        ? '2013年以降の全期間を取得し直します（銘柄数によっては時間がかかります）'
+        : '最新まで差分取得します';
+    const ok = confirm(`${description}（${codes.length}件）を、${actionText}。よろしいですか？`);
     if (!ok) return;
 
     const token = getTokenValue();
@@ -750,7 +756,7 @@ async function refetchCodesGroup(label, codes, buttonEl) {
 
         await dispatchWorkflow(token, OWNER, CODE_REPO, PRICE_ISSUES_WORKFLOW_FILE, CODE_REPO_BRANCH, {
             codes: codes.join(','),
-            mode: 'update'
+            mode
         });
 
         buttonEl.textContent = `再取得の完了を待っています...（${codes.length}件・数分かかります）`;
@@ -993,7 +999,15 @@ function renderValidationIssues(container, validation) {
     const list = document.createElement('ul');
     list.className = 'status-distribution';
     sortedGroups.forEach(group => {
-        list.appendChild(buildExpandableListItem(`${group.count}件：${group.detail}`, group.codes));
+        // 差分取得（mode=update）では直せない（問題が既存データの途中にあるため）ので、mode=fullで
+        // 2013年以降の全期間を取得し直す。銘柄ごとに問題の期間・内容が異なりうるが、このグループの
+        // 該当銘柄をまとめて全期間取り直せば、どのケースでも一律に直せる
+        const refetchBtn = document.createElement('button');
+        refetchBtn.type = 'button';
+        refetchBtn.className = 'run-btn run-btn--secondary status-inline-btn';
+        refetchBtn.textContent = '再取得';
+        refetchBtn.addEventListener('click', () => refetchCodesGroup(`「${group.detail}」に該当する銘柄`, group.codes, refetchBtn, 'full'));
+        list.appendChild(buildExpandableListItem(`${group.count}件：${group.detail}`, group.codes, refetchBtn));
     });
     container.appendChild(list);
 }
