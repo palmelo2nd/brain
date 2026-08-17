@@ -1363,6 +1363,30 @@ details[open] > .expander-title::after { transform: rotate(90deg); }
     box-shadow: inset 0 0 0 3px #000;
 }
 
+/* 優先度ドット（高=赤／中=黄／低=緑）。バッジの背景色（ステータス）とは別チャンネルとして、
+   白リング＋濃い縁取りで「塗り」ではなく「印」に見せることで、背景色との混同を避ける */
+.calendar-priority-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-right: 5px;
+    vertical-align: middle;
+    flex: 0 0 auto;
+    border: 1.5px solid #fff;
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45);
+}
+.calendar-priority-dot--high { background: #dc3545; }
+.calendar-priority-dot--mid  { background: #ffc107; }
+.calendar-priority-dot--low  { background: #28a745; }
+/* 習慣（月表示）の小型チップではドットも一回り小さくする */
+.calendar-unscheduled-chip--mini .calendar-priority-dot {
+    width: 6px;
+    height: 6px;
+    margin-right: 3px;
+    border-width: 1px;
+}
+
 .calendar-unscheduled-chip-add {
     border: 1px solid transparent;
     border-radius: 0 14px 14px 0;
@@ -1423,6 +1447,16 @@ details[open] > .expander-title::after { transform: rotate(90deg); }
 .calendar-timeline-gridline--half    { border-top-width: 1px; border-top-color: rgba(110, 119, 129, 0.38); }
 .calendar-timeline-gridline--quarter { border-top-width: 1px; border-top-color: rgba(110, 119, 129, 0.2); }
 
+/* 1日タイムラインの縦軸グリッド（固定4列の区切りを点線で明示する） */
+.calendar-timeline-column-divider {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 0;
+    border-left: 1px dashed rgba(110, 119, 129, 0.45);
+    pointer-events: none;
+}
+
 .calendar-time-block {
     position: absolute;
     color: #fff;
@@ -1434,6 +1468,7 @@ details[open] > .expander-title::after { transform: rotate(90deg); }
     cursor: grab;
     touch-action: none;
     box-shadow: 0 1px 3px rgba(0,0,0,.2);
+    border: 1px solid #000; /* 隣接するブロック同士の境界を常に見やすくする細い黒枠 */
 }
 
 .calendar-time-block:active { cursor: grabbing; }
@@ -1472,12 +1507,7 @@ details[open] > .expander-title::after { transform: rotate(90deg); }
 .calendar-time-block--dayplan { background: #c9a227; cursor: default; }
 
 .calendar-time-block--selected {
-    outline: 2px solid #fd7e14;
-}
-
-/* ドラッグ中に他ブロックと重なっている間だけ、掴んでいるブロック自身に付く（他ブロックは動かさず視覚的に知らせる） */
-.calendar-time-block--overlapping {
-    outline: 2px solid #dc3545;
+    border-width: 3px; /* 選択中は既定の細い黒枠を太くして強調する */
     z-index: 10;
 }
 

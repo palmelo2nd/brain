@@ -84,36 +84,27 @@ export function getDayPlanTask(mainData, dateJP) {
 }
 
 /**
- * 1日タスクの内容欄を「HH:MM-HH:MM [#ID] [ラベル]」形式の行としてパースする。
- * @returns {Array<{startMin:number, endMin:number, refId:?string, label:string}>}
+ * 1日タスクの内容欄を「[列番号] HH:MM-HH:MM [#ID] [ラベル]」形式の行としてパースする。
+ * 先頭の「[列番号] 」は任意（無ければ column は null＝列未指定として、表示側で自動配置にフォールバックする）。
+ * @returns {Array<{startMin:number, endMin:number, refId:?string, label:string, column:?number}>}
  */
 export function parseDayPlanContent(content) {
     if (!content) return [];
-    const lineRe = /^(\d{1,2}):(\d{2})-(\d{1,2}):(\d{2})\s*(?:#(\S+))?\s*(.*)$/;
+    const lineRe = /^(?:\[(\d+)\]\s*)?(\d{1,2}):(\d{2})-(\d{1,2}):(\d{2})\s*(?:#(\S+))?\s*(.*)$/;
     return content.split('\n').map(line => line.trim()).filter(Boolean).map(line => {
         const m = line.match(lineRe);
         if (!m) return null;
-        const startMin = Number(m[1]) * 60 + Number(m[2]);
-        let endMin = Number(m[3]) * 60 + Number(m[4]);
+        const startMin = Number(m[2]) * 60 + Number(m[3]);
+        let endMin = Number(m[4]) * 60 + Number(m[5]);
         if (endMin <= startMin) endMin = startMin + 15;
         return {
             startMin: Math.max(0, Math.min(1439, startMin)),
             endMin:   Math.max(startMin + 15, Math.min(1440, endMin)),
-            refId:    m[5] || null,
-            label:    (m[6] || '').trim()
+            refId:    m[6] || null,
+            label:    (m[7] || '').trim(),
+            column:   m[1] ? Number(m[1]) : null
         };
     }).filter(Boolean);
-}
-
-/**
- * 1日タスクの内容テキストのうち、blockIndex番目のブロック（parseDayPlanContent順）の時刻だけを書き換えて返す。
- * タイムラインのドラッグ操作（移動・リサイズ）で使用する。blockIndexが存在しない場合は元のテキストをそのまま返す。
- */
-export function updateDayPlanBlockTime(content, blockIndex, newStartMin, newEndMin) {
-    const blocks = parseDayPlanContent(content);
-    if (!blocks[blockIndex]) return content;
-    blocks[blockIndex] = { ...blocks[blockIndex], startMin: newStartMin, endMin: newEndMin };
-    return stringifyDayPlanBlocks(blocks);
 }
 
 /** 1日タスクのブロック配列を、開始時刻昇順→終了時刻昇順→（#ID参照があれば）ID昇順で並べ替える。 */
@@ -130,15 +121,85 @@ export function sortDayPlanBlocks(blocks) {
     });
 }
 
-/** parseDayPlanContent の結果（ブロック配列）を、元の「HH:MM-HH:MM #ID ラベル」形式のテキストに戻す。 */
+/** parseDayPlanContent の結果（ブロック配列）を、元の「[列番号] HH:MM-HH:MM #ID ラベル」形式のテキストに戻す。 */
 export function stringifyDayPlanBlocks(blocks) {
     const fmt = m => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
     return blocks.map(b => {
+        const colPart   = b.column ? `[${b.column}] ` : '';
         const timePart  = `${fmt(b.startMin)}-${fmt(b.endMin)}`;
         const idPart    = b.refId ? ` #${b.refId}` : '';
         const labelPart = b.label ? ` ${b.label}` : '';
-        return `${timePart}${idPart}${labelPart}`;
+        return `${colPart}${timePart}${idPart}${labelPart}`;
     }).join('\n');
+}
+
+const DAYPLAN_COLLISION_MANAGED_COLUMNS = [2, 3, 4]; // 列1（決まっている予定）は重なり解消の対象外。ユーザーが手動で管理する
+
+/**
+ * 列内で、移動／リサイズ／新規追加後のブロック（moving）を、既存ブロック（others）と時間が重ならないよう
+ * 時系列順に押し出して解決する。moving自身は衝突した既存ブロックの直後まで動き、その結果さらに後続の
+ * 既存ブロックと重なればそれも後ろへ押し出す…という形で連鎖的に処理する。
+ * どれかのブロックの終了時刻が24:00（1440分）を超える場合は overflow:true を返す（呼び出し側は何も書き換えずキャンセルする）。
+ * @param {Array<{id:*, startMin:number, endMin:number}>} others - movingを除く、その列の既存ブロック
+ * @param {{startMin:number, endMin:number}} moving - 配置したい位置（長さ＝endMin-startMinは維持される）
+ * @returns {{ overflow:boolean, moving:?{startMin:number,endMin:number}, pushed:Array<{id:*,startMin:number,endMin:number}> }}
+ */
+function resolveDayPlanColumnCollision(others, moving) {
+    const items = [
+        ...others.map(b => ({ ...b, isMoving: false })),
+        { startMin: moving.startMin, endMin: moving.endMin, isMoving: true }
+    ].sort((a, b) => a.startMin - b.startMin || (a.isMoving ? 1 : -1)); // 同時刻なら既存ブロックを優先し、movingを後ろに回す
+
+    let cursor = 0;
+    let resolvedMoving = null;
+    let overflow = false;
+    const pushed = [];
+
+    items.forEach(item => {
+        const duration = item.endMin - item.startMin;
+        const start = Math.max(item.startMin, cursor);
+        const end   = start + duration;
+        if (end > 1440) overflow = true;
+        cursor = end;
+        if (item.isMoving) {
+            resolvedMoving = { startMin: start, endMin: end };
+        } else if (start !== item.startMin) {
+            pushed.push({ id: item.id, startMin: start, endMin: end });
+        }
+    });
+
+    return { overflow, moving: resolvedMoving, pushed };
+}
+
+/**
+ * 1日タスクの内容テキストに、1件分のブロック配置（既存ブロックの移動・リサイズ、または新規追加）を反映して返す。
+ * blockIndexがnull/undefinedなら、newBlockTemplateを土台に新しいブロックを追加してから配置する（＋ドラッグでの
+ * 未追加タスクの昇格に使う）。targetColumnが列2〜4（重なり解消の対象）の場合、同じ列内の他ブロックとの重なりを
+ * resolveDayPlanColumnCollisionで自動的に解消する。列1（決まっている予定）は重なりを気にせずそのまま配置する。
+ * 解消の結果どれかが24:00を超える場合は、テキストを一切変更せず {ok:false} を返す（呼び出し側はキャンセル扱いにする）。
+ * @returns {{ ok:boolean, content?:string }}
+ */
+export function placeDayPlanBlock(content, blockIndex, newStartMin, newEndMin, targetColumn, newBlockTemplate) {
+    const blocks = parseDayPlanContent(content);
+    let index = blockIndex;
+    if (index == null) {
+        index = blocks.length;
+        blocks.push({ refId: null, label: '', ...newBlockTemplate, startMin: newStartMin, endMin: newEndMin, column: targetColumn });
+    }
+
+    if (DAYPLAN_COLLISION_MANAGED_COLUMNS.includes(targetColumn)) {
+        const others = blocks
+            .map((b, i) => ({ id: i, startMin: b.startMin, endMin: b.endMin }))
+            .filter((o, i) => i !== index && blocks[i].column === targetColumn);
+        const result = resolveDayPlanColumnCollision(others, { startMin: newStartMin, endMin: newEndMin });
+        if (result.overflow) return { ok: false };
+        blocks[index] = { ...blocks[index], startMin: result.moving.startMin, endMin: result.moving.endMin, column: targetColumn };
+        result.pushed.forEach(p => { blocks[p.id] = { ...blocks[p.id], startMin: p.startMin, endMin: p.endMin }; });
+    } else {
+        blocks[index] = { ...blocks[index], startMin: newStartMin, endMin: newEndMin, column: targetColumn };
+    }
+
+    return { ok: true, content: stringifyDayPlanBlocks(blocks) };
 }
 
 /** データ区分がタスクで、指定フィールドが value と一致し、ステータスが完了・中断以外の件数を、カテゴリで絞り込んで返す。 */
@@ -189,16 +250,35 @@ export function extractTimeOnDate(value, dateJP) {
     return { hasTime: true, minutes: h * 60 + m };
 }
 
-/** 時間帯が重なるタスクを横に並べるためのレーン番号を割り振る（timed配列に lane / laneCount を直接付与する）。 */
-export function assignCalendarLanes(timed) {
-    const laneEnds = [];
-    timed.forEach(seg => {
+export const DAYPLAN_COLUMN_COUNT = 4; // 列1=決まっている予定の定位置、列2〜4=空き時間消化の作業枠
+
+/**
+ * タイムラインの列（レーン）番号を割り振る（timed配列に lane / laneCount を直接付与する）。
+ * 常に最低4列のグリッドとして扱う（1件しかない日でも1/4幅の列1に収める)。
+ * seg.column（1日タスクの `[N]` で明示された列、1〜4）があるブロックは、他と時間が重なっていても
+ * 常にその列へそのまま配置する（表示列とデータの`[N]`が食い違わないようにするため、衝突による自動移動はしない）。
+ * column未指定のブロック（`[N]`の無い旧データ・1日タスクに未追加のタスク）だけ、最初に空いた列へ詰める
+ * 従来通りのグリーディ法でフォールバック配置する。4列に収まらないほど重なる場合は、データを隠さないよう列を追加して溢れさせる。
+ */
+export function assignCalendarColumns(timed) {
+    const laneEnds = new Array(DAYPLAN_COLUMN_COUNT).fill(0);
+
+    // 1. 列が明示されているブロックは、重なりを一切気にせずそのまま該当列に配置する
+    timed.filter(seg => seg.column).forEach(seg => {
+        const lane = seg.column - 1;
+        seg.lane = lane;
+        laneEnds[lane] = Math.max(laneEnds[lane], seg.endMin); // 未指定ブロックの空き列探索用に、埋まっている目安として記録
+    });
+
+    // 2. 列未指定のブロックだけ、空いている列へ古い開始時刻順に詰めていく
+    timed.filter(seg => !seg.column).sort((a, b) => a.startMin - b.startMin).forEach(seg => {
         let lane = laneEnds.findIndex(endMin => endMin <= seg.startMin);
         if (lane === -1) { lane = laneEnds.length; laneEnds.push(0); }
         laneEnds[lane] = seg.endMin;
         seg.lane = lane;
     });
-    const laneCount = laneEnds.length || 1;
+
+    const laneCount = Math.max(DAYPLAN_COLUMN_COUNT, laneEnds.length);
     timed.forEach(seg => { seg.laneCount = laneCount; });
 }
 
@@ -210,17 +290,28 @@ export function getCalendarStatusClass(status) {
     return 'calendar-time-block--todo'; // 未着手・未選択（空欄）はいずれも灰色
 }
 
-/** 現在時刻を30分刻みで切り上げた開始時刻と、その1時間後の終了時刻を "HH:MM" 形式で返す。 */
-/**
- * 現在時刻以降で30分刻みに丸めた時刻から、既存の1日タスクブロック（busyBlocks、{startMin,endMin}の配列）と
- * 重ならない1時間の空き枠を探して返す（startStr/endStrは"HH:MM"）。busyBlocksは未指定なら空き枠なしとして扱う。
- */
-export function computeDayPlanTimeSlot(busyBlocks = [], now = new Date()) {
-    const DURATION = 60;
-    const minutesNow = now.getHours() * 60 + now.getMinutes();
-    let startMin = Math.ceil(minutesNow / 30) * 30;
+/** タスクの優先度に応じたバッジ用ドットの配色クラスを返す（高=赤／中=黄／低=緑）。想定外の値・未設定はドット非表示。 */
+export function getPriorityDotClass(priority) {
+    if (priority === '高') return 'calendar-priority-dot--high';
+    if (priority === '中') return 'calendar-priority-dot--mid';
+    if (priority === '低') return 'calendar-priority-dot--low';
+    return '';
+}
 
-    const busy = [...busyBlocks].sort((a, b) => a.startMin - b.startMin);
+const DAYPLAN_WORK_START_MIN = 9 * 60; // 時間未定タスクの自動追加の起点＝9:00
+const DAYPLAN_WORK_COLUMN    = 4;      // ＋ボタンで時間未定タスクを自動追加する定位置（列2・3はドラッグでの手動配置用に空けておく）
+
+/**
+ * 時間未指定タスクを1日タスクに追加する際の「次に空いている枠」を、9:00起点・30分刻みで列4から探して返す。
+ * existingBlocksのうち列4のブロックとだけ重ならない60分の枠を、9:00から30分刻みで前進させながら探す
+ * （見つかった枠は、ドラッグ時のような重なり解消の押し出しは行わず、そのまま空いている場所に置くだけ）。
+ * @returns {{startStr:string, endStr:string, column:number}}
+ */
+export function computeDayPlanTimeSlot(existingBlocks = []) {
+    const DURATION = 60;
+    const busy = existingBlocks.filter(b => b.column === DAYPLAN_WORK_COLUMN).sort((a, b) => a.startMin - b.startMin);
+
+    let startMin = DAYPLAN_WORK_START_MIN;
     while (startMin + DURATION <= 1440) {
         const endMin = startMin + DURATION;
         const blocking = busy.find(b => startMin < b.endMin && endMin > b.startMin);
@@ -230,7 +321,7 @@ export function computeDayPlanTimeSlot(busyBlocks = [], now = new Date()) {
     const endMin = Math.min(startMin + DURATION, 1440);
 
     const fmt = m => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
-    return { startStr: fmt(startMin), endStr: fmt(endMin) };
+    return { startStr: fmt(startMin), endStr: fmt(endMin), column: DAYPLAN_WORK_COLUMN };
 }
 
 /**

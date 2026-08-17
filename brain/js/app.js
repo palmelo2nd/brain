@@ -23,11 +23,11 @@ import {
     getTasksForDate as getTasksForDateM, getDayPlanTask as getDayPlanTaskM, parseDayPlanContent,
     countActiveTasksByField as countActiveTasksByFieldM, countTasksByField as countTasksByFieldM,
     sortByTotalCountDesc as sortByTotalCountDescM, calendarTaskListStatusRank, compareDateAscEmptyLast,
-    extractTimeOnDate, assignCalendarLanes, getCalendarStatusClass,
+    extractTimeOnDate, assignCalendarColumns, DAYPLAN_COLUMN_COUNT, getCalendarStatusClass, getPriorityDotClass,
     computeDayPlanTimeSlot, getTaskScheduledTimeOnDate,
     getUnsetAttributeGroups as getUnsetAttributeGroupsM,
     getSuspendedTasks as getSuspendedTasksM, getTasksByStatus as getTasksByStatusM, taskOrganizeStatusRank,
-    sortDayPlanBlocks, stringifyDayPlanBlocks, updateDayPlanBlockTime
+    sortDayPlanBlocks, stringifyDayPlanBlocks, placeDayPlanBlock
 } from './modules/calendar.js';
 import {
     getAllKnownColumns as getAllKnownColumnsM, computeMasterWarnings as computeMasterWarningsM,
@@ -127,6 +127,12 @@ function setTokenInputs(value) {
 /** いずれかのトークン入力欄から値を取得する（全欄が同期されているため先頭の値を使う） */
 function getTokenValue() {
     return document.querySelector('.js-token-input')?.value.trim() || '';
+}
+
+/** 現在入力中のトークンをlocalStorageに保存する（空欄時は何もしない＝誤って既存の保存値を消さない）。 */
+function persistCurrentToken() {
+    const token = getTokenValue();
+    if (token) saveToken(token);
 }
 
 /** すべてのトークン入力欄を相互に同期する */
@@ -623,6 +629,7 @@ document.querySelectorAll('.js-save-btn').forEach(btn => {
         const token = getTokenValue();
         if (!token)      return alert('トークンを入力してください');
         if (!currentSha) return alert('先にデータを読み込んでください（またはオフラインキャッシュを読み込んでください）');
+        persistCurrentToken();
         saveToGithub(token);
     });
 });
@@ -638,6 +645,7 @@ setInterval(() => {
 // ===== Excelエクスポート =====
 document.querySelectorAll('.js-excel-export-btn').forEach(btn => {
     btn.addEventListener('click', () => {
+        persistCurrentToken();
         if (currentMainData.length === 0 && currentMasterData.length === 0) {
             return alert('エクスポートするデータがありません。先にGitHubからデータを読み込んでください。');
         }
@@ -652,6 +660,7 @@ document.querySelectorAll('.js-excel-import').forEach(input => {
         if (!file) return;
 
         const token      = getTokenValue();
+        persistCurrentToken();
         const contentBox = document.getElementById('content-box');
 
         const { mainData, masterData } = await importFromExcel(file);
@@ -3948,7 +3957,7 @@ function renderTaskorg2ProjectTree() {
         const descendantCount = countDescendants(id); // 直属の子だけでなく孫以降も含めた総数（メモ化済み）
         const label = document.createElement('span');
         label.className = `project-tree-label ${getCalendarStatusClass(row['ステータス'])}`;
-        label.textContent = (row['タイトル'] || '（無題）') + (descendantCount > 0 ? ` (${descendantCount})` : '');
+        appendChipLabel(label, row, (row['タイトル'] || '（無題）') + (descendantCount > 0 ? ` (${descendantCount})` : ''));
         line.appendChild(label);
 
         line.addEventListener('click', () => {
@@ -4099,6 +4108,23 @@ function isTaskorg2HabitDaily(row) {
         || isTaskorg2HabitFieldFullySelected(row, '繰返し頻度_日', '(M)繰返し頻度_日');
 }
 
+/** バッジ（チップ）の左端に付ける優先度ドット（高=赤／中=黄／低=緑）を1件分組み立てる。想定外の値・未設定ならnull。 */
+function createPriorityDot(row) {
+    const cls = getPriorityDotClass(row['優先度']);
+    if (!cls) return null;
+    const dot = document.createElement('span');
+    dot.className = `calendar-priority-dot ${cls}`;
+    dot.setAttribute('aria-hidden', 'true');
+    return dot;
+}
+
+/** チップのバッジ本体に、優先度ドット（あれば）＋タイトルのテキストノードを組み立てて追加する。 */
+function appendChipLabel(chip, row, text) {
+    const dot = createPriorityDot(row);
+    if (dot) chip.appendChild(dot);
+    chip.appendChild(document.createTextNode(text));
+}
+
 /** 「習慣」月表示の日付ボタン（小型チップ）を1件分組み立てる。クリックで右の編集エリアと連動する。 */
 function buildTaskorg2HabitChip(item) {
     const id = String(item['ID']);
@@ -4107,7 +4133,7 @@ function buildTaskorg2HabitChip(item) {
     chip.className = `calendar-unscheduled-chip calendar-unscheduled-chip--solo calendar-unscheduled-chip--mini ${getCalendarStatusClass(item['ステータス'])}`;
     if (id === selectedTaskorg2Id) chip.classList.add('calendar-unscheduled-chip--active-outline');
     chip.title = item['タイトル'] || '（無題）';
-    chip.textContent = item['タイトル'] || '（無題）';
+    appendChipLabel(chip, item, item['タイトル'] || '（無題）');
     chip.addEventListener('click', () => {
         selectedTaskorg2RecurringParentId = id;
         selectedTaskorg2Id = id;
@@ -4317,7 +4343,8 @@ function getTaskorg2SegmentsForDate(dateJP) {
             startMin: b.startMin,
             endMin: b.endMin,
             isDayPlanBlock: true,
-            dayPlanBlockIndex
+            dayPlanBlockIndex,
+            column: b.column
         });
     });
 
@@ -4352,10 +4379,9 @@ function renderTaskorg2Timeline() {
     lanesEl.innerHTML = '';
     const dateJP = selectedTaskorg2Date;
     const { timed } = getTaskorg2SegmentsForDate(dateJP);
-    assignCalendarLanes(timed);
+    assignCalendarColumns(timed);
 
     const pxPerMin = CALENDAR_HOUR_HEIGHT / 60;
-    const fmt = m => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
 
     for (let m = 0; m < 1440; m += 15) {
         const minuteOfHour = m % 60;
@@ -4364,6 +4390,14 @@ function renderTaskorg2Timeline() {
         line.className = `calendar-timeline-gridline calendar-timeline-gridline--${variant}`;
         line.style.top = `${m * pxPerMin}px`;
         lanesEl.appendChild(line);
+    }
+
+    // 固定4列（列1=決まっている予定／列2〜4=空き時間消化）の区切りを縦の点線で明示する
+    for (let i = 1; i < DAYPLAN_COLUMN_COUNT; i++) {
+        const divider = document.createElement('div');
+        divider.className = 'calendar-timeline-column-divider';
+        divider.style.left = `${(100 / DAYPLAN_COLUMN_COUNT) * i}%`;
+        lanesEl.appendChild(divider);
     }
 
     const blockBySeg = new Map();
@@ -4380,7 +4414,7 @@ function renderTaskorg2Timeline() {
         block.style.width  = `calc(${laneWidthPct}% - 4px)`;
 
         const labelSpan = document.createElement('span');
-        labelSpan.textContent = `${fmt(seg.startMin)}–${fmt(seg.endMin)} ${seg.row['タイトル'] || '（無題）'}`;
+        labelSpan.textContent = seg.row['タイトル'] || '（無題）';
         block.appendChild(labelSpan);
 
         const handle = document.createElement('div');
@@ -4388,7 +4422,7 @@ function renderTaskorg2Timeline() {
         block.appendChild(handle);
 
         blockBySeg.set(seg, block);
-        attachTaskorg2TimelineDragHandlers(block, handle, labelSpan, seg, dateJP, pxPerMin, hasLinkedTask, timed);
+        attachTaskorg2TimelineDragHandlers(block, handle, labelSpan, seg, dateJP, pxPerMin, hasLinkedTask);
         lanesEl.appendChild(block);
     });
 
@@ -4407,33 +4441,47 @@ function snapTimelineMinutes(min) {
 }
 
 /**
- * タイムラインのブロックへ「移動」「リサイズ」操作を付与する（旧タスク整理と同じドラッグ挙動）。
- * ドラッグ中は自分自身の位置・高さのみを更新し、他ブロックのレーン再配置は行わない
+ * タイムラインのブロックへ「移動（時刻＋列）」「リサイズ（時刻のみ）」操作を付与する。
+ * ドラッグ中は自分自身の位置・高さ・列のみを更新し、他ブロックのレーン再配置は行わない
  * （ドラッグ中に他ブロックまで位置が飛んで見づらくなるのを防ぐため）。レーンの再計算は
- * ドラッグ確定後の再描画時にまとめて行われる。他ブロックと重なっている間は、掴んでいる
- * ブロック自身に重なり中クラス（calendar-time-block--overlapping）を付けて視覚的に知らせる。
+ * ドラッグ確定後の再描画時にまとめて行われる。「移動」は縦方向で時刻、横方向で列（1〜4）を変更できる。
+ * 「リサイズ」（下端ハンドル）は時刻（終了予定）のみで列は変わらない。
  */
-function attachTaskorg2TimelineDragHandlers(block, handle, labelSpan, seg, dateJP, pxPerMin, hasLinkedTask, siblingSegs) {
-    const fmt = m => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+function attachTaskorg2TimelineDragHandlers(block, handle, labelSpan, seg, dateJP, pxPerMin, hasLinkedTask) {
     let dragMode  = null; // 'move' | 'resize'
     let pointerId = null;
     let startClientY = 0;
-    let origStart = seg.startMin;
-    let origEnd   = seg.endMin;
-    let pendingStart = seg.startMin;
-    let pendingEnd   = seg.endMin;
+    let origStart  = seg.startMin;
+    let origEnd    = seg.endMin;
+    let origColumn = seg.lane + 1;
+    let pendingStart  = seg.startMin;
+    let pendingEnd    = seg.endMin;
+    let pendingColumn = origColumn;
 
-    function updatePreview(newStart, newEnd) {
-        pendingStart = newStart;
-        pendingEnd   = newEnd;
+    function applyColumnStyle(column) {
+        const laneWidthPct = 100 / DAYPLAN_COLUMN_COUNT;
+        block.style.left  = `${(column - 1) * laneWidthPct}%`;
+        block.style.width = `calc(${laneWidthPct}% - 4px)`;
+    }
+
+    function updatePreview(newStart, newEnd, newColumn) {
+        pendingStart  = newStart;
+        pendingEnd    = newEnd;
+        pendingColumn = newColumn;
         block.style.top    = `${newStart * pxPerMin}px`;
         block.style.height = `${(newEnd - newStart) * pxPerMin}px`;
-        labelSpan.textContent = `${fmt(newStart)}–${fmt(newEnd)} ${seg.row['タイトル'] || '（無題）'}`;
-        // ドラッグ中は他ブロックのレーン再配置をしない（他ブロックがコロコロ動いて見づらくなるため）。
-        // レーンの再計算は commitTaskorg2TimelineDrag 後の再描画時にまとめて行う。代わりに、
-        // 重なっている間は掴んでいるブロック自身の枠色だけを変えて重なりを知らせる。
-        const overlapping = (siblingSegs || []).some(other => other !== seg && newStart < other.endMin && newEnd > other.startMin);
-        block.classList.toggle('calendar-time-block--overlapping', overlapping);
+        applyColumnStyle(newColumn);
+        labelSpan.textContent = seg.row['タイトル'] || '（無題）';
+    }
+
+    /** clientXが乗っている列（1〜4、コンテナ幅を4等分）を返す。block.parentElement（lanesEl）は、この関数が
+     * 呼ばれる時点（ドラッグ操作時）では必ずDOMに接続済みだが、attachTaskorg2TimelineDragHandlers呼び出し時点
+     * （まだlanesElへappendChildする前）ではnullのため、ここで都度取得する。 */
+    function columnFromClientX(clientX) {
+        const rect = block.parentElement.getBoundingClientRect();
+        const laneWidthPx = rect.width / DAYPLAN_COLUMN_COUNT;
+        const col = Math.floor((clientX - rect.left) / laneWidthPx) + 1;
+        return Math.max(1, Math.min(DAYPLAN_COLUMN_COUNT, col));
     }
 
     function onPointerMove(e) {
@@ -4443,10 +4491,10 @@ function attachTaskorg2TimelineDragHandlers(block, handle, labelSpan, seg, dateJ
         if (dragMode === 'move') {
             const duration = origEnd - origStart;
             const newStart = Math.max(0, Math.min(1440 - duration, origStart + deltaMin));
-            updatePreview(newStart, newStart + duration);
+            updatePreview(newStart, newStart + duration, columnFromClientX(e.clientX));
         } else {
             const newEnd = Math.max(origStart + TIMELINE_SNAP_MIN, Math.min(1440, origEnd + deltaMin));
-            updatePreview(origStart, newEnd);
+            updatePreview(origStart, newEnd, origColumn); // リサイズは列を変えない
         }
     }
 
@@ -4457,12 +4505,13 @@ function attachTaskorg2TimelineDragHandlers(block, handle, labelSpan, seg, dateJ
         block.removeEventListener('pointerup', onPointerUp);
         block.removeEventListener('pointercancel', onPointerUp);
 
-        const movedMin = Math.abs(pendingStart - origStart) + Math.abs(pendingEnd - origEnd);
-        if (movedMin < TIMELINE_DRAG_THRESHOLD_MIN) {
-            updatePreview(origStart, origEnd); // 微小な移動は元に戻す
+        const movedMin      = Math.abs(pendingStart - origStart) + Math.abs(pendingEnd - origEnd);
+        const columnChanged = dragMode === 'move' && pendingColumn !== origColumn;
+        if (movedMin < TIMELINE_DRAG_THRESHOLD_MIN && !columnChanged) {
+            updatePreview(origStart, origEnd, origColumn); // 微小な移動は元に戻す
             if (dragMode === 'move' && hasLinkedTask) { selectedTaskorg2Id = String(seg.row['ID']); taskorg2QuickNewMode = false; renderTaskorg2TaskChange(); }
         } else {
-            commitTaskorg2TimelineDrag(seg, dateJP, pendingStart, pendingEnd);
+            commitTaskorg2TimelineDrag(seg, dateJP, pendingStart, pendingEnd, pendingColumn, columnChanged);
         }
         dragMode = null;
     }
@@ -4474,8 +4523,10 @@ function attachTaskorg2TimelineDragHandlers(block, handle, labelSpan, seg, dateJ
         startClientY  = e.clientY;
         origStart     = seg.startMin;
         origEnd       = seg.endMin;
+        origColumn    = seg.lane + 1;
         pendingStart  = origStart;
         pendingEnd    = origEnd;
+        pendingColumn = origColumn;
         block.setPointerCapture(pointerId);
         block.addEventListener('pointermove', onPointerMove);
         block.addEventListener('pointerup', onPointerUp);
@@ -4489,28 +4540,61 @@ function attachTaskorg2TimelineDragHandlers(block, handle, labelSpan, seg, dateJ
 }
 
 /**
- * タイムラインのドラッグ操作結果を確定保存する（旧タスク整理と同一仕様）。
- * 1日タスクのスケジュール行（isDayPlanBlock）はその行の時刻を、通常のタスクは開始予定・終了予定（dateJP当日分）を書き換える。
+ * タイムラインのドラッグ操作結果を確定保存する。ケースによって実際に変更されるデータが異なるため、
+ * 再描画範囲もそれに合わせて最小限に絞る（無関係なビューまで再計算する重い処理を避けるため）。
+ * targetColumnはドラッグ／リサイズ後にブロックが位置する列（1〜4）を常に渡す（列を変えていなくても渡す。
+ * リサイズは常に元の列のまま）。列2〜4は placeDayPlanBlock 側で重なりを自動的に押し出して解消し、
+ * 24:00を超えるようならキャンセル（何も書き換えずタイムラインだけ再描画して元の位置に戻す）。列1は重なりを気にせず
+ * そのまま配置する。
+ *
+ * - 1日タスクのスケジュール行（isDayPlanBlock）: その行（＋押し出された同じ列の他ブロック）の時刻・列だけを書き換える。
+ *   他のタスク行には一切影響しないため、タイムラインだけ再描画すれば十分。
+ * - 1日タスクに未追加のタスクを列方向にドラッグ（columnChanged）: そのタスク自身の開始予定・終了予定は変えず、
+ *   1日タスクへ新しい行として追加する（＝昇格）。「対応中タスク」一覧での参照状態が変わるため未設定タスク一覧も再描画。
+ * - 1日タスクに未追加のタスクを縦方向のみドラッグ（時刻だけ変更）: タスク自身の開始予定・終了予定を書き換える。
+ *   月間カレンダーのバッジ・ガントのマーカー・タスク一覧の該当行が変わりうるため、選択日に依存するビュー一式
+ *   （renderTaskorg2DateChange）の再描画が必要。
  */
-function commitTaskorg2TimelineDrag(seg, dateJP, newStartMin, newEndMin) {
+function commitTaskorg2TimelineDrag(seg, dateJP, newStartMin, newEndMin, targetColumn, columnChanged) {
     const fmt = m => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
 
     if (seg.isDayPlanBlock) {
         const dayPlan = getDayPlanTaskM(currentMainData, dateJP);
         if (!dayPlan) return;
-        dayPlan['内容']     = updateDayPlanBlockTime(dayPlan['内容'], seg.dayPlanBlockIndex, newStartMin, newEndMin);
+        const result = placeDayPlanBlock(dayPlan['内容'], seg.dayPlanBlockIndex, newStartMin, newEndMin, targetColumn);
+        if (!result.ok) { renderTaskorg2Timeline(); return; } // 24:00を超えるためキャンセル、元の位置に戻す
+        dayPlan['内容']     = result.content;
         dayPlan['更新日時'] = formatJpDatetime(new Date());
-    } else {
-        const row = currentMainData.find(r => String(r['ID']) === String(seg.row['ID']));
-        if (!row) return;
-        row['開始予定'] = `${dateJP} ${fmt(newStartMin)}`;
-        row['終了予定'] = `${dateJP} ${fmt(newEndMin)}`;
-        row['更新日時'] = formatJpDatetime(new Date());
+        persistLocalCache();
+        renderTaskorg2Timeline(); // 1日タスクのテキストとタイムライン上のチップ位置しか変わらないため、他のビューは再描画不要
+        return;
     }
 
+    if (columnChanged) {
+        let dayPlan = getTaskorg2DayPlanTask();
+        if (!dayPlan) {
+            createTaskorg2DayPlanTask();
+            dayPlan = getTaskorg2DayPlanTask();
+            if (!dayPlan) return;
+        }
+        const newBlock = { refId: String(seg.row['ID']), label: seg.row['タイトル'] || '（無題）' };
+        const result = placeDayPlanBlock(dayPlan['内容'], null, newStartMin, newEndMin, targetColumn, newBlock);
+        if (!result.ok) { renderTaskorg2Timeline(); return; } // 24:00を超えるためキャンセル、タスクは未追加のまま
+        dayPlan['内容']     = result.content;
+        dayPlan['更新日時'] = formatJpDatetime(new Date());
+        persistLocalCache();
+        renderTaskorg2Timeline();
+        renderTaskorg2UnsetSection(); // 「対応中タスク」の未設定/参照済み区分が変わるため
+        return;
+    }
+
+    const row = currentMainData.find(r => String(r['ID']) === String(seg.row['ID']));
+    if (!row) return;
+    row['開始予定'] = `${dateJP} ${fmt(newStartMin)}`;
+    row['終了予定'] = `${dateJP} ${fmt(newEndMin)}`;
+    row['更新日時'] = formatJpDatetime(new Date());
     persistLocalCache();
-    renderCalendar2();
-    renderTaskRunner();
+    renderTaskorg2DateChange(); // タスク本体の日程が変わり、カレンダー/ガント/一覧など選択日依存のビューに影響しうる
 }
 
 /** 選択中日付の1日タスク行（isDayPlanRow）を返す。無ければnull。 */
@@ -4572,12 +4656,13 @@ function createTaskorg2DayPlanTask() {
                 startMin: parseHHMMToMinutes(timeInfo.startStr),
                 endMin:   parseHHMMToMinutes(timeInfo.endStr),
                 refId:    String(row['ID']),
-                label:    ''
+                label:    '',
+                column:   1
             };
         })
         .filter(Boolean);
 
-    const defaultBlock = { startMin: 9 * 60, endMin: 9 * 60 + 30, refId: null, label: 'メールチェック、予定整理' };
+    const defaultBlock = { startMin: 9 * 60, endMin: 9 * 60 + 30, refId: null, label: 'メールチェック、予定整理', column: 1 };
     const content = stringifyDayPlanBlocks(sortDayPlanBlocks([defaultBlock, ...scheduledBlocks]));
 
     const entry = Object.fromEntries(MAIN_DATA_COLUMNS.map(col => [col, '']));
@@ -4627,7 +4712,26 @@ document.getElementById('calendar2-dayplan-delete-btn')?.addEventListener('click
 // ===== 新タスク整理：未設定タスク一覧（未設定/設定済み・日付未確定・属性未設定・中断。旧タスク整理と同一仕様） =====
 
 /**
- * タスクを選択中日付の1日タスクに「HH:MM-HH:MM #ID タイトル」の1行として追加する（旧タスク整理と同一仕様）。1日タスクが無ければ新規作成する。
+ * 選択中日付の1日タスクに「[列番号] HH:MM-HH:MM #ID タイトル」の1行を追加する（1日タスクが無ければ新規作成）。
+ * タイムラインでのドラッグ（列を明示的に変えた場合）と、対応中タスクの「＋」ボタンの両方から使う共通処理。
+ */
+function appendTaskorg2DayPlanLine(row, startStr, endStr, column) {
+    if (!selectedTaskorg2Date) return;
+    let dayPlan = getTaskorg2DayPlanTask();
+    if (!dayPlan) {
+        createTaskorg2DayPlanTask();
+        dayPlan = getTaskorg2DayPlanTask();
+        if (!dayPlan) return;
+    }
+    const line = `[${column}] ${startStr}-${endStr} #${row['ID']} ${row['タイトル'] || '（無題）'}`;
+    dayPlan['内容']     = dayPlan['内容'] ? `${dayPlan['内容']}\n${line}` : line;
+    dayPlan['更新日時'] = formatJpDatetime(new Date());
+}
+
+/**
+ * タスクを選択中日付の1日タスクに追加する（対応中タスクなどの「＋」ボタン用）。
+ * 開始予定・終了予定が既にその日の時刻まで指定済みのタスク（決まっている予定）は列1に固定配置。
+ * それ以外（時間未定のタスク）は、9:00起点で列2〜4の作業枠のうち最も早く空く列へ自動的に割り当てる。
  */
 function addTaskorg2ToDayPlan(row) {
     if (!selectedTaskorg2Date) return;
@@ -4638,10 +4742,9 @@ function addTaskorg2ToDayPlan(row) {
         if (!dayPlan) return;
     }
     const busyBlocks = parseDayPlanContent(dayPlan['内容']);
-    const { startStr, endStr } = getTaskScheduledTimeOnDate(row, selectedTaskorg2Date) || computeDayPlanTimeSlot(busyBlocks);
-    const line = `${startStr}-${endStr} #${row['ID']} ${row['タイトル'] || '（無題）'}`;
-    dayPlan['内容']     = dayPlan['内容'] ? `${dayPlan['内容']}\n${line}` : line;
-    dayPlan['更新日時'] = formatJpDatetime(new Date());
+    const fixedSlot = getTaskScheduledTimeOnDate(row, selectedTaskorg2Date);
+    const { startStr, endStr, column } = fixedSlot ? { ...fixedSlot, column: 1 } : computeDayPlanTimeSlot(busyBlocks);
+    appendTaskorg2DayPlanLine(row, startStr, endStr, column);
     persistLocalCache();
     renderCalendar2();
 }
@@ -4696,7 +4799,7 @@ function renderTaskorg2ChipList(container, chipEntries, emptyText, options = {})
         chip.className = `calendar-unscheduled-chip ${showAddButton ? '' : 'calendar-unscheduled-chip--solo'} ${getCalendarStatusClass(row['ステータス'])}`;
         if (rowId === selectedTaskorg2Id) chip.classList.add('calendar-unscheduled-chip--active-outline');
         chip.title = label;
-        chip.textContent = label;
+        appendChipLabel(chip, row, label);
         chip.addEventListener('click', () => { selectedTaskorg2Id = rowId; taskorg2QuickNewMode = false; renderTaskorg2TaskChange(); });
         wrap.appendChild(chip);
 
@@ -4758,9 +4861,10 @@ function renderTaskorg2GroupedChips(container, chipEntries, emptyText, options =
 
 /** 開始予定・終了予定の少なくとも一方が空欄のタスク（taskorg2フィルタ適用済み）を返す。 */
 function getTaskorg2IncompleteDateTasks() {
+    const hasDate = v => !!parseSlashDateOnly(v); // 空欄はもちろん、"HH:mm"のみ（日付部分が無い）値もfalse扱いにする
     return getTaskorg2BaseFilteredList().filter(r =>
         r['データ区分'] === 'タスク' &&
-        !(r['開始予定'] && r['終了予定']) // 両方入力済みは対象外
+        !(hasDate(r['開始予定']) && hasDate(r['終了予定'])) // どちらか一方でも日付未入力（時刻のみ含む）なら対象
     );
 }
 
@@ -4811,10 +4915,10 @@ function renderTaskorg2UnsetSection() {
 
     const unsetGroups = getTaskorg2UnsetAttributeGroups();
     const toChips = rows => rows.map(row => ({ row, label: row['タイトル'] || '（無題）' }));
-    renderTaskorg2ChipList(unsetCategoryEl, toChips(unsetGroups.categoryUnset), '該当なし', { showAddButton: false, selectionSet: selectedTaskorg2UnsetIds });
-    renderTaskorg2ChipList(unsetStatusEl,   toChips(unsetGroups.statusUnset),   '該当なし', { showAddButton: false, selectionSet: selectedTaskorg2UnsetIds });
-    renderTaskorg2ChipList(unsetPriorityEl, toChips(unsetGroups.priorityUnset), '該当なし', { showAddButton: false, selectionSet: selectedTaskorg2UnsetIds });
-    renderTaskorg2ChipList(unsetProjectEl,  toChips(unsetGroups.projectUnset),  '該当なし', { showAddButton: false, selectionSet: selectedTaskorg2UnsetIds });
+    renderTaskorg2ChipList(unsetCategoryEl, toChips(unsetGroups.categoryUnset), '該当なし', { selectionSet: selectedTaskorg2UnsetIds });
+    renderTaskorg2ChipList(unsetStatusEl,   toChips(unsetGroups.statusUnset),   '該当なし', { selectionSet: selectedTaskorg2UnsetIds });
+    renderTaskorg2ChipList(unsetPriorityEl, toChips(unsetGroups.priorityUnset), '該当なし', { selectionSet: selectedTaskorg2UnsetIds });
+    renderTaskorg2ChipList(unsetProjectEl,  toChips(unsetGroups.projectUnset),  '該当なし', { selectionSet: selectedTaskorg2UnsetIds });
     setExpanderCount('calendar2-unset-category-count', unsetGroups.categoryUnset.length);
     setExpanderCount('calendar2-unset-status-count',   unsetGroups.statusUnset.length);
     setExpanderCount('calendar2-unset-priority-count', unsetGroups.priorityUnset.length);
@@ -4838,15 +4942,15 @@ function renderTaskorg2UnsetSection() {
     pruneTaskorg2Selection(selectedTaskorg2UnsetIds, unsetValidIds);
 
     const waitingContactChips = toChips(getTaskorg2WaitingContactTasks());
-    renderTaskorg2ChipList(waitingContactEl, waitingContactChips, '該当なし', { showAddButton: false, selectionSet: selectedTaskorg2WaitingIds });
+    renderTaskorg2ChipList(waitingContactEl, waitingContactChips, '該当なし', { selectionSet: selectedTaskorg2WaitingIds });
     setExpanderCount('calendar2-waitingcontact-count', waitingContactChips.length);
 
     const waitingReportChips = toChips(getTaskorg2WaitingReportTasks());
-    renderTaskorg2ChipList(waitingReportEl, waitingReportChips, '該当なし', { showAddButton: false, selectionSet: selectedTaskorg2WaitingIds });
+    renderTaskorg2ChipList(waitingReportEl, waitingReportChips, '該当なし', { selectionSet: selectedTaskorg2WaitingIds });
     setExpanderCount('calendar2-waitingreport-count', waitingReportChips.length);
 
     const suspendedChips = toChips(getTaskorg2SuspendedTasks());
-    renderTaskorg2ChipList(suspendedEl, suspendedChips, '該当なし', { showAddButton: false, selectionSet: selectedTaskorg2WaitingIds });
+    renderTaskorg2ChipList(suspendedEl, suspendedChips, '該当なし', { selectionSet: selectedTaskorg2WaitingIds });
     setExpanderCount('calendar2-suspended-count', suspendedChips.length);
 
     setExpanderCount('calendar2-waiting-total-count',
@@ -5262,7 +5366,7 @@ function renderTaskorg2RecurringList() {
             // 右側（子タスク一覧）の表示対象になっている親タスクを、太い黒枠でひと目でわかるようにする
             if (rowId === selectedTaskorg2RecurringParentId) chip.classList.add('calendar-unscheduled-chip--active-outline');
             chip.title = `${row['タイトル'] || '（無題）'}（${formatRecurringFrequencyLabel(row)}）`;
-            chip.textContent = row['タイトル'] || '（無題）';
+            appendChipLabel(chip, row, row['タイトル'] || '（無題）');
             chip.addEventListener('click', () => {
                 if (selectedTaskorg2RecurringParentId !== rowId) selectedTaskorg2RecurringChildIds.clear(); // 親を切り替えたら子の複数選択はリセットする
                 selectedTaskorg2RecurringParentId = rowId;
@@ -5362,7 +5466,7 @@ function renderTaskorg2RecurringList() {
         // 編集エリアのアクティブ対象になっている子タスクを、親タスクと同様に太い黒枠で強調する
         if (rowId === selectedTaskorg2Id) chip.classList.add('calendar-unscheduled-chip--active-outline');
         chip.title = row['タイトル'] || '（無題）';
-        chip.textContent = row['タイトル'] || '（無題）';
+        appendChipLabel(chip, row, row['タイトル'] || '（無題）');
         chip.addEventListener('click', () => {
             selectedTaskorg2Id = rowId;
             taskorg2QuickNewMode = false;
@@ -5571,37 +5675,46 @@ document.getElementById('dayedit2-recurring-parent')?.addEventListener('change',
     updateDayedit2FreqVisibility();
 });
 
-/** ステータスを「完了」に変更したら、完了日を自動的に本日の日付にする（新タスク整理版）。 */
+/** ステータスを「完了」に変更したら、完了日を自動的に本日の日付にする（新タスク整理版）。既に完了日が入力済みなら上書きしない。 */
 document.getElementById('dayedit2-status')?.addEventListener('change', (e) => {
     if (e.target.value !== '完了') return;
     const completeEl = document.getElementById('dayedit2-complete-date');
-    if (!completeEl) return;
+    if (!completeEl || completeEl.value) return;
     const today = new Date();
     const pad = n => String(n).padStart(2, '0');
     completeEl.value = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
 });
 
-/** 開始予定の時刻を入力したら、終了予定に1時間後を自動セットする（新タスク整理版。日付をまたぐ場合は終了予定日も繰り上げる）。手動で修正可能。 */
+/** 開始予定の日付を入力したら、終了予定の日付に同じ日付を自動セットする（新タスク整理版）。手動で修正可能。 */
+function autoFillTaskorg2EndDate() {
+    const startDateEl = document.getElementById('dayedit2-start-date');
+    const endDateEl   = document.getElementById('dayedit2-end-date');
+    if (!startDateEl.value) return;
+    endDateEl.value = startDateEl.value;
+}
+document.getElementById('dayedit2-start-date')?.addEventListener('change', autoFillTaskorg2EndDate);
+
+/** 開始予定の時間を入力したら、開始予定の分を0に、終了予定の時間を+1・分を0に自動セットする（新タスク整理版。日付は見ない）。手動で修正可能。 */
 function autoFillTaskorg2EndTime() {
-    const startDateEl   = document.getElementById('dayedit2-start-date');
     const startHourEl   = document.getElementById('dayedit2-start-hour');
     const startMinuteEl = document.getElementById('dayedit2-start-minute');
-    const endDateEl     = document.getElementById('dayedit2-end-date');
     const endHourEl     = document.getElementById('dayedit2-end-hour');
     const endMinuteEl   = document.getElementById('dayedit2-end-minute');
-    if (!startDateEl.value || startHourEl.value === '' || startMinuteEl.value === '') return;
+    if (startHourEl.value === '') return;
 
-    const [y, m, d] = startDateEl.value.split('-').map(Number);
-    const startDt = new Date(y, m - 1, d, Number(startHourEl.value), Number(startMinuteEl.value));
-    const endDt   = new Date(startDt.getTime() + 60 * 60 * 1000);
-
-    const pad = n => String(n).padStart(2, '0');
-    endDateEl.value   = `${endDt.getFullYear()}-${pad(endDt.getMonth() + 1)}-${pad(endDt.getDate())}`;
-    endHourEl.value   = endDt.getHours();
-    endMinuteEl.value = endDt.getMinutes();
+    startMinuteEl.value = 0;
+    endHourEl.value     = (Number(startHourEl.value) + 1) % 24;
+    endMinuteEl.value   = 0;
 }
 document.getElementById('dayedit2-start-hour')?.addEventListener('change', autoFillTaskorg2EndTime);
-document.getElementById('dayedit2-start-minute')?.addEventListener('change', autoFillTaskorg2EndTime);
+
+/** 「開始/終了リセット」ボタン（新タスク整理版）: 開始予定・終了予定の日付・時・分をまとめて空欄に戻す。 */
+document.getElementById('dayedit2-reset-start-end-btn')?.addEventListener('click', () => {
+    ['start-date', 'start-hour', 'start-minute', 'end-date', 'end-hour', 'end-minute'].forEach(f => {
+        const el = document.getElementById(`dayedit2-${f}`);
+        if (el) el.value = '';
+    });
+});
 
 /** 「完了日を開始/終了予定に代入」ボタン（新タスク整理版）: 完了日が入力済みで、開始予定・終了予定の空欄になっている方だけに完了日（時間帯なし）を代入する。 */
 document.getElementById('dayedit2-fill-date-from-complete-btn')?.addEventListener('click', () => {
