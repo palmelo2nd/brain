@@ -982,7 +982,6 @@ document.getElementById('status-check-btn')?.addEventListener('click', async (ev
 
 // データ品質チェックの問題内訳をcontainerに描画する。
 // 状態パネルの「チェック」実行後、問題が1件以上あるときにloadFreshnessStatusから呼ばれる。
-// 検出銘柄の再取得（データ修繕）機能は一旦削除。修繕方法は改めて検討する。
 function renderValidationIssues(container, validation) {
     // 同一内容（type+detail）の問題は銘柄をまたいで多発しやすい（例: 特定期間の連休による欠損）ため、
     // 件数付きのサマリーとしてまとめ、該当銘柄コードはExpanderの中に入れる（「更新最終日」と同じ見た目にする）
@@ -1010,6 +1009,20 @@ function renderValidationIssues(container, validation) {
         list.appendChild(buildExpandableListItem(`${group.count}件：${group.detail}`, group.codes, refetchBtn));
     });
     container.appendChild(list);
+
+    // まとめて再取得：問題グループを横断した全該当銘柄（重複除去）をまとめてmode=fullで再取得する
+    const allCodes = [...new Set(validation.issues.map(issue => issue.code))];
+    if (allCodes.length > 0) {
+        const bulkFixWrap = document.createElement('div');
+        bulkFixWrap.className = 'status-bulk-fix';
+        const bulkBtn = document.createElement('button');
+        bulkBtn.type = 'button';
+        bulkBtn.className = 'run-btn run-btn--secondary status-inline-btn';
+        bulkBtn.textContent = `まとめて再取得（${allCodes.length}件）`;
+        bulkBtn.addEventListener('click', () => refetchCodesGroup('問題が検出された銘柄すべて', allCodes, bulkBtn, 'full'));
+        bulkFixWrap.appendChild(bulkBtn);
+        container.appendChild(bulkFixWrap);
+    }
 }
 
 // ===== 保有・履歴：保有銘柄（stock/holdings.csv）の手入力登録 =====
