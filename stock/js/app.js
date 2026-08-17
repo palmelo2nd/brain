@@ -703,7 +703,8 @@ async function refetchDateGroup(date, codes, buttonEl) {
 }
 
 // ===== 上場廃止銘柄の登録（stock/delisted.csv）。登録は即コミット（labels.csv等と違い仮登録の中間状態を持たない単純な追加/削除リスト） =====
-document.getElementById('delisted-register-btn')?.addEventListener('click', async () => {
+document.getElementById('delisted-register-btn')?.addEventListener('click', async (event) => {
+    const btn = event.currentTarget;
     const codesInput = document.getElementById('delisted-codes');
     const statusEl = document.getElementById('delisted-status');
     const codes = codesInput.value.split(',').map(s => s.trim()).filter(Boolean);
@@ -713,6 +714,8 @@ document.getElementById('delisted-register-btn')?.addEventListener('click', asyn
     if (!token) { alert('トークンを入力してください'); return; }
     if (!delistedLoaded) { alert('先に「チェック」を実行してから登録してください（既存データを取りこぼして上書きするのを防ぐため）'); return; }
 
+    // 連打による二重コミット（GitHub側でshaの競合＝409エラーになる）を防ぐ
+    btn.disabled = true;
     statusEl.textContent = '登録中...';
     try {
         const now = formatJstTimestamp();
@@ -725,9 +728,10 @@ document.getElementById('delisted-register-btn')?.addEventListener('click', asyn
         await commitFile(token, OWNER, DATA_REPO, DELISTED_PATH, DATA_REPO_BRANCH, content, 'chore: 上場廃止銘柄を登録');
         codesInput.value = '';
         statusEl.textContent = `登録しました（現在${delistedRows.length}件）。`;
-        await loadFreshnessStatus();
+        await loadFreshnessStatus(); // 状態パネル全体が再描画されるためbtnへの参照はここで役目を終える
     } catch (error) {
         console.error(error);
+        btn.disabled = false;
         statusEl.textContent = `登録に失敗しました: ${error.message}`;
     }
 });
