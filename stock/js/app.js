@@ -27,10 +27,16 @@ const HOLDINGS_PATH = 'stock/holdings.csv';
 const HOLDINGS_HEADERS = ['id', 'owner', 'broker', 'account', 'code', 'shares', 'avg_cost'];
 const HOLDINGS_CODE_DISPLAY_MAX = 10; // 一覧表のコード列・銘柄名列の最大表示文字数（全角10文字相当。超過分は…で省略）
 const BULK_ASSET_TYPES = ['内国株式', 'ETF・ETN']; // fetch_prices.pyの--asset-types既定値と揃えている
+// 「更新最終日」「データ品質」の内訳を内国株式／その他（ETF等）に分ける分類ラベル（2026-08-18追加）。
+// yfinanceはETF側で更新漏れ・欠損が起きやすく、内国株式と混在させると個別株側の問題が埋もれるため区別する。
+const DOMESTIC_STOCK_CATEGORY = '内国株式';
+const OTHER_ASSET_CATEGORY = 'その他（ETF等）';
 const IRBANK_PATH = 'stock/irbank.csv';
 const IRBANK_ASSET_TYPE = '内国株式'; // notebooks/C01_IRBANK企業ID取得.ipynbの対象絞り込みと揃えている（ETF・REIT等はIRBANKの個別企業ページを持たない）
 const LABELS_PATH = 'stock/labels.csv';
 const LABEL_HEADERS = ['code', 'L_高配当', 'L_優待', 'updated_at'];
+const SCORES_PATH = 'stock/scores.csv'; // 銘柄選定用のスコア一覧。SIMタブの「適用」で更新（積み上げるデータ。master.csvの再生成では消えない）
+const SCORES_HEADERS = ['code', 'defensive_score', 'updated_at'];
 const DELISTED_PATH = 'stock/delisted.csv'; // 上場廃止銘柄一覧。人が確認して登録する（自動判定はしない）
 const DELISTED_HEADERS = ['code', 'note', 'updated_at'];
 const EXTRA_TARGETS_PATH = 'stock/extra_targets.csv'; // master.csvには無いが継続更新したい追加対象（N225・未反映の新規上場銘柄など）
@@ -532,12 +538,14 @@ async function loadFreshnessStatus() {
 
     try {
         // 品質チェックの結果・上場廃止一覧・追加対象一覧は未実行/未登録だとファイル自体が存在しないため、
-        // fetchFileIfExistsでnull許容にする
-        const [reportText, validationText, delistedText, extraTargetsText] = await Promise.all([
+        // fetchFileIfExistsでnull許容にする。asset_typeのMap取得も失敗時はnullにフォールバックし
+        // （分類無しの旧表示に戻すだけで）状態パネル全体は表示できるようにする
+        const [reportText, validationText, delistedText, extraTargetsText, assetTypeMap] = await Promise.all([
             fetchFile(token, OWNER, DATA_REPO, FRESHNESS_REPORT_PATH),
             fetchFileIfExists(token, OWNER, DATA_REPO, VALIDATION_REPORT_PATH),
             fetchFileIfExists(token, OWNER, DATA_REPO, DELISTED_PATH),
             fetchFileIfExists(token, OWNER, DATA_REPO, EXTRA_TARGETS_PATH),
+            getMasterAssetTypeMap(token).catch(error => { console.error(error); return null; }),
         ]);
         const report = JSON.parse(reportText);
         const validation = validationText ? JSON.parse(validationText) : null;
@@ -584,21 +592,33 @@ async function loadFreshnessStatus() {
         freshnessSection.appendChild(freshnessTitle);
         if (report.distribution) {
             const entries = Object.entries(report.distribution).sort((a, b) => b[0].localeCompare(a[0]));
-            const list = document.createElement('ul');
-            list.className = 'status-distribution';
-            entries.forEach(([date, count]) => {
-                const codes = report.codes_by_date ? report.codes_by_date[date] : null;
-                let refetchBtn = null;
-                if (codes && codes.length > 0) {
-                    refetchBtn = document.createElement('button');
-                    refetchBtn.type = 'button';
-                    refetchBtn.className = 'run-btn run-btn--secondary status-inline-btn';
-                    refetchBtn.textContent = '再取得';
-                    refetchBtn.addEventListener('click', () => refetchCodesGroup(`${date}で止まっている銘柄`, codes, refetchBtn));
-                }
-                list.appendChild(buildExpandableListItem(`${date}: ${count}銘柄`, codes, refetchBtn));
-            });
-            freshnessSection.appendChild(list);
+            // codes_by_date（銘柄コード内訳）とasset_typeのMapが両方揃っているときだけ、
+            // 内国株式／その他（ETF等）の分類階層を1つ上に挟んで表示する。
+            // 揃わない場合（古い形式のレポート・master.csv取得失敗時）は分類無しの従来表示にフォールバックする。
+            if (report.codes_by_date && Object.keys(report.codes_by_date).length > 0 && assetTypeMap) {
+                [DOMESTIC_STOCK_CATEGORY, OTHER_ASSET_CATEGORY].forEach(category => {
+                    const categoryCodesByDate = {};
+                    let categoryTotal = 0;
+                    Object.entries(report.codes_by_date).forEach(([date, codes]) => {
+                        const filtered = codes.filter(code => classifyAssetCategory(code, assetTypeMap) === category);
+                        if (filtered.length > 0) {
+                            categoryCodesByDate[date] = filtered;
+                            categoryTotal += filtered.length;
+                        }
+                    });
+                    if (categoryTotal === 0) return;
+                    const categoryEntries = Object.entries(categoryCodesByDate).sort((a, b) => b[0].localeCompare(a[0]));
+                    const categoryDetail = document.createElement('details');
+                    categoryDetail.className = 'status-category-detail';
+                    const categorySummary = document.createElement('summary');
+                    categorySummary.textContent = `${category}（${categoryTotal}銘柄）`;
+                    categoryDetail.appendChild(categorySummary);
+                    categoryDetail.appendChild(buildFreshnessDateList(categoryEntries, categoryCodesByDate));
+                    freshnessSection.appendChild(categoryDetail);
+                });
+            } else {
+                freshnessSection.appendChild(buildFreshnessDateList(entries, report.codes_by_date));
+            }
         }
         // まとめて修正：最新日付（report.latest_date）のグループを含めるかどうかを切り替えられるようにする。
         // 同日中の実行では、既に最新日付まで届いている銘柄を再取得しても（当日分は保存されないため）
@@ -691,7 +711,7 @@ async function loadFreshnessStatus() {
         qualityTitle.textContent = 'データ品質';
         qualitySection.appendChild(qualityTitle);
         if (validation && validation.issue_count > 0) {
-            renderValidationIssues(qualitySection, validation);
+            renderValidationIssues(qualitySection, validation, assetTypeMap);
         }
         qualityColumn.appendChild(qualitySection);
         columns.appendChild(qualityColumn);
@@ -701,6 +721,26 @@ async function loadFreshnessStatus() {
         console.error(error);
         summaryEl.textContent = `状態の取得に失敗しました: ${error.message}`;
     }
+}
+
+// 「更新最終日」の日付ごとの内訳<ul>を構築する（分類なし表示・内国株式／その他への分類後表示のどちらからも使う共通処理）。
+// entries: [[date, count], ...]（降順ソート済み前提）。codesByDate: 該当コード内訳（無ければnull＝古い形式のレポート）。
+function buildFreshnessDateList(entries, codesByDate) {
+    const list = document.createElement('ul');
+    list.className = 'status-distribution';
+    entries.forEach(([date, count]) => {
+        const codes = codesByDate ? codesByDate[date] : null;
+        let refetchBtn = null;
+        if (codes && codes.length > 0) {
+            refetchBtn = document.createElement('button');
+            refetchBtn.type = 'button';
+            refetchBtn.className = 'run-btn run-btn--secondary status-inline-btn';
+            refetchBtn.textContent = '再取得';
+            refetchBtn.addEventListener('click', () => refetchCodesGroup(`${date}で止まっている銘柄`, codes, refetchBtn));
+        }
+        list.appendChild(buildExpandableListItem(`${date}: ${count}銘柄`, codes, refetchBtn));
+    });
+    return list;
 }
 
 // 件数テキスト（summaryText）を表示するリスト項目（<li>）を作る。
@@ -1006,11 +1046,48 @@ document.getElementById('status-check-btn')?.addEventListener('click', async (ev
 
 // データ品質チェックの問題内訳をcontainerに描画する。
 // 状態パネルの「チェック」実行後、問題が1件以上あるときにloadFreshnessStatusから呼ばれる。
-function renderValidationIssues(container, validation) {
-    // 同一内容（type+detail）の問題は銘柄をまたいで多発しやすい（例: 特定期間の連休による欠損）ため、
-    // 件数付きのサマリーとしてまとめ、該当銘柄コードはExpanderの中に入れる（「更新最終日」と同じ見た目にする）
+// assetTypeMapが渡された場合は、種類・内容ごとのグループ化（renderValidationIssueGroups）の1つ上に
+// 内国株式／その他（ETF等）の分類階層を挟む（無ければ分類無しの従来表示にフォールバックする）。
+function renderValidationIssues(container, validation, assetTypeMap) {
+    if (assetTypeMap) {
+        [DOMESTIC_STOCK_CATEGORY, OTHER_ASSET_CATEGORY].forEach(category => {
+            const categoryIssues = validation.issues.filter(issue => classifyAssetCategory(issue.code, assetTypeMap) === category);
+            if (categoryIssues.length === 0) return;
+            const categoryCodeCount = new Set(categoryIssues.map(issue => issue.code)).size;
+            const categoryDetail = document.createElement('details');
+            categoryDetail.className = 'status-category-detail';
+            const categorySummary = document.createElement('summary');
+            categorySummary.textContent = `${category}（${categoryIssues.length}件・${categoryCodeCount}銘柄）`;
+            categoryDetail.appendChild(categorySummary);
+            renderValidationIssueGroups(categoryDetail, categoryIssues);
+            container.appendChild(categoryDetail);
+        });
+    } else {
+        renderValidationIssueGroups(container, validation.issues);
+    }
+
+    // まとめて再取得：問題グループ・分類を横断した全該当銘柄（重複除去）をまとめてmode=fullで再取得する
+    // （分類はあくまで内訳表示上の区別であり、まとめて直したいケースでは分類をまたいで良いため分けていない）
+    const allCodes = [...new Set(validation.issues.map(issue => issue.code))];
+    if (allCodes.length > 0) {
+        const bulkFixWrap = document.createElement('div');
+        bulkFixWrap.className = 'status-bulk-fix';
+        const bulkBtn = document.createElement('button');
+        bulkBtn.type = 'button';
+        bulkBtn.className = 'run-btn run-btn--secondary status-inline-btn';
+        bulkBtn.textContent = `まとめて再取得（${allCodes.length}件）`;
+        bulkBtn.addEventListener('click', () => refetchCodesGroup('問題が検出された銘柄すべて', allCodes, bulkBtn, 'full'));
+        bulkFixWrap.appendChild(bulkBtn);
+        container.appendChild(bulkFixWrap);
+    }
+}
+
+// 問題（type+detail）ごとにグループ化して内訳<ul>をcontainerに描画する（renderValidationIssuesの内部処理）。
+// 同一内容の問題は銘柄をまたいで多発しやすい（例: 特定期間の連休による欠損）ため、
+// 件数付きのサマリーとしてまとめ、該当銘柄コードはExpanderの中に入れる（「更新最終日」と同じ見た目にする）。
+function renderValidationIssueGroups(container, issues) {
     const groups = new Map();
-    validation.issues.forEach(issue => {
+    issues.forEach(issue => {
         const key = `${issue.type}::${issue.detail}`;
         if (!groups.has(key)) groups.set(key, { type: issue.type, detail: issue.detail, count: 0, codes: [], dates: [] });
         const group = groups.get(key);
@@ -1038,20 +1115,6 @@ function renderValidationIssues(container, validation) {
         list.appendChild(buildExpandableListItem(`${group.count}件：${group.detail}`, group.codes, refetchBtn));
     });
     container.appendChild(list);
-
-    // まとめて再取得：問題グループを横断した全該当銘柄（重複除去）をまとめてmode=fullで再取得する
-    const allCodes = [...new Set(validation.issues.map(issue => issue.code))];
-    if (allCodes.length > 0) {
-        const bulkFixWrap = document.createElement('div');
-        bulkFixWrap.className = 'status-bulk-fix';
-        const bulkBtn = document.createElement('button');
-        bulkBtn.type = 'button';
-        bulkBtn.className = 'run-btn run-btn--secondary status-inline-btn';
-        bulkBtn.textContent = `まとめて再取得（${allCodes.length}件）`;
-        bulkBtn.addEventListener('click', () => refetchCodesGroup('問題が検出された銘柄すべて', allCodes, bulkBtn, 'full'));
-        bulkFixWrap.appendChild(bulkBtn);
-        container.appendChild(bulkFixWrap);
-    }
 }
 
 // ===== 保有・履歴：保有銘柄（stock/holdings.csv）の手入力登録 =====
@@ -1063,6 +1126,7 @@ let holdingsRows = [];          // 保有銘柄一覧（メモリ上の編集対
 let holdingsLoaded = false;     // 一度でも読み込み（新規ファイルの場合は0件読み込み）が済んだか
 let selectedHoldingId = null;   // 一覧で選択中の行ID（フォームの編集対象）
 let masterNameMapPromise = null; // 証券コード→銘柄名のMap（Promise）。セッション中は初回取得分を使い回す
+let masterAssetTypeMapPromise = null; // 証券コード→asset_typeのMap（Promise）。セッション中は初回取得分を使い回す
 
 /** master.csv を取得し、証券コード→銘柄名のMapを返す（保有銘柄一覧・入力フォームでの銘柄名表示に使用）。 */
 function getMasterNameMap(token) {
@@ -1072,6 +1136,22 @@ function getMasterNameMap(token) {
             .catch(error => { masterNameMapPromise = null; throw error; });
     }
     return masterNameMapPromise;
+}
+
+/** master.csv を取得し、証券コード→asset_typeのMapを返す（データ更新ページの内国株式／その他分類に使用）。 */
+function getMasterAssetTypeMap(token) {
+    if (!masterAssetTypeMapPromise) {
+        masterAssetTypeMapPromise = fetchFile(token, OWNER, DATA_REPO, MASTER_PATH)
+            .then(text => new Map(parseCsv(text).map(r => [r.code, r.asset_type])))
+            .catch(error => { masterAssetTypeMapPromise = null; throw error; });
+    }
+    return masterAssetTypeMapPromise;
+}
+
+/** 証券コードをmaster.csvのasset_typeで「内国株式」「その他（ETF等）」に分類する。
+ * master.csvに存在しないコード（N225等の指数）も「その他」に含める。 */
+function classifyAssetCategory(code, assetTypeMap) {
+    return assetTypeMap.get(code) === DOMESTIC_STOCK_CATEGORY ? DOMESTIC_STOCK_CATEGORY : OTHER_ASSET_CATEGORY;
 }
 
 /** holdingsRows内の最大id（数値部分）+1を返す（新規行のid採番用）。 */
@@ -1796,12 +1876,14 @@ document.getElementById('attributes-save-btn')?.addEventListener('click', async 
 // ===== SIM：ディフェンシブ度（景気連動度）シミュレータ =====
 // past/C02-2_ディフェンシブ判定ラベル付け.ipynbのスコアリングロジックを移植したもの（js/modules/defensiveScore.js）。
 // 旧実装の手動教師ラベル（L_def）は廃止し、連続スコアで評価する方針に変更した。
-// 「改善①〜④」等の調整ロジック（MDDクリップ・条件付き重み変更・救済ルール）は未移植（まずは素の3指標のみ）。
-// このページはあくまで試算用で、結果はどこにもコミットしない（読み取り専用）。
-// 旧手動ラベル（REFERENCE_LABELS）は、保存先を持たない比較表示専用の参考データ。
+// 「改善①〜④」のうちMDDクリップ・vol許容レンジ緩和相当は「指標の定義」欄（getSimParams）から調整できる。
+// 条件付き重み変更・救済ルールは未移植。
+// 「計算」自体は試算のみで何もコミットしない。「適用」を押した時点で初めてスコアをstock/scores.csvへ保存する
+// （銘柄選定用のスコアとして積み上げる。対象コードだけ更新・追加するマージ方式で、対象外の既存スコアは残す）。
+// 旧手動ラベル（REFERENCE_LABELS）は、保存先を持たない比較表示専用の参考データ（scores.csvには含めない）。
 
 const SIM_FETCH_BATCH_SIZE = 6; // 株価CSVの並列取得数（多すぎるとGitHub APIのレート制限に触れやすいため控えめに）
-let simResults = []; // 直近の計算結果（{ code, name, score, scoreDown, scoreVol, scoreMdd, corrDown, volRatio, mddRatio, months, refLabel, error }）
+let simResults = []; // 直近の計算結果（{ code, name, score, scoreDown, scoreVol, scoreMdd, corrDown, volRatio, mddRatio, periods, refLabel, error }）
 
 /** SIM入力欄からパラメータを読み取る（未入力・不正値はデフォルト値にフォールバック）。 */
 function getSimParams() {
@@ -1809,6 +1891,7 @@ function getSimParams() {
         const v = Number(document.getElementById(id)?.value);
         return Number.isFinite(v) ? v : fallback;
     };
+    const checked = id => !!document.getElementById(id)?.checked;
     return {
         years:    num('sim-years', 10),
         wDown:    num('sim-w-down', 0.4),
@@ -1820,6 +1903,15 @@ function getSimParams() {
         volBad:   num('sim-vol-bad', 1.5),
         mddGood:  num('sim-mdd-good', 0.8),
         mddBad:   num('sim-mdd-bad', 1.2),
+        // 指標の定義（詳細設定）。js/modules/defensiveScore.jsのcalcDefensiveScoreへそのまま渡す
+        downThreshold:         num('sim-down-threshold', 0),
+        returnPeriodWeeks:     num('sim-return-period-weeks', 4),
+        volDownsideOnly:       checked('sim-vol-downside-only'),
+        volOutlierClip:        num('sim-vol-outlier-clip', 0.5),
+        mddFloorClip:          num('sim-mdd-floor-clip', -0.4),
+        mddRollingEnabled:     checked('sim-mdd-rolling-enabled'),
+        mddRollingWindowWeeks: num('sim-mdd-rolling-window-weeks', 52),
+        mddRollingAgg:         document.getElementById('sim-mdd-rolling-agg')?.value || 'mean',
     };
 }
 
@@ -1873,7 +1965,7 @@ async function runSimCalculation() {
                     const result = calcDefensiveScore(parseCsv(text), n225Rows, params);
                     return { code, name: nameMap.get(code) || '', ...result, refLabel: REFERENCE_LABELS.get(code) || null, error: null };
                 } catch (error) {
-                    return { code, name: nameMap.get(code) || '', score: null, months: 0, refLabel: REFERENCE_LABELS.get(code) || null, error: error.message };
+                    return { code, name: nameMap.get(code) || '', score: null, periods: 0, refLabel: REFERENCE_LABELS.get(code) || null, error: error.message };
                 }
             }));
             results.push(...batchResults);
@@ -1887,6 +1979,10 @@ async function runSimCalculation() {
         const okCount = results.filter(r => Number.isFinite(r.score)).length;
         statusEl.textContent = `計算完了：${results.length}件中 ${okCount}件でスコアを算出しました（データ不足・取得エラー: ${results.length - okCount}件）。`;
         renderSimResults();
+        // 3D散布図はrenderSimResults()（判定しきい値スライダーからも呼ばれる）には含めない。
+        // 3軸の値・色分け（refLabel基準）はしきい値と無関係なため毎回作り直す必要が無く、
+        // 含めるとスライダー操作のたびにPlotlyが全体を再構築してユーザーが回転させた視点がリセットされてしまう。
+        renderSimScatter3d();
     } catch (error) {
         console.error(error);
         statusEl.textContent = `エラー: ${error.message}`;
@@ -1898,6 +1994,43 @@ async function runSimCalculation() {
 
 document.getElementById('sim-run-btn')?.addEventListener('click', runSimCalculation);
 document.getElementById('sim-threshold')?.addEventListener('input', renderSimResults);
+document.getElementById('sim-hist-metric')?.addEventListener('change', renderSimHistogram);
+
+// ===== SIM：計算結果を銘柄選定用のスコアとして保存（stock/scores.csv）。
+// マージ方式（上書き）：今回計算できた銘柄（スコアが算出できたもののみ。データ不足・取得エラーは対象外）だけを
+// 更新・追加し、対象外の銘柄の既存スコアはそのまま残す。SIMタブはscores.csvを読み込んでキャッシュする
+// ステップを持たない（読込ボタンが無い）ため、押下のたびにGitHubから最新を取得してからマージする
+// （delisted.csv/extra_targets.csvの登録と同様、常に最新の内容の上にマージすることで取りこぼしを防ぐ）。
+document.getElementById('sim-apply-btn')?.addEventListener('click', async (event) => {
+    const btn = event.currentTarget;
+    const statusEl = document.getElementById('sim-apply-status');
+    const token = getTokenValue();
+    if (!token) { alert('トークンを入力してください'); return; }
+
+    const targets = simResults.filter(r => Number.isFinite(r.score));
+    if (targets.length === 0) { alert('保存できるスコアがありません（先に「計算」を実行してください）'); return; }
+
+    btn.disabled = true;
+    statusEl.textContent = '保存中...';
+    try {
+        const existingText = await fetchFileIfExists(token, OWNER, DATA_REPO, SCORES_PATH);
+        const scoresMap = new Map((existingText ? parseCsv(existingText) : []).map(r => [r.code, r]));
+
+        const now = formatJstTimestamp();
+        targets.forEach(r => {
+            scoresMap.set(r.code, { code: r.code, defensive_score: r.score.toFixed(1), updated_at: now });
+        });
+
+        const content = stringifyCsv([...scoresMap.values()], SCORES_HEADERS);
+        await commitFile(token, OWNER, DATA_REPO, SCORES_PATH, DATA_REPO_BRANCH, content, 'chore: ディフェンシブ度スコアを更新');
+        statusEl.textContent = `保存しました（今回更新・追加：${targets.length}件 / 合計：${scoresMap.size}件）。`;
+    } catch (error) {
+        console.error(error);
+        statusEl.textContent = `保存に失敗しました: ${error.message}`;
+    } finally {
+        btn.disabled = false;
+    }
+});
 
 function getSimThreshold() {
     const v = Number(document.getElementById('sim-threshold')?.value);
@@ -1909,23 +2042,126 @@ function renderSimResults() {
     renderSimTable();
 }
 
-/** スコア分布をdiv要素の棒グラフで描く（外部チャートライブラリは使わない簡易実装）。 */
+// ヒストグラムと3D散布図で共通して使う、旧実装の手動ラベル（refLabel）区分の色。
+// refLabelが無い（null）銘柄は'_none'キーに割り当てる。ヒストグラムの積み上げ色（sim-hist-seg--*）と揃えている。
+const SIM_REF_LABEL_CATEGORIES = [
+    { key: 'defensive', label: '旧ディフェンシブ', color: '#0d6efd' },
+    { key: 'offensive', label: '旧オフェンシブ',   color: '#adb5bd' },
+    { key: '_none',     label: '参考ラベル無し',   color: '#e9ecef' }, // 凡例スウォッチ・ヒストグラムと同色。白背景でも見えるよう3D側はマーカーの枠線を太めにしている
+];
+
+/**
+ * 下落局面相関×ボラ比×最大下落比の3軸散布図をPlotly.js（CDN読み込み。window.Plotly）で描く。
+ * ドラッグで回転・スクロールで拡大縮小できる3Dプロット。色分けはヒストグラムと同じくrefLabel基準
+ * （現在の判定しきい値とは無関係）で、カテゴリごとに別トレースにすることで凡例クリックでの表示切替もできる。
+ * 3指標すべてが算出できた銘柄のみが対象（下落局面相関のみ算出不能等、一部だけ欠けている銘柄は対象外）。
+ */
+function renderSimScatter3d() {
+    const container = document.getElementById('sim-scatter3d');
+    if (!container || !window.Plotly) return;
+
+    const items = simResults.filter(r =>
+        Number.isFinite(r.corrDown) && Number.isFinite(r.volRatio) && Number.isFinite(r.mddRatio)
+    );
+    if (items.length === 0) {
+        window.Plotly.purge(container);
+        container.textContent = '計算すると散布図が表示されます（下落局面相関・ボラ比・最大下落比の3指標すべてが算出できた銘柄のみが対象です）。';
+        return;
+    }
+
+    const traces = SIM_REF_LABEL_CATEGORIES.map(({ key, label, color }) => {
+        const group = items.filter(r => (r.refLabel || '_none') === key);
+        return {
+            type: 'scatter3d',
+            mode: 'markers',
+            name: `${label}（${group.length}件）`,
+            x: group.map(r => r.corrDown),
+            y: group.map(r => r.volRatio),
+            z: group.map(r => r.mddRatio),
+            text: group.map(r => `${r.code} ${r.name}（スコア: ${Number.isFinite(r.score) ? r.score.toFixed(1) : '－'}）`),
+            hovertemplate: '%{text}<br>下落局面相関: %{x:.2f} / ボラ比: %{y:.2f} / 最大下落比: %{z:.2f}<extra></extra>',
+            marker: { size: 4, color, line: { color: '#57606a', width: 1 } },
+        };
+    }).filter(trace => trace.x.length > 0);
+
+    // newPlot（reactではなく）で毎回作り直す：3軸散布図は「計算」実行時にのみ呼ばれる
+    // （判定しきい値スライダーからは呼ばれない。renderSimResults呼び出し箇所のコメント参照）ため、
+    // 回転視点のリセットは計算結果自体が変わるこのタイミングでのみ発生し、実用上問題にならない。
+    window.Plotly.newPlot(container, traces, {
+        margin: { l: 0, r: 0, t: 10, b: 0 },
+        scene: {
+            xaxis: { title: '下落局面相関' },
+            yaxis: { title: 'ボラ比' },
+            zaxis: { title: '最大下落比' },
+            // 3指標は値のスケールが異なる（下落局面相関は-1〜1、ボラ比・最大下落比は実データ依存）ため、
+            // 既定のaspectmode='auto'（各軸を実際のデータレンジ比のまま描画）だと箱が歪んで見える。
+            // 'cube'にすると各軸の実レンジに関わらず描画上の箱を立方体に強制する（軸目盛りの実際の値・
+            // ホバー表示の値自体は変えず、見た目の縦横比だけを揃える）。
+            aspectmode: 'cube',
+        },
+        legend: { orientation: 'h', y: 0 },
+    }, { responsive: true, displaylogo: false });
+}
+
+// ヒストグラムに表示できる指標一覧。fieldはsimResultsの各要素のキーと対応させる。
+// min/maxを指定した指標は範囲固定（score: 0〜100の定義域そのもの／corrDown: 相関係数の定義域-1〜1）。
+// volRatio・mddRatioはgood/bad閾値次第でデータの実際の範囲が変わるため、都度simResultsの実測値から自動算出する（min/max省略）。
+const SIM_HIST_METRICS = {
+    score:    { label: 'スコア',       field: 'score',    min: 0, max: 100, binCount: 20, decimals: 0 },
+    corrDown: { label: '下落局面相関', field: 'corrDown', min: -1, max: 1,  binCount: 20, decimals: 1 },
+    volRatio: { label: 'ボラ比',       field: 'volRatio',                  binCount: 20, decimals: 2 },
+    mddRatio: { label: '最大下落比',   field: 'mddRatio',                  binCount: 20, decimals: 2 },
+};
+
+/** ヒストグラムの指標選択欄（sim-hist-metric）から現在の選択を読み取る。未選択・不正値は'score'にフォールバック。 */
+function getSimHistMetricKey() {
+    const key = document.getElementById('sim-hist-metric')?.value;
+    return SIM_HIST_METRICS[key] ? key : 'score';
+}
+
+/** ヒストグラムの軸ラベル・ツールチップ用に、指標の値を桁数を揃えて文字列化する。 */
+function formatSimHistValue(value, metric) {
+    return value.toFixed(metric.decimals);
+}
+
+/**
+ * 指標分布をdiv要素の積み上げ棒グラフで描く（外部チャートライブラリは使わない簡易実装）。
+ * 各binの棒は、旧実装の手動ラベル（refLabel。past/C02-2_ディフェンシブ判定ラベル付け.ipynb由来）で
+ * 「旧ディフェンシブ／旧オフェンシブ／参考ラベル無し」の3区分に積み上げる（現在の判定しきい値とは無関係の表示）。
+ */
 function renderSimHistogram() {
     const container = document.getElementById('sim-histogram');
     if (!container) return;
     container.replaceChildren();
 
-    const scores = simResults.map(r => r.score).filter(s => Number.isFinite(s));
-    if (scores.length === 0) {
-        container.textContent = 'スコアを計算するとヒストグラムが表示されます。';
+    const metric = SIM_HIST_METRICS[getSimHistMetricKey()];
+    const items = simResults
+        .map(r => ({ value: r[metric.field], category: r.refLabel }))
+        .filter(it => Number.isFinite(it.value));
+    if (items.length === 0) {
+        container.textContent = '計算するとヒストグラムが表示されます。';
         return;
     }
 
-    const threshold = getSimThreshold();
-    const bins = buildHistogramBins(scores, 5);
+    const bins = buildHistogramBins(items, { min: metric.min, max: metric.max, binCount: metric.binCount });
     const maxCount = Math.max(...bins.map(b => b.count), 1);
 
-    bins.forEach(bin => {
+    // 軸ラベル（数字）はバー本体（線＝border-bottomで下端を揃える行）とは別行にして線の下に出す。
+    // 同じ縦積みのカラム内で下揃えしていた旧実装では、数字が付くビンだけカラムの占有高さが変わり、
+    // バーの下端が列ごとにずれてがたついて見える問題があった。
+    const bars = document.createElement('div');
+    bars.className = 'sim-hist-bars';
+    const labels = document.createElement('div');
+    labels.className = 'sim-hist-labels';
+
+    // 積み上げの順（DOM順＝上から下）。旧ディフェンシブを一番下（軸線側）に置く
+    const stackOrder = [
+        { key: '_none',     cls: 'sim-hist-seg--none' },
+        { key: 'offensive', cls: 'sim-hist-seg--offensive' },
+        { key: 'defensive', cls: 'sim-hist-seg--defensive' },
+    ];
+
+    bins.forEach((bin, i) => {
         const col = document.createElement('div');
         col.className = 'sim-hist-col';
 
@@ -1933,62 +2169,122 @@ function renderSimHistogram() {
         count.className = 'sim-hist-count';
         count.textContent = bin.count > 0 ? String(bin.count) : '';
 
-        const bar = document.createElement('div');
-        bar.className = 'sim-hist-bar' + (bin.from >= threshold ? ' sim-hist-bar--defensive' : ' sim-hist-bar--offensive');
-        bar.style.height = `${(bin.count / maxCount) * 100}%`;
-        bar.title = `${bin.from}〜${bin.to}点: ${bin.count}件`;
+        const stack = document.createElement('div');
+        stack.className = 'sim-hist-stack';
+        stack.style.height = `${(bin.count / maxCount) * 100}%`;
+        stack.title = `${formatSimHistValue(bin.from, metric)}〜${formatSimHistValue(bin.to, metric)}: ${bin.count}件`;
+
+        stackOrder.forEach(({ key, cls }) => {
+            const segCount = bin.byCategory[key] || 0;
+            if (segCount === 0) return;
+            const seg = document.createElement('div');
+            seg.className = `sim-hist-seg ${cls}`;
+            seg.style.height = `${(segCount / bin.count) * 100}%`;
+            stack.appendChild(seg);
+        });
+
+        col.append(count, stack);
+        bars.appendChild(col);
 
         const label = document.createElement('div');
         label.className = 'sim-hist-label';
-        label.textContent = bin.from % 10 === 0 ? String(bin.from) : '';
-
-        col.append(count, bar, label);
-        container.appendChild(col);
+        label.textContent = i % 2 === 0 ? formatSimHistValue(bin.from, metric) : '';
+        labels.appendChild(label);
     });
+
+    container.append(bars, labels);
 }
 
-/** 結果一覧テーブル（スコア降順）。旧実装の手動ラベル（REFERENCE_LABELS）との一致・不一致も表示する。 */
+// SIM：銘柄一覧テーブルの列定義。sortValueは並べ替えに使う生の値、formatは表示用の文字列を返す
+// （format省略時はsortValueの結果をそのまま表示する）。判定・参考ラベル(旧)は現在の判定しきい値
+// （sim-thresholdの値）に依存するため、都度getSimThreshold()を読んで計算する。
+const SIM_TABLE_COLUMNS = [
+    { key: 'code',     label: 'コード',         sortValue: r => r.code },
+    { key: 'name',     label: '銘柄名',         sortValue: r => r.name },
+    { key: 'score',    label: 'スコア',         sortValue: r => r.score,    format: r => Number.isFinite(r.score) ? r.score.toFixed(1) : (r.error || '－') },
+    { key: 'corrDown', label: '下落局面相関',   sortValue: r => r.corrDown, format: r => Number.isFinite(r.corrDown) ? r.corrDown.toFixed(2) : '－' },
+    { key: 'volRatio', label: 'ボラ比',         sortValue: r => r.volRatio, format: r => Number.isFinite(r.volRatio) ? r.volRatio.toFixed(2) : '－' },
+    { key: 'mddRatio', label: '最大下落比',     sortValue: r => r.mddRatio, format: r => Number.isFinite(r.mddRatio) ? r.mddRatio.toFixed(2) : '－' },
+    { key: 'judge',    label: '判定',           sortValue: r => simJudgeText(r) },
+    { key: 'refLabel', label: '参考ラベル(旧)', sortValue: r => simRefLabelText(r) },
+    { key: 'periods',  label: '対象期間数',     sortValue: r => r.periods },
+];
+
+let simSortKey = 'score'; // 現在のソート対象列のkey（既定：スコア）
+let simSortDir = -1;      // 1=昇順、-1=降順（既定：スコア降順。旧実装のデフォルト表示と揃えている）
+
+/** 現在の判定しきい値と比較した判定結果のテキスト。判定列の表示・ソート値、行の背景色判定（不一致）で共通利用する。 */
+function simJudgeText(r) {
+    const threshold = getSimThreshold();
+    return Number.isFinite(r.score) ? (r.score >= threshold ? 'ディフェンシブ' : 'オフェンシブ') : (r.error ? 'エラー' : 'データ不足');
+}
+
+/** 旧実装の手動ラベル（refLabel）の表示用テキスト。参考ラベル(旧)列の表示・ソート値で共通利用する。 */
+function simRefLabelText(r) {
+    return r.refLabel === 'defensive' ? 'ディフェンシブ' : r.refLabel === 'offensive' ? 'オフェンシブ' : '－';
+}
+
+/** ソート値の比較。数値同士は数値として、それ以外は文字列として比較する。
+ * null/undefined/算出不能（NaN）は昇順・降順どちらでも常に末尾に回す（値が無い行が上位に来て紛らわしくなるのを防ぐ）。 */
+function compareSimSortValues(a, b, dir) {
+    const aEmpty = a === null || a === undefined || (typeof a === 'number' && !Number.isFinite(a));
+    const bEmpty = b === null || b === undefined || (typeof b === 'number' && !Number.isFinite(b));
+    if (aEmpty && bEmpty) return 0;
+    if (aEmpty) return 1;
+    if (bEmpty) return -1;
+    if (typeof a === 'number' && typeof b === 'number') return dir * (a - b);
+    return dir * String(a).localeCompare(String(b), 'ja');
+}
+
+/** 結果一覧テーブル。列ヘッダークリックでその列でソートする（同じ列の再クリックで昇順/降順トグル、
+ * 別の列への切り替えは降順から始める）。既定はスコア降順。旧実装の手動ラベル（REFERENCE_LABELS）との
+ * 一致・不一致も表示する。 */
 function renderSimTable() {
     const table = document.getElementById('sim-table');
     if (!table) return;
 
-    const threshold = getSimThreshold();
-    const cols = ['コード', '銘柄名', 'スコア', '下落局面相関', 'ボラ比', '最大下落比', '判定', '参考ラベル(旧)', '対象月数'];
     const thead = document.createElement('thead');
     const hRow = document.createElement('tr');
-    cols.forEach(c => { const th = document.createElement('th'); th.textContent = c; hRow.appendChild(th); });
+    SIM_TABLE_COLUMNS.forEach(col => {
+        const th = document.createElement('th');
+        th.className = 'sim-table-sortable';
+        const arrow = simSortKey === col.key ? (simSortDir === 1 ? ' ▲' : ' ▼') : '';
+        th.textContent = col.label + arrow;
+        th.addEventListener('click', () => {
+            if (simSortKey === col.key) simSortDir *= -1;
+            else { simSortKey = col.key; simSortDir = -1; }
+            renderSimTable();
+        });
+        hRow.appendChild(th);
+    });
     thead.appendChild(hRow);
 
     const tbody = document.createElement('tbody');
-    const sorted = [...simResults].sort((a, b) => (b.score ?? -1) - (a.score ?? -1));
+    const sortCol = SIM_TABLE_COLUMNS.find(c => c.key === simSortKey) || SIM_TABLE_COLUMNS[2];
+    const sorted = [...simResults].sort((a, b) => compareSimSortValues(sortCol.sortValue(a), sortCol.sortValue(b), simSortDir));
 
     if (sorted.length === 0) {
         const tr = document.createElement('tr');
         const td = document.createElement('td');
-        td.colSpan = cols.length;
+        td.colSpan = SIM_TABLE_COLUMNS.length;
         td.className = 'empty-cell';
         td.textContent = '計算結果がありません';
         tr.appendChild(td);
         tbody.appendChild(tr);
     } else {
+        const threshold = getSimThreshold();
         sorted.forEach(r => {
             const tr = document.createElement('tr');
-            const judge = Number.isFinite(r.score) ? (r.score >= threshold ? 'ディフェンシブ' : 'オフェンシブ') : (r.error ? 'エラー' : 'データ不足');
-            const refLabelText = r.refLabel === 'defensive' ? 'ディフェンシブ' : r.refLabel === 'offensive' ? 'オフェンシブ' : '－';
             const mismatch = r.refLabel && Number.isFinite(r.score) &&
                 ((r.refLabel === 'defensive' && r.score < threshold) || (r.refLabel === 'offensive' && r.score >= threshold));
             if (mismatch) tr.classList.add('sim-row-mismatch');
 
-            const values = [
-                r.code, r.name,
-                Number.isFinite(r.score) ? r.score.toFixed(1) : (r.error || '－'),
-                Number.isFinite(r.corrDown) ? r.corrDown.toFixed(2) : '－',
-                Number.isFinite(r.volRatio) ? r.volRatio.toFixed(2) : '－',
-                Number.isFinite(r.mddRatio) ? r.mddRatio.toFixed(2) : '－',
-                judge, refLabelText,
-                r.months ?? '－',
-            ];
-            values.forEach(v => { const td = document.createElement('td'); td.textContent = v; tr.appendChild(td); });
+            SIM_TABLE_COLUMNS.forEach(col => {
+                const td = document.createElement('td');
+                const raw = col.sortValue(r);
+                td.textContent = col.format ? col.format(r) : (raw ?? '－');
+                tr.appendChild(td);
+            });
             tbody.appendChild(tr);
         });
     }

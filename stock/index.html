@@ -6,6 +6,7 @@
     <title>Stock 投資管理</title>
     <link rel="stylesheet" href="css/style.css">
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
 </head>
 <body>
 
@@ -360,7 +361,7 @@
              可視化のみを行う（データへの書き込みは行わない、あくまで試算用のページ）。旧手動ラベルは比較表示にのみ使う -->
         <div id="view-sim" class="view-panel" style="display:none">
             <p class="section-label">SIM（ディフェンシブ度シミュレータ）</p>
-            <p class="placeholder-text">株価の値動きを日経平均（N225）と比較し、下落局面相関・ボラ比・最大下落比の3指標からディフェンシブ度スコア（0〜100、高いほど景気非連動）を試算します。パラメータを調整して「計算」を押すと、対象銘柄のスコア分布と、旧実装で手動ラベル付けしていた銘柄との比較を確認できます（結果はどこにも保存されません）。</p>
+            <p class="placeholder-text">株価の値動きを日経平均（N225）と比較し、下落局面相関・ボラ比・最大下落比の3指標からディフェンシブ度スコア（0〜100、高いほど景気非連動）を試算します。パラメータを調整して「計算」を押すと、対象銘柄のスコア分布と、旧実装で手動ラベル付けしていた銘柄との比較を確認できます。「計算」だけでは何も保存されず、下部の「適用」を押した時点で初めて`stock/scores.csv`に保存されます。</p>
 
             <div class="update-form">
                 <p class="update-form-title">対象銘柄・期間</p>
@@ -426,22 +427,22 @@
                 </div>
             </details>
 
-            <!-- 指標の定義そのもの（下落局面の閾値・リターン算出期間）を調整するための入力欄。
-                 現時点では入力欄のみで、計算ロジックへの反映は未実装（今後の対応予定） -->
+            <!-- 指標の定義そのもの（下落局面の閾値・リターン算出期間・ボラ比/最大下落比の算出方法）を調整する入力欄。
+                 js/modules/defensiveScore.jsのcalcDefensiveScoreに渡り、計算に反映される -->
             <details class="advanced-settings">
-                <summary>指標の定義（詳細設定・未実装）</summary>
+                <summary>指標の定義（詳細設定）</summary>
                 <div class="update-form">
-                    <p class="placeholder-text">下落局面相関・ボラ比・最大下落比の算出方法そのものに関わるパラメータです。現時点では入力欄のみで、計算には反映されません。</p>
+                    <p class="placeholder-text">下落局面相関・ボラ比・最大下落比の算出方法そのものに関わるパラメータです。</p>
                     <div class="update-form-row">
                         <label>下落局面の閾値</label>
                         <input type="number" id="sim-down-threshold" value="0" step="0.01">
                     </div>
-                    <p class="placeholder-text">N225の期間リターンがこの値未満の期間を「下落局面」とみなします（初期値0＝マイナスの期間）。</p>
+                    <p class="placeholder-text">N225の期間リターンがこの値未満の期間を「下落局面」とみなします（初期値0＝マイナスの期間。下落局面相関・下方偏差モードのボラ比の両方で共通して使います）。</p>
                     <div class="update-form-row">
                         <label>リターン算出期間（週）</label>
                         <input type="number" id="sim-return-period-weeks" value="4" min="1" max="8" step="1">
                     </div>
-                    <p class="placeholder-text">月次リターンの代わりに、何週間ごとのリターンで算出するかを指定します（1〜8週）。</p>
+                    <p class="placeholder-text">下落局面相関・ボラ比の算出に使う期間リターンを、月次の代わりに何週間ごとで切り出すかを指定します（1〜8週。既定4週が月次相当）。最大下落比はこの設定と無関係に日足の値をそのまま使います。</p>
 
                     <p class="update-form-title">ボラ比の定義</p>
                     <div class="update-form-row">
@@ -453,14 +454,14 @@
                         <label>外れ値クリップ</label>
                         <input type="number" id="sim-vol-outlier-clip" value="0.5" step="0.05">
                     </div>
-                    <p class="placeholder-text">期間リターンの絶対値がこの値を超えたら丸めてから標準偏差を計算します。</p>
+                    <p class="placeholder-text">期間リターンの絶対値がこの値を超えたら丸めてから標準偏差を計算します（銘柄・N225の両方に同じ値を適用します）。</p>
 
                     <p class="update-form-title">最大下落比の定義</p>
                     <div class="update-form-row">
                         <label>下限クリップ</label>
                         <input type="number" id="sim-mdd-floor-clip" value="-0.4" step="0.05">
                     </div>
-                    <p class="placeholder-text">この値より深い下落は一律この値として扱います（例: -0.4なら-40%より深い下落を-40%に丸める）。</p>
+                    <p class="placeholder-text">この値より深い下落は一律この値として扱います（例: -0.4なら-40%より深い下落を-40%に丸める。銘柄・N225の両方に同じ値を適用します）。</p>
                     <div class="update-form-row">
                         <label>ローリング窓</label>
                         <input type="checkbox" id="sim-mdd-rolling-enabled">
@@ -476,7 +477,7 @@
                             <option value="max">最大</option>
                         </select>
                     </div>
-                    <p class="placeholder-text">ONにすると、全期間を通した単一の最大下落率ではなく、指定した窓の長さでローリング算出した最大下落率を集約方法（平均／最大）でまとめた値を使います。</p>
+                    <p class="placeholder-text">ONにすると、全期間を通した単一の最大下落率ではなく、日足終値に対して指定した窓の長さ（週。日数に換算）でローリング算出した最大下落率を集約方法（平均／最大）でまとめた値を使います（銘柄・N225の両方に同じ設定を適用します）。</p>
                 </div>
             </details>
 
@@ -490,11 +491,32 @@
             </div>
 
             <div class="update-form">
-                <p class="update-form-title">スコア分布（ヒストグラム）</p>
+                <p class="update-form-title">指標分布（ヒストグラム）</p>
+                <div class="update-form-row">
+                    <label>表示する指標</label>
+                    <select id="sim-hist-metric">
+                        <option value="score">スコア</option>
+                        <option value="corrDown">下落局面相関</option>
+                        <option value="volRatio">ボラ比</option>
+                        <option value="mddRatio">最大下落比</option>
+                    </select>
+                </div>
                 <div id="sim-histogram" class="sim-histogram"></div>
                 <p class="placeholder-text sim-histogram-legend">
-                    <span class="sim-legend-swatch sim-legend-swatch--defensive"></span>判定しきい値以上（ディフェンシブ）
-                    <span class="sim-legend-swatch sim-legend-swatch--offensive"></span>判定しきい値未満（オフェンシブ）
+                    <span class="sim-legend-swatch sim-legend-swatch--defensive"></span>旧ディフェンシブ（参考ラベル）
+                    <span class="sim-legend-swatch sim-legend-swatch--offensive"></span>旧オフェンシブ（参考ラベル）
+                    <span class="sim-legend-swatch sim-legend-swatch--none"></span>参考ラベル無し
+                </p>
+            </div>
+
+            <div class="update-form">
+                <p class="update-form-title">3軸散布図（下落局面相関×ボラ比×最大下落比）</p>
+                <p class="placeholder-text">ドラッグで回転、スクロールで拡大縮小できます（Plotly.jsによる3Dプロット）。色分けはヒストグラムと同じく旧実装の手動ラベル（参考ラベル）基準です。</p>
+                <div id="sim-scatter3d" class="sim-scatter3d"></div>
+                <p class="placeholder-text sim-histogram-legend">
+                    <span class="sim-legend-swatch sim-legend-swatch--defensive"></span>旧ディフェンシブ（参考ラベル）
+                    <span class="sim-legend-swatch sim-legend-swatch--offensive"></span>旧オフェンシブ（参考ラベル）
+                    <span class="sim-legend-swatch sim-legend-swatch--none"></span>参考ラベル無し
                 </p>
             </div>
 
@@ -504,6 +526,8 @@
                 <div class="table-wrapper table-wrapper--limited">
                     <table id="sim-table" class="data-table"></table>
                 </div>
+                <button type="button" id="sim-apply-btn" class="run-btn">適用（銘柄選定用スコアとして保存）</button>
+                <p id="sim-apply-status" class="update-status">スコアを算出できた銘柄（データ不足・エラーを除く）を、対象コードだけ更新・追加する形で`stock/scores.csv`に保存します（対象外の既存スコアは残ります）。</p>
             </div>
         </div>
 
