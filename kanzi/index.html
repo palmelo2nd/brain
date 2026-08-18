@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>漢字学習</title>
+    <link rel="stylesheet" href="css/style.css?v=1">
+</head>
+<body>
+
+<div class="app-shell">
+
+    <header class="app-header">
+        <h1 class="app-title">漢字学習</h1>
+
+        <label class="grade-select-label">
+            対象学年
+            <select id="grade-select">
+                <option value="all">すべて（1〜6年）</option>
+                <option value="1">小学1年</option>
+                <option value="2">小学2年</option>
+                <option value="3">小学3年</option>
+                <option value="4">小学4年</option>
+                <option value="5">小学5年</option>
+                <option value="6">小学6年</option>
+            </select>
+        </label>
+    </header>
+
+    <nav class="app-nav">
+        <button type="button" class="nav-btn nav-btn--active" data-view="home">ホーム</button>
+        <button type="button" class="nav-btn" data-view="reading">読みクイズ</button>
+        <button type="button" class="nav-btn" data-view="meaning">意味・熟語クイズ</button>
+        <button type="button" class="nav-btn" data-view="flashcard">フラッシュカード</button>
+        <button type="button" class="nav-btn" data-view="stats">成績</button>
+        <button type="button" class="nav-btn" data-view="settings">設定</button>
+    </nav>
+
+    <main class="main-content">
+
+        <!-- ========== ホーム ========== -->
+        <section id="view-home" class="view view--active">
+            <div id="home-summary" class="summary-card"></div>
+            <p class="home-hint">上の「対象学年」を選んでから、各クイズ・フラッシュカードのタブを開いてください。</p>
+        </section>
+
+        <!-- ========== 読みクイズ ========== -->
+        <section id="view-reading" class="view">
+            <div id="reading-question" class="quiz-question"></div>
+            <div id="reading-choices" class="quiz-choices"></div>
+            <div id="reading-feedback" class="quiz-feedback"></div>
+            <button type="button" id="reading-next-btn" class="primary-btn" style="display:none">次の問題</button>
+        </section>
+
+        <!-- ========== 意味・熟語クイズ ========== -->
+        <section id="view-meaning" class="view">
+            <div id="meaning-question" class="quiz-question"></div>
+            <div id="meaning-choices" class="quiz-choices"></div>
+            <div id="meaning-feedback" class="quiz-feedback"></div>
+            <button type="button" id="meaning-next-btn" class="primary-btn" style="display:none">次の問題</button>
+        </section>
+
+        <!-- ========== フラッシュカード ========== -->
+        <section id="view-flashcard" class="view">
+            <div id="flashcard-progress" class="flashcard-progress"></div>
+            <div id="flashcard-card" class="flashcard-card">
+                <div id="flashcard-front" class="flashcard-face flashcard-face--front"></div>
+                <div id="flashcard-back" class="flashcard-face flashcard-face--back" style="display:none"></div>
+            </div>
+            <p class="flashcard-hint">カードをタップ／クリックすると読み方と意味が出ます。</p>
+            <div id="flashcard-rate-buttons" class="flashcard-rate-buttons" style="display:none">
+                <button type="button" id="flashcard-again-btn" class="secondary-btn">もう一度</button>
+                <button type="button" id="flashcard-known-btn" class="primary-btn">覚えた</button>
+            </div>
+            <button type="button" id="flashcard-restart-btn" class="secondary-btn" style="display:none">最初からやり直す</button>
+        </section>
+
+        <!-- ========== 成績 ========== -->
+        <section id="view-stats" class="view">
+            <div id="stats-summary" class="summary-card"></div>
+            <h2 class="stats-heading">苦手な漢字</h2>
+            <ul id="stats-weak-list" class="weak-list"></ul>
+        </section>
+
+        <!-- ========== 設定 ========== -->
+        <section id="view-settings" class="view">
+            <label class="settings-field">
+                GitHub Personal Access Token
+                <input type="password" id="settings-token-input" placeholder="ghp_...">
+            </label>
+            <div class="settings-buttons">
+                <button type="button" id="settings-load-btn" class="primary-btn">読み込み</button>
+                <button type="button" id="settings-save-btn" class="secondary-btn">保存（進捗をGitHubへ反映）</button>
+            </div>
+            <p id="settings-status" class="settings-status"></p>
+        </section>
+
+    </main>
+
+</div>
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
