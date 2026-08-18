@@ -2058,7 +2058,13 @@ const SIM_REF_LABEL_CATEGORIES = [
  */
 function renderSimScatter3d() {
     const container = document.getElementById('sim-scatter3d');
-    if (!container || !window.Plotly) return;
+    if (!container) return;
+    if (!window.Plotly) {
+        // CDN読み込み失敗等で分かりにくく無反応になるより、原因が分かる表示にする
+        container.textContent = 'Plotly.jsの読み込みに失敗しました（通信環境やアドブロック等でcdn.plot.lyがブロックされている可能性があります）。ページを再読み込みしても改善しない場合はご連絡ください。';
+        console.error('renderSimScatter3d: window.Plotly is not available');
+        return;
+    }
 
     const items = simResults.filter(r =>
         Number.isFinite(r.corrDown) && Number.isFinite(r.volRatio) && Number.isFinite(r.mddRatio)
@@ -2084,23 +2090,30 @@ function renderSimScatter3d() {
         };
     }).filter(trace => trace.x.length > 0);
 
-    // newPlot（reactではなく）で毎回作り直す：3軸散布図は「計算」実行時にのみ呼ばれる
-    // （判定しきい値スライダーからは呼ばれない。renderSimResults呼び出し箇所のコメント参照）ため、
-    // 回転視点のリセットは計算結果自体が変わるこのタイミングでのみ発生し、実用上問題にならない。
-    window.Plotly.newPlot(container, traces, {
-        margin: { l: 0, r: 0, t: 10, b: 0 },
-        scene: {
-            xaxis: { title: '下落局面相関' },
-            yaxis: { title: 'ボラ比' },
-            zaxis: { title: '最大下落比' },
-            // 3指標は値のスケールが異なる（下落局面相関は-1〜1、ボラ比・最大下落比は実データ依存）ため、
-            // 既定のaspectmode='auto'（各軸を実際のデータレンジ比のまま描画）だと箱が歪んで見える。
-            // 'cube'にすると各軸の実レンジに関わらず描画上の箱を立方体に強制する（軸目盛りの実際の値・
-            // ホバー表示の値自体は変えず、見た目の縦横比だけを揃える）。
-            aspectmode: 'cube',
-        },
-        legend: { orientation: 'h', y: 0 },
-    }, { responsive: true, displaylogo: false });
+    try {
+        // newPlot（reactではなく）で毎回作り直す：3軸散布図は「計算」実行時にのみ呼ばれる
+        // （判定しきい値スライダーからは呼ばれない。renderSimResults呼び出し箇所のコメント参照）ため、
+        // 回転視点のリセットは計算結果自体が変わるこのタイミングでのみ発生し、実用上問題にならない。
+        window.Plotly.newPlot(container, traces, {
+            margin: { l: 0, r: 0, t: 10, b: 0 },
+            scene: {
+                xaxis: { title: '下落局面相関' },
+                yaxis: { title: 'ボラ比' },
+                zaxis: { title: '最大下落比' },
+                // 3指標は値のスケールが異なる（下落局面相関は-1〜1、ボラ比・最大下落比は実データ依存）ため、
+                // 既定のaspectmode='auto'（各軸を実際のデータレンジ比のまま描画）だと箱が歪んで見える。
+                // 'cube'にすると各軸の実レンジに関わらず描画上の箱を立方体に強制する（軸目盛りの実際の値・
+                // ホバー表示の値自体は変えず、見た目の縦横比だけを揃える）。
+                aspectmode: 'cube',
+            },
+            legend: { orientation: 'h', y: 0 },
+        }, { responsive: true, displaylogo: false });
+    } catch (error) {
+        // ここで例外を外に投げると、呼び出し元（runSimCalculation）のcatchに拾われて
+        // 「計算」自体が失敗したかのように誤解させるステータス表示になってしまうため、ここで止める。
+        console.error('renderSimScatter3d failed:', error);
+        container.textContent = `3D散布図の描画に失敗しました: ${error.message}`;
+    }
 }
 
 // ヒストグラムに表示できる指標一覧。fieldはsimResultsの各要素のキーと対応させる。
