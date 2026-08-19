@@ -4,10 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Second Brain タスク管理</title>
-    <link rel="stylesheet" href="css/style.css?v=5">
-    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+    <link rel="stylesheet" href="css/style.css?v=6">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js" defer></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" defer></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js" defer></script>
 </head>
 <body>
 
@@ -187,8 +187,8 @@
                             </div>
                         </div>
 
-                        <!-- 未設定／設定済みタスク（既定は折りたたみ） -->
-                        <details class="expander calendar-sub-expander">
+                        <!-- 未設定／設定済みタスク（既定は折りたたみ。パフォーマンスのため開いている時だけ再描画する） -->
+                        <details id="taskorg2-inprogress-toggle" class="expander calendar-sub-expander">
                             <summary class="expander-title">対応中タスク（期間内）<span id="calendar2-todo-dayplan-count" class="expander-count"></span></summary>
                             <p class="calendar-dayplan-hint">期間：開始予定～終了予定。未設定タスク＝開始予定・終了予定に時刻が入っていないタスク、設定済みタスク＝その日の1日タスクに参照されているタスク。対象ステータス：未着手／進行中／中断／連絡待ち／報告待ちは対象期間内の1日のみ表示、完了は完了日に合致する日のみ表示。</p>
                             <div class="calendar-unscheduled-section">
@@ -199,8 +199,8 @@
                             </div>
                         </details>
 
-                        <!-- ステータスが「連絡待ち」「報告待ち」「中断」のタスク（既定は折りたたみ） -->
-                        <details class="expander calendar-sub-expander">
+                        <!-- ステータスが「連絡待ち」「報告待ち」「中断」のタスク（既定は折りたたみ。パフォーマンスのため開いている時だけ再描画する） -->
+                        <details id="taskorg2-waiting-toggle" class="expander calendar-sub-expander">
                             <summary class="expander-title">対応待ちタスク（期間外）<span id="calendar2-waiting-total-count" class="expander-count"></span></summary>
                             <p class="calendar-dayplan-hint">連絡待ち／報告待ち／中断のうち、開始予定・終了予定がともに入力済みで、かつ今日がその期間内ではない（＝対応中タスクに該当しない）タスクのみを表示します。開始予定・終了予定の少なくとも一方が未入力のタスクは属性未設定タスク側に表示されます。</p>
 
@@ -218,8 +218,8 @@
                             </div>
                         </details>
 
-                        <!-- カテゴリ／ステータス／優先度／プロジェクト（親ID）／日付のいずれかが未設定のタスク（既定は折りたたみ） -->
-                        <details class="expander calendar-sub-expander">
+                        <!-- カテゴリ／ステータス／優先度／プロジェクト（親ID）／日付のいずれかが未設定のタスク（既定は折りたたみ。パフォーマンスのため開いている時だけ再描画する） -->
+                        <details id="taskorg2-unset-toggle" class="expander calendar-sub-expander">
                             <summary class="expander-title">属性未設定タスク<span id="calendar2-unset-total-count" class="expander-count"></span></summary>
                             <p class="calendar-dayplan-hint">カテゴリ・ステータス・優先度・プロジェクト（親ID）・日付（開始予定／終了予定）のいずれかが未入力のタスクです（複数の領域に重複して表示される場合があります）。</p>
 
@@ -438,8 +438,6 @@
             </div>
         </div>
 
-        <!-- load-btn / save-btn ハンドラが参照する要素（非表示） -->
-        <div id="content-box" style="display:none"></div>
 
         <div id="page-summary">
             <h2>Second Brain</h2>
@@ -473,7 +471,7 @@
                 <span id="network-status-top" class="js-network-status"></span>
 
                 <div class="top-bar-group">
-                    <button id="cache-reset-btn" class="js-cache-reset-btn" title="スマホ等で更新が反映されない場合に押してください">キャッシュ更新</button>
+                    <button id="cache-reset-btn" class="js-cache-reset-btn" title="デバイス等で更新が反映されない場合に押してください">キャッシュ更新</button>
                 </div>
             </div>
 
@@ -868,6 +866,6 @@
 
 </div>
 
-<script type="module" src="js/app.js?v=15"></script>
+<script type="module" src="js/app.js?v=17"></script>
 </body>
 </html>

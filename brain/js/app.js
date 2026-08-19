@@ -540,18 +540,14 @@ function applyContent(content, sha) {
  * (2) インプット: token (string), silent (boolean) - trueの場合トークン未入力時にアラートを出さない
  */
 async function loadFromGitproject(token, silent = false) {
-    const contentBox = document.getElementById('content-box');
-
     if (!token) { if (!silent) alert('トークンを入力してください'); return; }
     saveToken(token);
-    contentBox.textContent = '読み込み中...';
 
     try {
         const { content, sha } = await fetchFile(token, OWNER, REPO, PATH);
         applyContent(content, sha);
         lastSyncedMarkdown = content; // GitHub上の内容を「同期済み」の基準にする
         persistLocalCache();          // 繰り返しタスク自動生成分も含めた現在の状態をキャッシュ＆バッジ反映
-        contentBox.innerHTML = window.marked.parse(content);
     } catch (error) {
         console.error(error);
         const cached = loadCache();
@@ -559,10 +555,7 @@ async function loadFromGitproject(token, silent = false) {
             applyContent(cached.content, cached.sha);
             lastSyncedMarkdown = cached.content; // 端末内キャッシュを「同期済み」の基準にする
             setNetworkStatus('<span class="status-badge offline-badge">オフライン（未同期）</span>');
-            contentBox.innerHTML = window.marked.parse(cached.content);
-            if (!silent) alert('通信できませんでした。スマホ内に一時保存されている前回のデータを表示します。');
-        } else {
-            contentBox.textContent = `エラー: ${error.message}（端末内にキャッシュもありません）`;
+            if (!silent) alert('通信できませんでした。デバイス内に一時保存されている前回のデータを表示します。');
         }
     }
 }
@@ -599,8 +592,6 @@ function resolveMasterData(baseMasterData, localMasterData, remoteMasterData) {
  * 相手の最新SHAに対して保存し直す。
  */
 async function handleSaveConflict(token, silent) {
-    const contentBox = document.getElementById('content-box');
-
     try {
         const { content: remoteContent, sha: remoteSha } = await fetchFile(token, OWNER, REPO, PATH);
         const { mainData: remoteMain, masterData: remoteMaster } = parseMarkdown(remoteContent);
@@ -609,6 +600,7 @@ async function handleSaveConflict(token, silent) {
         const { merged, conflicts } = mergeMainData(baseMain, currentMainData, remoteMain);
         currentMainData   = merged;
         currentMasterData = resolveMasterData(baseMaster, currentMasterData, remoteMaster);
+        invalidateTaskorg2HierarchyCache(); // currentMainDataを丸ごと差し替えたため親ID階層キャッシュも破棄する
 
         const mergedMarkdown = stringifyMarkdown(currentMainData, currentMasterData);
         const { newSha } = await saveFile(token, OWNER, REPO, PATH, mergedMarkdown, remoteSha);
@@ -619,7 +611,6 @@ async function handleSaveConflict(token, silent) {
         updateSyncBadge(mergedMarkdown);
 
         if (!silent) {
-            contentBox.innerHTML = window.marked.parse(mergedMarkdown);
             alert(conflicts.length > 0
                 ? `他端末の更新と自動マージして保存しました（${conflicts.length}件は更新日時の新しい方を優先しました）。`
                 : '他端末の更新を取り込んでマージし、保存しました。');
@@ -639,20 +630,13 @@ async function handleSaveConflict(token, silent) {
  * (2) インプット: token (string), silent (boolean) - trueの場合、進捗表示・完了アラートを出さない（自動保存用）
  */
 async function saveToGithub(token, silent = false) {
-    const contentBox = document.getElementById('content-box');
-
     const newMarkdown = stringifyMarkdown(currentMainData, currentMasterData);
 
     if (newMarkdown === lastSyncedMarkdown) {
-        if (!silent) {
-            contentBox.textContent = '変更がないため保存をスキップしました。';
-            setTimeout(() => { contentBox.innerHTML = window.marked.parse(newMarkdown); }, 1500);
-        }
         return;
     }
 
     saveCache(newMarkdown, currentSha);
-    if (!silent) contentBox.textContent = '保存中...';
 
     try {
         const { newSha } = await saveFile(token, OWNER, REPO, PATH, newMarkdown, currentSha);
@@ -661,7 +645,6 @@ async function saveToGithub(token, silent = false) {
         saveCache(newMarkdown, newSha);
         updateSyncBadge(newMarkdown); // 保存直後は lastSyncedMarkdown と一致するため「オンライン（最新）」になる
         if (!silent) {
-            contentBox.innerHTML = window.marked.parse(newMarkdown);
             alert('保存が成功しました！');
         }
     } catch (error) {
@@ -674,8 +657,7 @@ async function saveToGithub(token, silent = false) {
 
         setNetworkStatus('<span class="status-badge offline-badge">オフライン（未同期）</span>');
         if (!silent) {
-            contentBox.innerHTML = window.marked.parse(newMarkdown);
-            alert('現在通信ができません。変更はスマホ内に一時保存されました。電波の良い場所に移動してから、再度「保存」を押して同期してください。');
+            alert('現在通信ができません。変更はデバイス内に一時保存されました。電波の良い場所に移動してから、再度「保存」を押して同期してください。');
         }
     }
 }
@@ -717,41 +699,37 @@ document.querySelectorAll('.js-excel-import').forEach(input => {
 
         const token      = getTokenValue();
         persistCurrentToken();
-        const contentBox = document.getElementById('content-box');
 
         const { mainData, masterData } = await importFromExcel(file);
         currentMainData   = mainData;
         currentMasterData = masterData;
+        invalidateTaskorg2HierarchyCache(); // currentMainDataを丸ごと差し替えたため親ID階層キャッシュも破棄する
 
         const newMarkdown = stringifyMarkdown(mainData, masterData);
         saveCache(newMarkdown, currentSha);
         e.target.value = ''; // 同一ファイルの再インポートを可能にするためリセット
 
         if (token && currentSha) {
-            contentBox.textContent = 'GitHubへ保存中...';
             try {
                 const { newSha } = await saveFile(token, OWNER, REPO, PATH, newMarkdown, currentSha);
                 currentSha = newSha;
                 lastSyncedMarkdown = newMarkdown;
                 saveCache(newMarkdown, newSha);
                 updateSyncBadge(newMarkdown); // 保存直後は lastSyncedMarkdown と一致するため「オンライン（最新）」になる
-                contentBox.innerHTML = window.marked.parse(newMarkdown);
                 alert('Excelのインポートとデータ保存が完了しました！');
             } catch (error) {
                 console.error(error);
                 setNetworkStatus('<span class="status-badge offline-badge">オフライン（未同期）</span>');
-                contentBox.innerHTML = window.marked.parse(newMarkdown);
                 alert('インポートデータを端末内に保存しました。「GitHubへ保存する」で同期してください。');
             }
         } else {
             setNetworkStatus('<span class="status-badge offline-badge">オフライン（未同期）</span>');
-            contentBox.innerHTML = window.marked.parse(newMarkdown);
             alert('インポートデータを端末内に保存しました。GitHubへ同期するには、トークンを入力して読み込んでから再度インポートしてください。');
         }
     });
 });
 
-// ===== キャッシュ更新（スマホ等で古いコードが残る場合の強制リフレッシュ） =====
+// ===== キャッシュ更新（デバイス等で古いコードが残る場合の強制リフレッシュ） =====
 
 document.querySelectorAll('.js-cache-reset-btn').forEach(btn => {
     btn.addEventListener('click', async () => {
@@ -4987,19 +4965,28 @@ function renderTaskorg2UnsetSection() {
     const waitingReportEl  = document.getElementById('calendar2-waitingreport-list');
     if (!incompleteEl) return;
 
+    // 3セクション（対応中／対応待ち／属性未設定）とも既定は折りたたみのため、件数バッジ・選択整合性の更新（軽量）は
+    // 常に行うが、行ごとのチップDOM生成（重い）はExpanderが開いている時だけ行う（繰返しタスク等と同じパフォーマンス対策）。
+    const unsetOpen    = document.getElementById('taskorg2-unset-toggle')?.open;
+    const waitingOpen  = document.getElementById('taskorg2-waiting-toggle')?.open;
+    const inProgressOpen = document.getElementById('taskorg2-inprogress-toggle')?.open;
+
     const unsetGroups = getTaskorg2UnsetAttributeGroups();
     const toChips = rows => rows.map(row => ({ row, label: row['タイトル'] || '（無題）' }));
-    renderTaskorg2ChipList(unsetCategoryEl, toChips(unsetGroups.categoryUnset), '該当なし', { selectionSet: selectedTaskorg2UnsetIds });
-    renderTaskorg2ChipList(unsetStatusEl,   toChips(unsetGroups.statusUnset),   '該当なし', { selectionSet: selectedTaskorg2UnsetIds });
-    renderTaskorg2ChipList(unsetPriorityEl, toChips(unsetGroups.priorityUnset), '該当なし', { selectionSet: selectedTaskorg2UnsetIds });
-    renderTaskorg2ChipList(unsetProjectEl,  toChips(unsetGroups.projectUnset),  '該当なし', { selectionSet: selectedTaskorg2UnsetIds });
+    if (unsetOpen) {
+        renderTaskorg2ChipList(unsetCategoryEl, toChips(unsetGroups.categoryUnset), '該当なし', { selectionSet: selectedTaskorg2UnsetIds });
+        renderTaskorg2ChipList(unsetStatusEl,   toChips(unsetGroups.statusUnset),   '該当なし', { selectionSet: selectedTaskorg2UnsetIds });
+        renderTaskorg2ChipList(unsetPriorityEl, toChips(unsetGroups.priorityUnset), '該当なし', { selectionSet: selectedTaskorg2UnsetIds });
+        renderTaskorg2ChipList(unsetProjectEl,  toChips(unsetGroups.projectUnset),  '該当なし', { selectionSet: selectedTaskorg2UnsetIds });
+    }
     setExpanderCount('calendar2-unset-category-count', unsetGroups.categoryUnset.length);
     setExpanderCount('calendar2-unset-status-count',   unsetGroups.statusUnset.length);
     setExpanderCount('calendar2-unset-priority-count', unsetGroups.priorityUnset.length);
     setExpanderCount('calendar2-unset-project-count',  unsetGroups.projectUnset.length);
 
-    const incompleteChips = getTaskorg2IncompleteDateTasks().map(row => ({ row, label: row['タイトル'] || '（無題）' }));
-    renderTaskorg2ChipList(incompleteEl, incompleteChips, '該当なし', { selectionSet: selectedTaskorg2UnsetIds });
+    const incompleteTasks = getTaskorg2IncompleteDateTasks();
+    const incompleteChips = incompleteTasks.map(row => ({ row, label: row['タイトル'] || '（無題）' }));
+    if (unsetOpen) renderTaskorg2ChipList(incompleteEl, incompleteChips, '該当なし', { selectionSet: selectedTaskorg2UnsetIds });
     setExpanderCount('calendar2-incomplete-count', incompleteChips.length);
 
     setExpanderCount('calendar2-unset-total-count',
@@ -5011,22 +4998,21 @@ function renderTaskorg2UnsetSection() {
     const unsetValidIds = new Set([
         ...unsetGroups.categoryUnset, ...unsetGroups.statusUnset,
         ...unsetGroups.priorityUnset, ...unsetGroups.projectUnset,
-        ...getTaskorg2IncompleteDateTasks(),
+        ...incompleteTasks,
     ].map(r => String(r['ID'])));
     pruneTaskorg2Selection(selectedTaskorg2UnsetIds, unsetValidIds);
 
     const waitingContactChips = toChips(getTaskorg2WaitingContactTasks());
-    renderTaskorg2ChipList(waitingContactEl, waitingContactChips, '該当なし', { selectionSet: selectedTaskorg2WaitingIds });
+    const waitingReportChips  = toChips(getTaskorg2WaitingReportTasks());
+    const suspendedChips      = toChips(getTaskorg2SuspendedTasks());
+    if (waitingOpen) {
+        renderTaskorg2ChipList(waitingContactEl, waitingContactChips, '該当なし', { selectionSet: selectedTaskorg2WaitingIds });
+        renderTaskorg2ChipList(waitingReportEl,  waitingReportChips,  '該当なし', { selectionSet: selectedTaskorg2WaitingIds });
+        renderTaskorg2ChipList(suspendedEl,      suspendedChips,      '該当なし', { selectionSet: selectedTaskorg2WaitingIds });
+    }
     setExpanderCount('calendar2-waitingcontact-count', waitingContactChips.length);
-
-    const waitingReportChips = toChips(getTaskorg2WaitingReportTasks());
-    renderTaskorg2ChipList(waitingReportEl, waitingReportChips, '該当なし', { selectionSet: selectedTaskorg2WaitingIds });
-    setExpanderCount('calendar2-waitingreport-count', waitingReportChips.length);
-
-    const suspendedChips = toChips(getTaskorg2SuspendedTasks());
-    renderTaskorg2ChipList(suspendedEl, suspendedChips, '該当なし', { selectionSet: selectedTaskorg2WaitingIds });
-    setExpanderCount('calendar2-suspended-count', suspendedChips.length);
-
+    setExpanderCount('calendar2-waitingreport-count',  waitingReportChips.length);
+    setExpanderCount('calendar2-suspended-count',      suspendedChips.length);
     setExpanderCount('calendar2-waiting-total-count',
         waitingContactChips.length + waitingReportChips.length + suspendedChips.length);
 
@@ -5037,8 +5023,10 @@ function renderTaskorg2UnsetSection() {
     pruneTaskorg2Selection(selectedTaskorg2WaitingIds, waitingValidIds);
 
     if (!selectedTaskorg2Date) {
-        if (unscheduledEl)  unscheduledEl.innerHTML = '';
-        if (dayplanAddedEl) dayplanAddedEl.innerHTML = '';
+        if (inProgressOpen) {
+            if (unscheduledEl)  unscheduledEl.innerHTML = '';
+            if (dayplanAddedEl) dayplanAddedEl.innerHTML = '';
+        }
         setExpanderCountPair('calendar2-todo-dayplan-count', 0, 0);
         selectedTaskorg2InProgressIds.clear();
         return;
@@ -5052,10 +5040,12 @@ function renderTaskorg2UnsetSection() {
                 .map(seg => ({ row: seg.row, label: `${fmt(seg.startMin)}–${fmt(seg.endMin)} ${seg.row['タイトル'] || '（無題）'}` })),
     ];
     chipEntries.sort((a, b) => compareDateAscEmptyLast(a.row['終了予定'], b.row['終了予定']));
-    renderTaskorg2GroupedChips(unscheduledEl, chipEntries, 'この日のタスクはありません', { showAddButton: true, selectionSet: selectedTaskorg2InProgressIds });
 
     const referencedChips = referenced.map(row => ({ row, label: row['タイトル'] || '（無題）' }));
-    renderTaskorg2GroupedChips(dayplanAddedEl, referencedChips, 'まだありません', { selectionSet: selectedTaskorg2InProgressIds });
+    if (inProgressOpen) {
+        renderTaskorg2GroupedChips(unscheduledEl, chipEntries, 'この日のタスクはありません', { showAddButton: true, selectionSet: selectedTaskorg2InProgressIds });
+        renderTaskorg2GroupedChips(dayplanAddedEl, referencedChips, 'まだありません', { selectionSet: selectedTaskorg2InProgressIds });
+    }
 
     setExpanderCountPair('calendar2-todo-dayplan-count', chipEntries.length, referencedChips.length);
 
@@ -5991,6 +5981,9 @@ function renderTaskorg2TaskChange() {
 // （閉じている間はrenderSummary側で再描画をスキップしているため、開いた直後の内容を最新化する目的）
 document.getElementById('calendar2-recurring-toggle')?.addEventListener('toggle', (e) => { if (e.target.open) renderTaskorg2RecurringList(); });
 document.getElementById('taskorg2-project-admin-table-toggle')?.addEventListener('toggle', (e) => { if (e.target.open) renderProject2AdminTable(); });
+['taskorg2-inprogress-toggle', 'taskorg2-waiting-toggle', 'taskorg2-unset-toggle'].forEach(id => {
+    document.getElementById(id)?.addEventListener('toggle', (e) => { if (e.target.open) renderTaskorg2UnsetSection(); });
+});
 
 document.getElementById('dayedit2-parent-clear-btn')?.addEventListener('click', () => {
     dayedit2ParentPath = [];

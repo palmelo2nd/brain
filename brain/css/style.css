@@ -154,14 +154,6 @@ body {
     font-size: 14px;
 }
 
-/* ===== コンテンツボックス（タスクページ） ===== */
-#content-box {
-    background: #fff;
-    padding: 20px 24px;
-    border: 1px solid #ddd;
-    border-radius: 8px;
-}
-
 /* ===== Info：README.mdのMarkdown表示 ===== */
 .markdown-body {
     margin-top: 12px;
