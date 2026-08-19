@@ -1,4 +1,4 @@
-﻿import { loadToken, saveToken, loadCache, saveCache } from './modules/storage.js';
+import { loadToken, saveToken, loadCache, saveCache } from './modules/storage.js';
 import { fetchFile, saveFile } from './modules/github.js';
 import { parseMarkdown, stringifyMarkdown, MAIN_DATA_COLUMNS, MASTER_DATA_COLUMNS } from './modules/dataModel.js';
 import { mergeMainData } from './modules/merge.js';
@@ -13,9 +13,9 @@ import {
     parseJpDatetime, formatJpDatetime, parseTimestampLog, formatDuration, isLogRunning,
     computeTotalDuration as computeTotalDurationM,
     filterMainDataByCategory, filterTagsByCategory, computeActualHours,
-    getChildren as getChildrenM, isParentRow as isParentRowM, getParentRow as getParentRowM,
+    getChildren as getChildrenM, getParentRow as getParentRowM,
     wouldCreateCycle as wouldCreateCycleM, getAllParentCandidates as getAllParentCandidatesM,
-    getRootParentId as getRootParentIdM, isEligibleParentRow as isEligibleParentRowM,
+    isEligibleParentRow as isEligibleParentRowM,
     isRecurringParentRow, isRecurringChildRow
 } from './modules/task.js';
 import {
@@ -160,9 +160,64 @@ function updateSyncBadge(markdown) {
 
 /** データ変更のたびに呼ぶ：ローカルキャッシュへ保存し、未保存差分バッジを更新する */
 function persistLocalCache() {
+    invalidateTaskorg2HierarchyCache();
     const markdown = stringifyMarkdown(currentMainData, currentMasterData);
     saveCache(markdown, currentSha);
     updateSyncBadge(markdown);
+}
+
+// ===== 親ID階層の高速判定用キャッシュ =====
+// isParentRow／getRootParentId は本来 currentMainData 全体を毎回スキャンする実装（O(N)）だが、
+// タスク整理のカレンダー・フィルタ処理は行ごとにこれらを呼ぶため、素朴に呼ぶと全体でO(N^2)になり
+// データ件数増加に伴う体感速度の悪化の主因になっていた。ここでは「ID→行」「親として参照されているID集合」
+// 「id→最上位祖先ID」をO(N)で1回だけ作り、以降はO(1)で引けるようにする。
+// currentMainDataを変更する操作は必ずpersistLocalCache（またはapplyContentでの初回ロード）を経由する
+// 前提のため、そのタイミングでキャッシュを破棄（再構築は次回参照時に遅延実行）すれば整合性を保てる。
+let taskorg2HierarchyCache = null;
+let taskorg2HierarchyDirty = true;
+
+function invalidateTaskorg2HierarchyCache() {
+    taskorg2HierarchyDirty = true;
+}
+
+function getTaskorg2HierarchyCache() {
+    if (taskorg2HierarchyDirty || !taskorg2HierarchyCache) {
+        const idMap = new Map(currentMainData.map(r => [String(r['ID']), r]));
+        const parentIdSet = new Set();
+        currentMainData.forEach(r => {
+            const pid = String(r['親ID'] || '');
+            if (pid) parentIdSet.add(pid);
+        });
+        taskorg2HierarchyCache = { idMap, parentIdSet, rootCache: new Map() };
+        taskorg2HierarchyDirty = false;
+    }
+    return taskorg2HierarchyCache;
+}
+
+/** 従来のisParentRow(currentMainData, id)と同じ判定を、キャッシュ済みのSetでO(1)で行う。 */
+function isParentRowFast(id) {
+    if (!id) return false;
+    return getTaskorg2HierarchyCache().parentIdSet.has(String(id));
+}
+
+/** 従来のgetRootParentId(currentMainData, id)と同じ判定を、キャッシュ（id→最上位祖先IDのメモ化）でO(1)〜O(深さ)で行う。 */
+function getRootParentIdFast(id) {
+    const cache = getTaskorg2HierarchyCache();
+    const key = String(id);
+    if (cache.rootCache.has(key)) return cache.rootCache.get(key);
+
+    const visited = new Set([key]);
+    let currentId = key;
+    let current = cache.idMap.get(currentId);
+    while (current && current['親ID']) {
+        const pid = String(current['親ID']);
+        if (visited.has(pid) || !cache.idMap.has(pid)) break;
+        visited.add(pid);
+        currentId = pid;
+        current = cache.idMap.get(pid);
+    }
+    cache.rootCache.set(key, currentId);
+    return currentId;
 }
 
 /** id要素が指定アンカーの子でなければ移動する（Summary内の各タブでセクション本体を使い回すため） */
@@ -448,6 +503,7 @@ document.getElementById('add-main-row-btn')?.addEventListener('click', () => {
  * Markdownテキストを受け取り、グローバル状態を更新して現在ページを再描画する。
  */
 function applyContent(content, sha) {
+    invalidateTaskorg2HierarchyCache();
     currentSha = sha;
     const { mainData, masterData } = parseMarkdown(content);
     currentMainData   = mainData;
@@ -2369,8 +2425,8 @@ function buildTaskRunnerUI(container) {
         && !isRecurringParentRow(r) // 繰返しタスクの親は対象外
     );
     // 1階層でも2階層でも誰かの親（プロジェクト）になっているタスクは、通常の進行中一覧とは分けて「（親タスク）」表に表示する。
-    const inProgressParents    = inProgress.filter(r => isParentRowM(currentMainData, r['ID']));
-    const inProgressNonParents = inProgress.filter(r => !isParentRowM(currentMainData, r['ID']));
+    const inProgressParents    = inProgress.filter(r => isParentRowFast(r['ID']));
+    const inProgressNonParents = inProgress.filter(r => !isParentRowFast(r['ID']));
     const inProgressToday    = inProgressNonParents.filter(r => todaysDayPlanIds.has(r['ID']));
     const inProgressNotToday = inProgressNonParents.filter(r => !todaysDayPlanIds.has(r['ID']));
     const todaysOther        = todaysDayPlanTasks.filter(r => r['ステータス'] !== '進行中');
@@ -2576,7 +2632,7 @@ function renderRunnerParentDropdowns(container, excludeId) {
     let parentId = ''; // 空文字ならこのレベルはルート階層（親ID空欄）の選択肢を出す
     for (;;) {
         const options = level === 0
-            ? eligibleRows.filter(r => !r['親ID'] && (isParentRowM(currentMainData, r['ID']) || String(r['ID']) === runnerParentPath[0]))
+            ? eligibleRows.filter(r => !r['親ID'] && (isParentRowFast(r['ID']) || String(r['ID']) === runnerParentPath[0]))
             : getChildrenM(eligibleRows, parentId);
 
         const currentValue    = runnerParentPath[level] || '';
@@ -2810,8 +2866,8 @@ function matchesFilterValue(set, value) {
 function getProjectRootRows(rows) {
     const rootIds = new Set();
     rows.forEach(r => {
-        const rootId = getRootParentIdM(currentMainData, r['ID']);
-        if (isParentRowM(currentMainData, rootId)) rootIds.add(rootId);
+        const rootId = getRootParentIdFast(r['ID']);
+        if (isParentRowFast(rootId)) rootIds.add(rootId);
     });
     return [...rootIds]
         .map(id => currentMainData.find(r => String(r['ID']) === id))
@@ -2822,7 +2878,7 @@ function getProjectRootRows(rows) {
 /** rows のうち、最上位の親IDが rootId と一致する件数を返す（activeOnly指定時は完了・中断を除く）。 */
 function countRowsByProjectRoot(rows, rootId, activeOnly = false) {
     return rows.filter(r => {
-        if (getRootParentIdM(currentMainData, r['ID']) !== rootId) return false;
+        if (getRootParentIdFast(r['ID']) !== rootId) return false;
         if (activeOnly && (r['ステータス'] === '完了' || r['ステータス'] === '中断')) return false;
         return true;
     }).length;
@@ -2830,11 +2886,11 @@ function countRowsByProjectRoot(rows, rootId, activeOnly = false) {
 
 /** row がプロジェクト（親ID方式）の絞り込みを満たすか判定する。プロジェクトに属さない単独行は常に素通しする。 */
 function matchesProjectRootFilter(row, filterSet) {
-    const rootId = getRootParentIdM(currentMainData, row['ID']);
+    const rootId = getRootParentIdFast(row['ID']);
     const rootRow = currentMainData.find(r => String(r['ID']) === rootId);
     // 最上位が繰返しテンプレート（プロジェクトに属さない単独の繰返しタスク）の場合は、
     // プロジェクト一覧の選択肢に出てこないため、単独タスクと同様に常に通過させる。
-    if (!isParentRowM(currentMainData, rootId) || (rootRow && isRecurringParentRow(rootRow))) return true;
+    if (!isParentRowFast(rootId) || (rootRow && isRecurringParentRow(rootRow))) return true;
     return filterSet.has(rootId);
 }
 
@@ -3416,7 +3472,7 @@ function renderDayedit2ParentDropdowns() {
     let parentId = ''; // 空文字ならこのレベルはルート階層（親ID空欄）の選択肢を出す
     for (;;) {
         let options = level === 0
-            ? eligibleRows.filter(r => !r['親ID'] && (isParentRowM(currentMainData, r['ID']) || String(r['ID']) === dayedit2ParentPath[0]))
+            ? eligibleRows.filter(r => !r['親ID'] && (isParentRowFast(r['ID']) || String(r['ID']) === dayedit2ParentPath[0]))
             : getChildrenM(eligibleRows, parentId);
 
         const currentValue = dayedit2ParentPath[level] || '';
@@ -3489,7 +3545,7 @@ function matchesTaskorg2CommonFilters(r) {
     if (isRecurringParentRow(r) && !taskorg2Filters.showRecurringParent) return false;
     if (isRecurringChildRow(currentMainData, r) && !taskorg2Filters.showRecurringChild) return false;
     // 繰返しテンプレートは専用のshowRecurringParentで制御するため、showProjectの対象からは除く
-    if (!taskorg2Filters.showProject && !isRecurringParentRow(r) && isParentRowM(currentMainData, r['ID'])) return false;
+    if (!taskorg2Filters.showProject && !isRecurringParentRow(r) && isParentRowFast(r['ID'])) return false;
     return true;
 }
 
@@ -3521,7 +3577,7 @@ function matchesTaskorg2ListFilters(r) {
         if (String(r['親ID'] || '') !== targetId) return false;
     }
     // showProjectがOFFならプロジェクト行（さらに子を持つ親行）を除外し、最下層タスクのみ表示（ドリルダウン選択中も同様に適用）
-    if (!taskorg2Filters.showProject && !isRecurringParentRow(r) && isParentRowM(currentMainData, r['ID'])) return false;
+    if (!taskorg2Filters.showProject && !isRecurringParentRow(r) && isParentRowFast(r['ID'])) return false;
     return true;
 }
 
@@ -3554,6 +3610,23 @@ function getTaskorg2TasksForDate(dateJP) {
     return getTaskorg2BaseFilteredList().filter(r => getCalendarMarkDate(r, todayJP) === dateJP);
 }
 
+/**
+ * dateJP→該当taskorg2行一覧 のMapを1回のフィルタ走査だけで作る。
+ * 月カレンダーは日セルごとにgetTaskorg2TasksForDateを呼ぶと、フィルタ済み一覧をセル数（最大31回）分
+ * 再計算してしまい重いため、月グリッド描画側ではこちらを使って1回の走査結果を使い回す。
+ */
+function groupTaskorg2TasksByMarkDate() {
+    const todayJP = jpDateOnly(formatJpDatetime(new Date()));
+    const map = new Map();
+    getTaskorg2BaseFilteredList().forEach(r => {
+        const dateJP = getCalendarMarkDate(r, todayJP);
+        if (!dateJP) return;
+        if (!map.has(dateJP)) map.set(dateJP, []);
+        map.get(dateJP).push(r);
+    });
+    return map;
+}
+
 /** 現在の taskorg2CalendarYear／taskorg2CalendarMonth に基づいて新タスク整理の月間カレンダーを描画する。日クリックでその日の一覧絞り込みを切り替える。 */
 function renderTaskorg2CalendarGrid() {
     const label = document.getElementById('calendar2-month-label');
@@ -3582,6 +3655,7 @@ function renderTaskorg2CalendarGrid() {
     }
 
     const workExceptions = parseExceptions(getWorkCalendarContent(taskorg2CalendarYear));
+    const tasksByDate = groupTaskorg2TasksByMarkDate(); // 日セルごとの再フィルタを避けるため、1回の走査結果を使い回す
 
     for (let d = 1; d <= daysInMonth; d++) {
         const dateJP = `${taskorg2CalendarYear}/${pad(taskorg2CalendarMonth + 1)}/${pad(d)}`;
@@ -3599,7 +3673,7 @@ function renderTaskorg2CalendarGrid() {
         num.textContent = String(d);
         cell.appendChild(num);
 
-        const dayTasks = getTaskorg2TasksForDate(dateJP);
+        const dayTasks = tasksByDate.get(dateJP) || [];
         if (dayTasks.length > 0) {
             const hasRemaining = dayTasks.some(r => !isTaskDoneForCalendar(r));
             const badge = document.createElement('span');
@@ -3916,8 +3990,8 @@ function renderTaskorg2ProjectTree() {
         const id = String(row['ID']);
         const kids = childrenOf(id);
         const hasKids = kids.length > 0;
-        // 既定では「ステータス=完了」の親（プロジェクト）だけを折りたたんでおく。手動で開閉した行はその状態を優先する。
-        const defaultCollapsed = hasKids && row['ステータス'] === '完了';
+        // 既定では子を持つ行はすべて折りたたんでおく。手動で開閉した行はその状態を優先する。
+        const defaultCollapsed = hasKids;
         const collapsed = taskorg2ProjectManualStateIds.has(id) ? taskorg2ProjectManualStateIds.get(id) : defaultCollapsed;
 
         const line = document.createElement('div');
@@ -5199,7 +5273,7 @@ function renderTaskorg2BulkPjDropdowns() {
     let parentId = ''; // 空文字ならこのレベルはルート階層（親ID空欄）の選択肢を出す
     for (;;) {
         const options = sortProject2OptionsByDescendantCountDesc(level === 0
-            ? eligibleRows.filter(r => !r['親ID'] && (isParentRowM(currentMainData, r['ID']) || String(r['ID']) === taskorg2BulkPjPath[0]))
+            ? eligibleRows.filter(r => !r['親ID'] && (isParentRowFast(r['ID']) || String(r['ID']) === taskorg2BulkPjPath[0]))
             : getChildrenM(eligibleRows, parentId));
 
         const currentValue = taskorg2BulkPjPath[level] || '';
@@ -6180,8 +6254,8 @@ document.getElementById('dayedit2-delete-btn')?.addEventListener('click', () => 
 
 /** 行が属する最上位の親（プロジェクト）のタイトルを返す。プロジェクトに属さない行は空文字。 */
 function getEdit2ProjectLabel(row) {
-    const rootId = getRootParentIdM(currentMainData, row['ID']);
-    if (!isParentRowM(currentMainData, rootId)) return '';
+    const rootId = getRootParentIdFast(row['ID']);
+    if (!isParentRowFast(rootId)) return '';
     const rootRow = currentMainData.find(r => String(r['ID']) === rootId);
     return rootRow ? (rootRow['タイトル'] || `#${rootId}`) : '';
 }
@@ -6198,7 +6272,7 @@ function getFilteredEdit2Items() {
     let rows = getFilteredMainData().filter(r => r['データ区分'] === edit2Kubun);
 
     if (edit2Filters.tag)         rows = rows.filter(r => r['タグ'] === edit2Filters.tag);
-    if (edit2Filters.project)     rows = rows.filter(r => getRootParentIdM(currentMainData, r['ID']) === edit2Filters.project);
+    if (edit2Filters.project)     rows = rows.filter(r => getRootParentIdFast(r['ID']) === edit2Filters.project);
     if (edit2Filters.createdFrom) rows = rows.filter(r => jpDateOnly(r['作成日時']) >= isoToJP(edit2Filters.createdFrom));
     if (edit2Filters.createdTo)   rows = rows.filter(r => jpDateOnly(r['作成日時']) <= isoToJP(edit2Filters.createdTo));
     if (edit2Filters.updatedFrom) rows = rows.filter(r => jpDateOnly(r['更新日時']) >= isoToJP(edit2Filters.updatedFrom));
@@ -6722,14 +6796,14 @@ const PROJECT2_HIDDEN_STATUS = '非表示'; // プロジェクトの「非表示
 
 /** プロジェクト管理表用：他行から親IDとして参照されている「最上位（ルート）」の行を、非表示のものも含めて全件返す（繰返しテンプレートは除く）。 */
 function getProject2AllParentRowsForAdmin() {
-    let rows = currentMainData.filter(r => !r['親ID'] && isParentRowM(currentMainData, r['ID']) && !isRecurringParentRow(r));
+    let rows = currentMainData.filter(r => !r['親ID'] && isParentRowFast(r['ID']) && !isRecurringParentRow(r));
     if (currentCategory !== 'すべて') rows = rows.filter(r => r['カテゴリ'] === currentCategory);
     return rows;
 }
 
 /** プロジェクト管理表の「統合先」「削除時の再割り当て先」の選択肢用：階層を問わず全プロジェクト（子を持つ行）を返す（繰返しテンプレートは除く）。 */
 function getProject2AllProjectRowsFlat() {
-    let rows = currentMainData.filter(r => isParentRowM(currentMainData, r['ID']) && !isRecurringParentRow(r));
+    let rows = currentMainData.filter(r => isParentRowFast(r['ID']) && !isRecurringParentRow(r));
     if (currentCategory !== 'すべて') rows = rows.filter(r => r['カテゴリ'] === currentCategory);
     return rows;
 }
