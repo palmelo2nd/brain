@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Second Brain タスク管理</title>
-    <link rel="stylesheet" href="css/style.css?v=6">
+    <link rel="stylesheet" href="css/style.css?v=8">
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js" defer></script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" defer></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js" defer></script>
@@ -443,6 +443,13 @@
             <h2>Second Brain</h2>
             <div id="summary-dashboard-warning"></div>
 
+            <!-- 他デバイスとの更新競合を検出した際の警告バナー（既定は非表示。自動保存は競合を検出したら
+                 自動マージせずここで停止し、ユーザーが内容を把握した上で手動保存するまで待つ） -->
+            <div id="sync-conflict-banner" class="sync-conflict-banner" style="display:none">
+                <span>⚠ 他デバイスでの更新と競合しています。自動保存は停止しました。内容を確認のうえ、下のボタンで保存してください。</span>
+                <button type="button" id="sync-conflict-resolve-btn" class="calendar-add-btn">今すぐ確認して保存</button>
+            </div>
+
             <!-- 常時表示バー（カテゴリ選択・Load〜Import・PW・同期ステータス） -->
             <div class="top-bar">
                 <div class="top-bar-group top-bar-categories">
@@ -866,6 +873,20 @@
 
 </div>
 
-<script type="module" src="js/app.js?v=17"></script>
+<!-- 他デバイスとの真の更新競合（同じ行を両方が別内容に変更）が発生した際に、実データを見比べて
+     どちらを採用するか（または両方残すか）をユーザーに選ばせるモーダル。既定は非表示。 -->
+<div id="conflict-resolve-modal" class="conflict-modal-overlay" style="display:none">
+    <div class="conflict-modal">
+        <h3>他デバイスとの競合を確認してください</h3>
+        <p class="calendar-dayplan-hint">同じデータが両方の端末で別々に変更されています。行ごとに採用する内容を選んでください（すべて選択すると保存できます）。</p>
+        <div id="conflict-resolve-list" class="conflict-resolve-list"></div>
+        <div class="calendar-edit-toolbar">
+            <span id="conflict-resolve-info" class="triage-info"></span>
+            <button type="button" id="conflict-resolve-apply-btn" class="calendar-add-btn" disabled>選択内容で保存する</button>
+        </div>
+    </div>
+</div>
+
+<script type="module" src="js/app.js?v=20"></script>
 </body>
 </html>

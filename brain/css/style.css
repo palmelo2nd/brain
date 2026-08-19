@@ -654,6 +654,97 @@ details[open] > .expander-title::after { transform: rotate(90deg); }
     margin-bottom: 14px;
 }
 
+/* ===== 同期競合バナー（自動保存が競合を検出して停止した際に表示） ===== */
+.sync-conflict-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    background: #f8d7da;
+    color: #721c24;
+    border: 1px solid #f5c2c7;
+    border-radius: 6px;
+    padding: 10px 14px;
+    font-size: 13px;
+    margin-bottom: 14px;
+    flex-wrap: wrap;
+}
+
+/* ===== 競合解決モーダル（実データを見比べてローカル／リモートを選ぶ画面） ===== */
+.conflict-modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    padding: 16px;
+}
+
+.conflict-modal {
+    background: #fff;
+    border-radius: 8px;
+    padding: 20px 24px;
+    max-width: 900px;
+    width: 100%;
+    max-height: 90vh;
+    overflow-y: auto;
+}
+
+.conflict-resolve-list {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    margin: 14px 0;
+}
+
+.conflict-resolve-row {
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    padding: 12px 14px;
+}
+
+.conflict-resolve-row-title {
+    font-weight: 600;
+    margin-bottom: 8px;
+}
+
+.conflict-resolve-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12.5px;
+    margin-bottom: 10px;
+}
+
+.conflict-resolve-table th,
+.conflict-resolve-table td {
+    border: 1px solid #e2e2e2;
+    padding: 4px 8px;
+    text-align: left;
+    vertical-align: top;
+    word-break: break-word;
+}
+
+.conflict-resolve-table th {
+    background: #f5f5f5;
+    width: 110px;
+}
+
+.conflict-resolve-options {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    font-size: 13px;
+}
+
+.conflict-resolve-options label {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    cursor: pointer;
+}
+
 .warning-ok {
     background: #e2f0d9;
     color: #385723;

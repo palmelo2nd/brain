@@ -6,9 +6,11 @@ import { parseJpDatetime } from './task.js';
  *
  * (2) インプット: baseRows（自分が最後に同期していた基準データ）, localRows（自分の現在データ）,
  *                 remoteRows（他端末が保存した最新データ）
- * (3) メイン: IDごとに base と比較し、片方だけが変更した行はその内容を採用。
- *            両方が変更している真の競合行は「更新日時」が新しい方を採用する。
- * (4) アウトプット: { merged: Array（マージ後のmainData）, conflicts: Array（自動解決した競合行の情報） }
+ * (3) メイン: IDごとに base と比較し、片方だけが変更した行はその内容を採用する。
+ *            両方が変更している真の競合行は自動では解決せず、conflictsに積んで呼び出し側に委ねる
+ *            （呼び出し側でユーザーに内容を見せて選ばせ、その結果をmergedへ追加する想定）。
+ * (4) アウトプット: { merged: Array（競合以外がマージ済みのmainData）, conflicts: Array（真の競合行。
+ *                    { id, base, local, remote } の形。local/remoteがnullなら片方が削除している） }
  */
 export function mergeMainData(baseRows, localRows, remoteRows) {
     const baseMap   = new Map(baseRows.map(r => [r['ID'], r]));
@@ -44,21 +46,13 @@ export function mergeMainData(baseRows, localRows, remoteRows) {
             return;
         }
 
-        // 両方が変更 → 真の競合。可能なら更新日時が新しい方を採用する
-        if (local && remote) {
-            if (rowsEqual(local, remote)) { merged.push(local); return; }
-            const winner = pickNewer(local, remote);
-            merged.push(winner);
-            conflicts.push({ id, local, remote, winner });
-        } else if (local && !remote) {
-            // 片方が削除・片方が編集 → データを失わないよう編集を残す
+        // 両方が変更 → 真の競合。両方が同じ内容に落ち着いていれば自動採用、それ以外は呼び出し側で解決させる
+        if (local && remote && rowsEqual(local, remote)) {
             merged.push(local);
-            conflicts.push({ id, local, remote: null, winner: local });
-        } else if (!local && remote) {
-            merged.push(remote);
-            conflicts.push({ id, local: null, remote, winner: remote });
+            return;
         }
-        // local, remote 両方null（＝両方で削除）は何も積まない
+        if (!local && !remote) return; // 両方で削除 → 何も積まない
+        conflicts.push({ id, base, local, remote });
     });
 
     return { merged, conflicts };
@@ -70,7 +64,8 @@ function rowsEqual(a, b) {
     return JSON.stringify(a) === JSON.stringify(b);
 }
 
-function pickNewer(local, remote) {
+/** 更新日時が新しい方を返す（ユーザー操作を介さないフォールバック解決専用。通常は呼び出し側でユーザーに選ばせる）。 */
+export function pickNewer(local, remote) {
     const localTime  = parseJpDatetime(local['更新日時']);
     const remoteTime = parseJpDatetime(remote['更新日時']);
     if (!localTime)  return remote;

@@ -1,7 +1,7 @@
 import { loadToken, saveToken, loadCache, saveCache } from './modules/storage.js';
 import { fetchFile, saveFile } from './modules/github.js';
 import { parseMarkdown, stringifyMarkdown, MAIN_DATA_COLUMNS, MASTER_DATA_COLUMNS } from './modules/dataModel.js';
-import { mergeMainData } from './modules/merge.js';
+import { mergeMainData, pickNewer } from './modules/merge.js';
 import { exportToExcel, importFromExcel } from './modules/excel.js';
 import {
     generateChildManually, matchesSchedule,
@@ -54,6 +54,7 @@ let currentSha        = null;
 let currentMainData   = [];
 let currentMasterData = [];
 let lastSyncedMarkdown = null;   // 直近でGitHub/キャッシュと一致している状態のMarkdown（未保存差分の判定基準）
+let saveConflictPending = false; // true: 自動保存が他デバイスとの更新競合を検出し、自動マージを保留中（手動保存で解決するまでtrue）
 let currentCategory   = 'すべて';        // カテゴリフィルタの選択値
 let categoryInitialized = false;         // 初回ロード時にデフォルトカテゴリを設定済みか
 let selectedRunTaskId    = null;       // タスク実行で選択中のタスクID
@@ -502,25 +503,32 @@ document.getElementById('add-main-row-btn')?.addEventListener('click', () => {
 /**
  * Markdownテキストを受け取り、グローバル状態を更新して現在ページを再描画する。
  */
-function applyContent(content, sha) {
-    invalidateTaskorg2HierarchyCache();
-    currentSha = sha;
-    const { mainData, masterData } = parseMarkdown(content);
-    currentMainData   = mainData;
-    currentMasterData = masterData;
-
+/**
+ * 廃止済み列の除去・旧形式データの自動変換など、mainDataに対する後方互換の正規化をまとめて行う。
+ * リモートから新たに取得したデータは常にこれを通す必要があるため、applyContentと読込時マージ処理の両方から呼ぶ。
+ */
+function sanitizeMainDataLegacyFields(mainData) {
     // 廃止済みの旧項目（ステータスコメント）が残っていれば除去する
-    currentMainData.forEach(r => { delete r['ステータスコメント']; });
+    mainData.forEach(r => { delete r['ステータスコメント']; });
 
     // 旧形式の繰返し子タスク（繰返し親ID列で繰返しテンプレートを参照）が残っていれば、
     // 親ID方式（親ID=繰返しテンプレートのID）へ自動変換する。繰返し識別子は親（テンプレート）側にのみ残す。
-    currentMainData.forEach(r => {
+    mainData.forEach(r => {
         if (r['繰返し親ID']) {
             r['親ID'] = r['繰返し親ID'];
             r['繰返し識別子'] = '';
         }
         delete r['繰返し親ID'];
     });
+    return mainData;
+}
+
+function applyContent(content, sha) {
+    invalidateTaskorg2HierarchyCache();
+    currentSha = sha;
+    const { mainData, masterData } = parseMarkdown(content);
+    currentMainData   = sanitizeMainDataLegacyFields(mainData);
+    currentMasterData = masterData;
 
     // 初回ロード時のみ、先頭カテゴリをデフォルト選択にする
     if (!categoryInitialized) {
@@ -531,6 +539,171 @@ function applyContent(content, sha) {
 
     renderCategoryFilter();   // データ更新時にカテゴリ一覧を再構築
     renderSummary();
+}
+
+// ===== 競合解決モーダル（真の競合を実データで見比べてユーザーに選ばせる） =====
+
+/** conflict（{ id, base, local, remote }）から、local/remoteで値が異なる列だけを抽出して返す（IDは除く）。 */
+function getConflictDiffColumns(conflict) {
+    const { local, remote } = conflict;
+    return MAIN_DATA_COLUMNS.filter(col => {
+        if (col === 'ID') return false;
+        const lv = local  ? (local[col]  ?? '') : null;
+        const rv = remote ? (remote[col] ?? '') : null;
+        return lv !== rv;
+    });
+}
+
+/** 競合解決モーダル内の「◯ / ◯件選択済み」表示と、適用ボタンの活性状態を更新する。 */
+function updateConflictResolveApplyState(state) {
+    const infoEl   = document.getElementById('conflict-resolve-info');
+    const applyBtn = document.getElementById('conflict-resolve-apply-btn');
+    const resolvedCount = state.selections.filter(Boolean).length;
+    if (infoEl) infoEl.textContent = `${resolvedCount} / ${state.conflicts.length} 件選択済み`;
+    if (applyBtn) applyBtn.disabled = resolvedCount !== state.conflicts.length;
+}
+
+/** 競合解決モーダルに1件分（1競合行）の差分テーブル＋選択肢を組み立てて追加する。 */
+function renderConflictResolveRow(container, conflict, index, state) {
+    const row = document.createElement('div');
+    row.className = 'conflict-resolve-row';
+
+    const sampleRow = conflict.local || conflict.remote;
+    const header = document.createElement('div');
+    header.className = 'conflict-resolve-row-title';
+    header.textContent = `#${conflict.id} ${sampleRow ? (sampleRow['タイトル'] || '（無題）') : '（無題）'}`;
+    row.appendChild(header);
+
+    const diffCols = getConflictDiffColumns(conflict);
+    const table = document.createElement('table');
+    table.className = 'conflict-resolve-table';
+
+    const headRow = document.createElement('tr');
+    ['項目', 'ローカル', 'リモート'].forEach(h => {
+        const th = document.createElement('th');
+        th.textContent = h;
+        headRow.appendChild(th);
+    });
+    table.appendChild(headRow);
+
+    if (diffCols.length === 0) {
+        const tr = document.createElement('tr');
+        const td = document.createElement('td');
+        td.colSpan = 3;
+        td.textContent = '差分のある項目はありません（片方の端末で削除されています）。';
+        tr.appendChild(td);
+        table.appendChild(tr);
+    }
+    diffCols.forEach(col => {
+        const tr = document.createElement('tr');
+        const th = document.createElement('th');
+        th.textContent = col;
+        tr.appendChild(th);
+        const tdLocal = document.createElement('td');
+        tdLocal.textContent = conflict.local ? (conflict.local[col] || '（空欄）') : '（削除済み）';
+        tr.appendChild(tdLocal);
+        const tdRemote = document.createElement('td');
+        tdRemote.textContent = conflict.remote ? (conflict.remote[col] || '（空欄）') : '（削除済み）';
+        tr.appendChild(tdRemote);
+        table.appendChild(tr);
+    });
+    row.appendChild(table);
+
+    const options = document.createElement('div');
+    options.className = 'conflict-resolve-options';
+    const optionDefs = [];
+    if (conflict.local)  optionDefs.push({ value: 'local',  label: 'ローカルを採用' });
+    if (conflict.remote) optionDefs.push({ value: 'remote', label: 'リモートを採用' });
+    if (conflict.local && conflict.remote) optionDefs.push({ value: 'both', label: '両方残す（新しいIDで複製）' });
+
+    optionDefs.forEach(opt => {
+        const label = document.createElement('label');
+        const input = document.createElement('input');
+        input.type = 'radio';
+        input.name = `conflict-resolve-${index}`;
+        input.value = opt.value;
+        input.addEventListener('change', () => {
+            state.selections[index] = opt.value;
+            updateConflictResolveApplyState(state);
+        });
+        label.appendChild(input);
+        label.appendChild(document.createTextNode(opt.label));
+        options.appendChild(label);
+    });
+    row.appendChild(options);
+
+    container.appendChild(row);
+}
+
+/**
+ * mergeMainDataが返した真の競合（conflicts）をモーダルで表示し、ユーザーが行ごとに選んだ結果を
+ * Array<Array<row>>（通常は1件、「両方残す」を選んだ場合は2件）で解決するPromiseを返す。
+ * nextIdは「両方残す」を選んだ際に複製側へ割り振る新規IDの開始値（呼び出し側で全体のmaxID+1を渡す）。
+ */
+function showConflictResolutionModal(conflicts, nextId) {
+    return new Promise(resolve => {
+        const overlay  = document.getElementById('conflict-resolve-modal');
+        const listEl   = document.getElementById('conflict-resolve-list');
+        const applyBtn = document.getElementById('conflict-resolve-apply-btn');
+        if (!overlay || !listEl || !applyBtn) {
+            // モーダルDOMが無い場合の保険（通常到達しない）。安全側に倒し、更新日時が新しい方を採用する。
+            resolve(conflicts.map(c => [(c.local && c.remote) ? pickNewer(c.local, c.remote) : (c.local || c.remote)]));
+            return;
+        }
+
+        listEl.innerHTML = '';
+        const state = { conflicts, selections: new Array(conflicts.length).fill(null) };
+        conflicts.forEach((c, i) => renderConflictResolveRow(listEl, c, i, state));
+        updateConflictResolveApplyState(state);
+        overlay.style.display = '';
+
+        let currentNextId = nextId;
+        const onApply = () => {
+            applyBtn.removeEventListener('click', onApply);
+            overlay.style.display = 'none';
+
+            const results = conflicts.map((c, i) => {
+                const choice = state.selections[i];
+                if (choice === 'local')  return c.local  ? [c.local]  : [];
+                if (choice === 'remote') return c.remote ? [c.remote] : [];
+                if (choice === 'both') {
+                    const duplicated = { ...c.remote, 'ID': String(currentNextId) };
+                    currentNextId += 1;
+                    return [c.local, duplicated];
+                }
+                return [];
+            });
+            resolve(results);
+        };
+        applyBtn.addEventListener('click', onApply);
+    });
+}
+
+/**
+ * mergeMainDataのconflicts（真の競合）をmerged配列に解決して追加する共通ヘルパー。
+ * silent=trueの場合はモーダルを出さず、更新日時が新しい方を自動採用する（バックグラウンド処理向けの
+ * 安全なフォールバックのみ。保存・読込とも通常operationはsilent=falseを通るため、実運用では基本この分岐に入らない）。
+ * idPoolRows: 「両方残す」を選んだ際の新規ID採番に使う、重複チェック対象の行一覧（local・remote両方を渡す）。
+ */
+async function resolveMergeConflicts(merged, conflicts, idPoolRows, silent) {
+    if (conflicts.length === 0) return merged;
+
+    if (silent) {
+        conflicts.forEach(c => {
+            if (c.local && c.remote) merged.push(pickNewer(c.local, c.remote));
+            else if (c.local || c.remote) merged.push(c.local || c.remote);
+        });
+        return merged;
+    }
+
+    const maxId = idPoolRows.reduce((max, row) => {
+        const id = parseInt(row['ID'], 10);
+        return isNaN(id) ? max : Math.max(max, id);
+    }, 0);
+
+    const resolvedGroups = await showConflictResolutionModal(conflicts, maxId + 1);
+    resolvedGroups.forEach(rows => rows.forEach(r => merged.push(r)));
+    return merged;
 }
 
 // ===== GitHubから読み込み =====
@@ -545,9 +718,43 @@ async function loadFromGitproject(token, silent = false) {
 
     try {
         const { content, sha } = await fetchFile(token, OWNER, REPO, PATH);
+
+        // ローカルに未保存の変更（前回の同期済み内容から書き換わっている）が残ったまま読込むと、
+        // そのまま上書きしてしまうと変更が失われるため、その場合だけ直近の同期済み内容を基準に
+        // リモートの最新内容とローカルの未保存分を3-wayマージし、両方の変更を残す（保存時の競合処理と同じ考え方）。
+        const hasUnsavedLocalEdits = lastSyncedMarkdown !== null &&
+            stringifyMarkdown(currentMainData, currentMasterData) !== lastSyncedMarkdown;
+
+        if (hasUnsavedLocalEdits) {
+            const { mainData: remoteMain, masterData: remoteMaster } = parseMarkdown(content);
+            sanitizeMainDataLegacyFields(remoteMain);
+            const { mainData: baseMain, masterData: baseMaster } = parseMarkdown(lastSyncedMarkdown);
+
+            const { merged, conflicts } = mergeMainData(baseMain, currentMainData, remoteMain);
+            await resolveMergeConflicts(merged, conflicts, [...currentMainData, ...remoteMain], silent);
+            currentMainData   = merged;
+            currentMasterData = resolveMasterData(baseMaster, currentMasterData, remoteMaster);
+            currentSha = sha;
+            lastSyncedMarkdown = stringifyMarkdown(currentMainData, currentMasterData);
+            persistLocalCache(); // 内部でinvalidateTaskorg2HierarchyCacheも実行される
+            saveConflictPending = false;
+            renderSyncConflictBanner();
+            renderCategoryFilter();
+            renderSummary();
+
+            if (!silent) {
+                alert(conflicts.length > 0
+                    ? `未保存の変更が残っていたため、リモートの最新内容とマージしました（${conflicts.length}件の競合はご指定の内容で解決しました）。`
+                    : '未保存の変更を保持したまま、リモートの最新内容を取り込みました。内容を確認し、必要なら「保存」してください。');
+            }
+            return;
+        }
+
         applyContent(content, sha);
         lastSyncedMarkdown = content; // GitHub上の内容を「同期済み」の基準にする
         persistLocalCache();          // 繰り返しタスク自動生成分も含めた現在の状態をキャッシュ＆バッジ反映
+        saveConflictPending = false;  // 最新状態を読み込み直したため、競合待ち状態を解除する
+        renderSyncConflictBanner();
     } catch (error) {
         console.error(error);
         const cached = loadCache();
@@ -586,21 +793,32 @@ function resolveMasterData(baseMasterData, localMasterData, remoteMasterData) {
     return useLocal ? localMasterData : remoteMasterData;
 }
 
+/** 同期競合バナー（sync-conflict-banner）の表示・非表示を saveConflictPending の状態に合わせて反映する。 */
+function renderSyncConflictBanner() {
+    const banner = document.getElementById('sync-conflict-banner');
+    if (banner) banner.style.display = saveConflictPending ? '' : 'none';
+}
+
 /**
- * 保存時に409（他端末との更新競合）が発生した場合の処理。
+ * 保存時に409（他端末との更新競合）が発生した場合の処理。常にユーザーが明示的に保存操作をした
+ * 場合にのみ呼ばれる（自動保存が競合を検出した場合はここを呼ばず、バナー表示のみで停止する）。
  * 相手の最新版を取得し、mainDataはID単位で3-wayマージ、masterDataは競合時のみユーザーに選ばせて、
  * 相手の最新SHAに対して保存し直す。
  */
-async function handleSaveConflict(token, silent) {
+async function handleSaveConflict(token) {
     try {
         const { content: remoteContent, sha: remoteSha } = await fetchFile(token, OWNER, REPO, PATH);
         const { mainData: remoteMain, masterData: remoteMaster } = parseMarkdown(remoteContent);
+        sanitizeMainDataLegacyFields(remoteMain);
         const { mainData: baseMain,   masterData: baseMaster }   = parseMarkdown(lastSyncedMarkdown);
 
         const { merged, conflicts } = mergeMainData(baseMain, currentMainData, remoteMain);
+        await resolveMergeConflicts(merged, conflicts, [...currentMainData, ...remoteMain], false);
         currentMainData   = merged;
         currentMasterData = resolveMasterData(baseMaster, currentMasterData, remoteMaster);
         invalidateTaskorg2HierarchyCache(); // currentMainDataを丸ごと差し替えたため親ID階層キャッシュも破棄する
+        renderCategoryFilter();
+        renderSummary();
 
         const mergedMarkdown = stringifyMarkdown(currentMainData, currentMasterData);
         const { newSha } = await saveFile(token, OWNER, REPO, PATH, mergedMarkdown, remoteSha);
@@ -609,27 +827,30 @@ async function handleSaveConflict(token, silent) {
         lastSyncedMarkdown = mergedMarkdown;
         saveCache(mergedMarkdown, newSha);
         updateSyncBadge(mergedMarkdown);
+        saveConflictPending = false; // 解決済み。自動保存の停止・バナー表示を解除する
+        renderSyncConflictBanner();
 
-        if (!silent) {
-            alert(conflicts.length > 0
-                ? `他端末の更新と自動マージして保存しました（${conflicts.length}件は更新日時の新しい方を優先しました）。`
-                : '他端末の更新を取り込んでマージし、保存しました。');
-        }
+        alert(conflicts.length > 0
+            ? `他端末の更新をマージして保存しました（${conflicts.length}件の競合はご指定の内容で解決しました）。`
+            : '他端末の更新を取り込んでマージし、保存しました。');
     } catch (error) {
         console.error(error);
         setNetworkStatus('<span class="status-badge offline-badge">オフライン（未同期）</span>');
-        if (!silent) {
-            alert('他端末の更新との自動マージに失敗しました。変更は端末内に保存されています。時間をおいて再度「保存」を押してください。');
-        }
+        alert('他端末の更新との自動マージに失敗しました。変更は端末内に保存されています。時間をおいて再度「保存」を押してください。');
     }
 }
 
 /**
  * 現在のデータをGitHubへ保存する。直近の同期済み内容と変わっていなければ何もしない。
- * 他端末との更新競合（409）が起きた場合は自動マージを試みる。
+ * 他端末との更新競合（409）が起きた場合、手動保存（silent=false）なら自動マージして保存し直すが、
+ * 自動保存（silent=true）の場合は自動マージせずsaveConflictPendingを立てて停止する
+ * （画面を見ていない間に古いローカルデータで勝手にマージ・上書きされることを防ぐため。手動で「保存」を
+ * 押すか、競合バナーの「今すぐ確認して保存」ボタンを押すまでは、自動保存はスキップされ続ける）。
  * (2) インプット: token (string), silent (boolean) - trueの場合、進捗表示・完了アラートを出さない（自動保存用）
  */
 async function saveToGithub(token, silent = false) {
+    if (silent && saveConflictPending) return; // 競合解決待ちの間は自動保存を行わない
+
     const newMarkdown = stringifyMarkdown(currentMainData, currentMasterData);
 
     if (newMarkdown === lastSyncedMarkdown) {
@@ -651,7 +872,13 @@ async function saveToGithub(token, silent = false) {
         console.error(error);
 
         if (error.status === 409) {
-            await handleSaveConflict(token, silent);
+            if (silent) {
+                saveConflictPending = true;
+                renderSyncConflictBanner();
+                setNetworkStatus('<span class="status-badge unsaved-badge">オフライン（他デバイスと競合中）</span>');
+                return;
+            }
+            await handleSaveConflict(token);
             return;
         }
 
@@ -672,7 +899,16 @@ document.querySelectorAll('.js-save-btn').forEach(btn => {
     });
 });
 
-// ===== 自動保存（1分ごと。変更がある場合のみGitHubへ保存し、変更が無ければ何もしない） =====
+document.getElementById('sync-conflict-resolve-btn')?.addEventListener('click', () => {
+    const token = getTokenValue();
+    if (!token)      return alert('トークンを入力してください');
+    if (!currentSha) return alert('先にデータを読み込んでください（またはオフラインキャッシュを読み込んでください）');
+    persistCurrentToken();
+    saveToGithub(token); // silent=false固定。競合があれば必ずhandleSaveConflictを通り、結果をalertで知らせる
+});
+
+// ===== 自動保存（1分ごと。変更がある場合のみGitHubへ保存し、変更が無ければ何もしない。
+//        他デバイスとの競合を検出中（saveConflictPending）は、解決されるまで自動保存をスキップする） =====
 const AUTO_SAVE_INTERVAL_MS = 1 * 60 * 1000;
 setInterval(() => {
     const token = getTokenValue();
