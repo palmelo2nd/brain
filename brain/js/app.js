@@ -1,7 +1,7 @@
 import { loadToken, saveToken, loadCache, saveCache } from './modules/storage.js';
 import { fetchFile, saveFile } from './modules/github.js';
 import { parseMarkdown, stringifyMarkdown, MAIN_DATA_COLUMNS, MASTER_DATA_COLUMNS } from './modules/dataModel.js';
-import { mergeMainData, pickNewer } from './modules/merge.js';
+import { mergeMainData, pickNewer, reassignDuplicatedParentChildren } from './modules/merge.js';
 import { exportToExcel, importFromExcel } from './modules/excel.js';
 import {
     generateChildManually, matchesSchedule,
@@ -637,7 +637,10 @@ function renderConflictResolveRow(container, conflict, index, state) {
 
 /**
  * mergeMainDataが返した真の競合（conflicts）をモーダルで表示し、ユーザーが行ごとに選んだ結果を
- * Array<Array<row>>（通常は1件、「両方残す」を選んだ場合は2件）で解決するPromiseを返す。
+ * { results, reassignments } で解決するPromiseを返す。
+ * results: Array<Array<row>>（通常は1件、「両方残す」を選んだ場合は2件）
+ * reassignments: 「両方残す」を選んだ行の { oldId, newId } の一覧（親ID付け替え用。呼び出し側で
+ *                reassignDuplicatedParentChildren に渡す）
  * nextIdは「両方残す」を選んだ際に複製側へ割り振る新規IDの開始値（呼び出し側で全体のmaxID+1を渡す）。
  */
 function showConflictResolutionModal(conflicts, nextId) {
@@ -647,7 +650,8 @@ function showConflictResolutionModal(conflicts, nextId) {
         const applyBtn = document.getElementById('conflict-resolve-apply-btn');
         if (!overlay || !listEl || !applyBtn) {
             // モーダルDOMが無い場合の保険（通常到達しない）。安全側に倒し、更新日時が新しい方を採用する。
-            resolve(conflicts.map(c => [(c.local && c.remote) ? pickNewer(c.local, c.remote) : (c.local || c.remote)]));
+            const results = conflicts.map(c => [(c.local && c.remote) ? pickNewer(c.local, c.remote) : (c.local || c.remote)]);
+            resolve({ results, reassignments: [] });
             return;
         }
 
@@ -662,18 +666,21 @@ function showConflictResolutionModal(conflicts, nextId) {
             applyBtn.removeEventListener('click', onApply);
             overlay.style.display = 'none';
 
+            const reassignments = [];
             const results = conflicts.map((c, i) => {
                 const choice = state.selections[i];
                 if (choice === 'local')  return c.local  ? [c.local]  : [];
                 if (choice === 'remote') return c.remote ? [c.remote] : [];
                 if (choice === 'both') {
-                    const duplicated = { ...c.remote, 'ID': String(currentNextId) };
+                    const newId = String(currentNextId);
+                    const duplicated = { ...c.remote, 'ID': newId };
+                    reassignments.push({ oldId: c.id, newId });
                     currentNextId += 1;
                     return [c.local, duplicated];
                 }
                 return [];
             });
-            resolve(results);
+            resolve({ results, reassignments });
         };
         applyBtn.addEventListener('click', onApply);
     });
@@ -683,9 +690,10 @@ function showConflictResolutionModal(conflicts, nextId) {
  * mergeMainDataのconflicts（真の競合）をmerged配列に解決して追加する共通ヘルパー。
  * silent=trueの場合はモーダルを出さず、更新日時が新しい方を自動採用する（バックグラウンド処理向けの
  * 安全なフォールバックのみ。保存・読込とも通常operationはsilent=falseを通るため、実運用では基本この分岐に入らない）。
- * idPoolRows: 「両方残す」を選んだ際の新規ID採番に使う、重複チェック対象の行一覧（local・remote両方を渡す）。
+ * localRows/remoteRows: マージ前のローカル／リモート元データ。「両方残す」選択時の新規ID採番の重複チェックと、
+ *                        複製された親IDを持つ子タスクの再割当て（reassignDuplicatedParentChildren）の両方に使う。
  */
-async function resolveMergeConflicts(merged, conflicts, idPoolRows, silent) {
+async function resolveMergeConflicts(merged, conflicts, localRows, remoteRows, silent) {
     if (conflicts.length === 0) return merged;
 
     if (silent) {
@@ -696,14 +704,15 @@ async function resolveMergeConflicts(merged, conflicts, idPoolRows, silent) {
         return merged;
     }
 
+    const idPoolRows = [...localRows, ...remoteRows];
     const maxId = idPoolRows.reduce((max, row) => {
         const id = parseInt(row['ID'], 10);
         return isNaN(id) ? max : Math.max(max, id);
     }, 0);
 
-    const resolvedGroups = await showConflictResolutionModal(conflicts, maxId + 1);
-    resolvedGroups.forEach(rows => rows.forEach(r => merged.push(r)));
-    return merged;
+    const { results, reassignments } = await showConflictResolutionModal(conflicts, maxId + 1);
+    results.forEach(rows => rows.forEach(r => merged.push(r)));
+    return reassignDuplicatedParentChildren(merged, reassignments, remoteRows, localRows);
 }
 
 // ===== GitHubから読み込み =====
@@ -731,8 +740,7 @@ async function loadFromGitproject(token, silent = false) {
             const { mainData: baseMain, masterData: baseMaster } = parseMarkdown(lastSyncedMarkdown);
 
             const { merged, conflicts } = mergeMainData(baseMain, currentMainData, remoteMain);
-            await resolveMergeConflicts(merged, conflicts, [...currentMainData, ...remoteMain], silent);
-            currentMainData   = merged;
+            currentMainData   = await resolveMergeConflicts(merged, conflicts, currentMainData, remoteMain, silent);
             currentMasterData = resolveMasterData(baseMaster, currentMasterData, remoteMaster);
             currentSha = sha;
             lastSyncedMarkdown = stringifyMarkdown(currentMainData, currentMasterData);
@@ -813,8 +821,7 @@ async function handleSaveConflict(token) {
         const { mainData: baseMain,   masterData: baseMaster }   = parseMarkdown(lastSyncedMarkdown);
 
         const { merged, conflicts } = mergeMainData(baseMain, currentMainData, remoteMain);
-        await resolveMergeConflicts(merged, conflicts, [...currentMainData, ...remoteMain], false);
-        currentMainData   = merged;
+        currentMainData   = await resolveMergeConflicts(merged, conflicts, currentMainData, remoteMain, false);
         currentMasterData = resolveMasterData(baseMaster, currentMasterData, remoteMaster);
         invalidateTaskorg2HierarchyCache(); // currentMainDataを丸ごと差し替えたため親ID階層キャッシュも破棄する
         renderCategoryFilter();

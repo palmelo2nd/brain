@@ -72,3 +72,35 @@ export function pickNewer(local, remote) {
     if (!remoteTime) return local;
     return remoteTime.getTime() > localTime.getTime() ? remote : local;
 }
+
+/**
+ * 親ID競合で「両方残す」を選んだ際、複製元(oldId)はローカル側の内容のまま残り、複製先(newId)に
+ * リモート側の内容が複製される。このとき「リモート側でoldIdを親にしていたが、ローカル側では
+ * oldId以外（未存在も含む）を親にしていた子」は、リモートの文脈に属する子とみなし、
+ * 親IDをnewIdへ付け替える（ローカル側でoldIdを親にしていた子はoldIdのまま変更しない）。
+ *
+ * (2) インプット: mergedRows — マージ後の全行, reassignments — [{ oldId, newId }],
+ *                 remoteRows/localRows — マージ前のリモート／ローカル元データ
+ * (3) メイン: リモート側でoldIdを親にしていた子のうち、ローカル側の親IDが一致しないものを抽出し、
+ *            マージ後の該当行の親IDをnewIdへ書き換える
+ * (4) アウトプット: 付け替え後の行配列（新しい配列。対象行のみ複製、他は元の参照を維持）
+ */
+export function reassignDuplicatedParentChildren(mergedRows, reassignments, remoteRows, localRows) {
+    if (reassignments.length === 0) return mergedRows;
+
+    const oldToNew = new Map(reassignments.map(r => [r.oldId, r.newId]));
+    const localParentById = new Map(localRows.map(r => [r['ID'], r['親ID']]));
+
+    const remoteChildIdsToReassign = new Set(
+        remoteRows
+            .filter(r => oldToNew.has(r['親ID']) && localParentById.get(r['ID']) !== r['親ID'])
+            .map(r => r['ID'])
+    );
+    if (remoteChildIdsToReassign.size === 0) return mergedRows;
+
+    return mergedRows.map(row => {
+        if (!remoteChildIdsToReassign.has(row['ID'])) return row;
+        if (!oldToNew.has(row['親ID'])) return row; // マージ後に別の親IDへ既に変わっている等の想定外はそのまま
+        return { ...row, '親ID': oldToNew.get(row['親ID']) };
+    });
+}

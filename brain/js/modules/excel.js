@@ -47,7 +47,11 @@ export function exportToExcel(mainData, masterData) {
     window.XLSX.utils.book_append_sheet(wb, wsMain,   'メインデータ');
     window.XLSX.utils.book_append_sheet(wb, wsMaster, 'マスタデータ');
 
-    window.XLSX.writeFile(wb, 'brain_tasks.xlsx');
+    const now = new Date();
+    const pad = n => String(n).padStart(2, '0');
+    const ts  = `${pad(now.getFullYear() % 100)}${pad(now.getMonth() + 1)}${pad(now.getDate())}`
+              + `${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+    window.XLSX.writeFile(wb, `${ts}_bs.xlsx`);
 }
 
 /**
