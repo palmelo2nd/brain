@@ -28,12 +28,12 @@ const VALIDATION_REPORT_PATH = 'stock/validation_report.json';
 const FRESHNESS_REPORT_PATH  = 'stock/freshness_report.json';
 const README_PATH   = 'stock/README.md'; // コードリポジトリ側（アプリ概要ドキュメント）
 const HOLDINGS_PATH = 'stock/holdings.csv';
-const HOLDINGS_HEADERS = ['id', 'owner', 'broker', 'account', 'code', 'shares', 'avg_cost'];
+const HOLDINGS_HEADERS = ['id', 'owner', 'broker', 'account', 'code', 'shares', 'avg_cost', 'updated_at'];
 const HOLDINGS_CODE_DISPLAY_MAX = 10; // 一覧表のコード列・銘柄名列の最大表示文字数（全角10文字相当。超過分は…で省略）
 // 売買履歴（実現損益）。past/(chk済)_C05_(R3)譲渡益の記録.ipynbを移植。holdings.csvと異なり「積み上げるデータ」
 // （縦持ちの取引ログ）のため、保存は全体洗い替えではなく追記型マージにする
 const REALIZED_GAINS_PATH = 'stock/realized_gains.csv';
-const REALIZED_GAINS_HEADERS = ['id', 'owner', 'broker', 'asset_type', 'code', 'name', 'date', 'pnl'];
+const REALIZED_GAINS_HEADERS = ['id', 'owner', 'broker', 'asset_type', 'code', 'name', 'date', 'pnl', 'updated_at'];
 const BULK_ASSET_TYPES = ['内国株式', 'ETF・ETN']; // fetch_prices.pyの--asset-types既定値と揃えている
 // 「更新最終日」「データ品質」の内訳を内国株式／その他（ETF等）に分ける分類ラベル（2026-08-18追加）。
 // yfinanceはETF側で更新漏れ・欠損が起きやすく、内国株式と混在させると個別株側の問題が埋もれるため区別する。
@@ -1185,7 +1185,7 @@ async function renderHoldingsTable() {
         try { nameMap = await getMasterNameMap(token); } catch (error) { console.error(error); }
     }
 
-    const cols = ['所有者', '証券会社', '口座区分', 'コード', '銘柄名', '株数', '取得単価'];
+    const cols = ['所有者', '証券会社', '口座区分', 'コード', '銘柄名', '株数', '取得単価', '最終更新日'];
     const thead = document.createElement('thead');
     const hRow = document.createElement('tr');
     cols.forEach(col => { const th = document.createElement('th'); th.textContent = col; hRow.appendChild(th); });
@@ -1209,7 +1209,8 @@ async function renderHoldingsTable() {
             if (String(row.id) === String(selectedHoldingId)) tr.classList.add('selected-row');
 
             // 投資信託等はmaster.csvに登録が無く名前解決できないため、その場合はコード（＝ファンド名）をそのまま銘柄名として表示する
-            const values = [row.owner, row.broker, row.account, row.code, nameMap.get(row.code) || row.code, row.shares, row.avg_cost];
+            // 最終更新日（updated_at）は2026-08-23追加のため、それ以前に登録された行は空欄になる
+            const values = [row.owner, row.broker, row.account, row.code, nameMap.get(row.code) || row.code, row.shares, row.avg_cost, row.updated_at || ''];
             const TRUNCATE_COL_INDEXES = new Set([3, 4]); // コード・銘柄名は長いファンド名が入りうるため省略表示する
             values.forEach((value, index) => {
                 const td = document.createElement('td');
@@ -1371,7 +1372,8 @@ document.getElementById('holdings-code')?.addEventListener('input', async () => 
     }
 });
 
-/** フォームの入力値を検証して返す（idは含まない）。証券コード・株数が未入力ならnullを返す（アラート表示済み）。 */
+/** フォームの入力値を検証して返す（idは含まない）。証券コード・株数が未入力ならnullを返す（アラート表示済み）。
+ * updated_atはフォーム項目ではなく、呼び出し時点の日時を自動セットする（手入力での更新日時と揃える）。 */
 function readHoldingsFormFields() {
     const code   = document.getElementById('holdings-code').value.trim();
     const shares = document.getElementById('holdings-shares').value.trim();
@@ -1385,6 +1387,7 @@ function readHoldingsFormFields() {
         code,
         shares,
         avg_cost: document.getElementById('holdings-avg-cost').value.trim(),
+        updated_at: formatJstTimestamp(),
     };
 }
 
@@ -1526,8 +1529,9 @@ document.getElementById('holdings-csv-import-btn')?.addEventListener('click', as
         // 選択した所有者×証券会社に一致する既存行だけを置き換える（他の所有者・証券会社の行はそのまま保持）
         holdingsRows = holdingsRows.filter(r => !(r.owner === owner && r.broker === broker));
         let nextId = nextHoldingId(holdingsRows);
+        const now = formatJstTimestamp();
         parsed.forEach(item => {
-            holdingsRows.push({ id: String(nextId++), owner, broker, ...item });
+            holdingsRows.push({ id: String(nextId++), owner, broker, ...item, updated_at: now });
         });
 
         clearHoldingsForm();
@@ -1601,7 +1605,7 @@ async function renderGainsTable() {
         try { nameMap = await getMasterNameMap(token); } catch (error) { console.error(error); }
     }
 
-    const cols = ['所有者', '証券会社', '資産種別', 'コード', '銘柄名', '約定日', '実現損益（円）'];
+    const cols = ['所有者', '証券会社', '資産種別', 'コード', '銘柄名', '約定日', '実現損益（円）', '最終更新日'];
     const thead = document.createElement('thead');
     const hRow = document.createElement('tr');
     cols.forEach(label => {
@@ -1626,7 +1630,8 @@ async function renderGainsTable() {
         sorted.forEach(r => {
             const tr = document.createElement('tr');
             const name = r.name || nameMap.get(r.code) || '';
-            const values = [r.owner, r.broker, r.asset_type, r.code, name, r.date, Number(r.pnl).toLocaleString('ja-JP')];
+            // 最終更新日（updated_at）は約定日（date）とは別物＝この行をアプリに登録した日時。追加より前の行は空欄になる
+            const values = [r.owner, r.broker, r.asset_type, r.code, name, r.date, Number(r.pnl).toLocaleString('ja-JP'), r.updated_at || ''];
             values.forEach(v => {
                 const td = document.createElement('td');
                 td.textContent = v ?? '';
@@ -1694,6 +1699,12 @@ function renderGainsSummaryChart() {
     const rows = [...totals.entries()].map(([code, { name, total }]) => ({ code, name, total }));
     const positive = rows.filter(r => r.total >= 0).sort((a, b) => b.total - a.total);
     const negative = rows.filter(r => r.total < 0).sort((a, b) => a.total - b.total);
+
+    const sumOf = list => list.reduce((s, r) => s + r.total, 0);
+    const positiveTotalEl = document.getElementById('gains-summary-total-positive');
+    const negativeTotalEl = document.getElementById('gains-summary-total-negative');
+    if (positiveTotalEl) positiveTotalEl.textContent = `${Math.round(sumOf(positive)).toLocaleString('ja-JP')}円`;
+    if (negativeTotalEl) negativeTotalEl.textContent = `${Math.round(sumOf(negative)).toLocaleString('ja-JP')}円`;
 
     renderGainsBarGroup('gains-summary-chart-positive', positive, 'gains-chart-fill--positive');
     renderGainsBarGroup('gains-summary-chart-negative', negative, 'gains-chart-fill--negative');
@@ -1851,13 +1862,14 @@ document.getElementById('gains-save-btn')?.addEventListener('click', async () =>
         const existingKeys = new Set(existingRows.map(gainsDedupeKey));
 
         let nextId = nextGainsId(existingRows);
+        const now = formatJstTimestamp(); // 「約定日」（date列）とは別物。この行をアプリに登録した日時を記録する
         const seenNew = new Set();
         let added = 0, skipped = 0;
         gainsPendingRows.forEach(({ _pendingId, ...row }) => {
             const key = gainsDedupeKey(row);
             if (existingKeys.has(key) || seenNew.has(key)) { skipped++; return; }
             seenNew.add(key);
-            existingRows.push({ id: String(nextId++), ...row });
+            existingRows.push({ id: String(nextId++), ...row, updated_at: now });
             added++;
         });
 
