@@ -1567,8 +1567,10 @@ function nextGainsId(rows) {
     return maxId + 1;
 }
 
-/** 重複判定キー（証券会社・資産種別・コード・日付・損益が完全一致なら同一取引とみなす）。 */
-function gainsDedupeKey(row) {
+/** 重複判定の基本キー（証券会社・資産種別・コード・日付・損益）。同日同銘柄で同額の取引が複数あると
+ * このキーだけでは区別できない（例：同日に同じ銘柄を100株ずつ2回売買し、たまたま損益が同額だった場合）ため、
+ * 実際の重複判定（gains-save-btnのクリックハンドラ）ではこのキーの「同一キーの出現順」も合わせて比較する。 */
+function gainsBaseKey(row) {
     return [row.broker, row.asset_type, row.code, row.date, row.pnl].join('|');
 }
 
@@ -1877,8 +1879,16 @@ document.getElementById('gains-csv-import-btn')?.addEventListener('click', async
 });
 
 // ===== 売買履歴：仮登録一覧をGitHubへ保存（追記型マージ） =====
-// 保存直前に最新のstock/realized_gains.csvを取得し直し、gainsDedupeKeyが完全一致する行を除いた分だけ
-// 新しいidを振って追記する（delisted.csv/extra_targets.csv等と同様、常に最新の内容の上にマージする）。
+// 保存直前に最新のstock/realized_gains.csvを取得し直し、重複していない分だけ新しいidを振って追記する
+// （delisted.csv/extra_targets.csv等と同様、常に最新の内容の上にマージする）。
+//
+// 重複判定は「基本キー（gainsBaseKey）が完全一致する行が、既存データ側に何件あるか」を基準にした
+// 出現順（1件目、2件目…）比較で行う。基本キーだけで重複を判定すると、同日に同じ銘柄を複数回売買して
+// たまたま損益が同額だった場合（例：100株ずつ2回売買）に2件目以降を誤って重複扱いしてしまう。
+// 出現順まで含めて比較することで、「本当に複数ある同条件の取引」（基本キーの出現件数が既存より多い分＝新規）と
+// 「期間が重複する再取込み」（基本キーの出現件数が既存以下＝重複）を区別できる
+// （旧notebook・past/(chk済)_C05_(R3)譲渡益の記録.ipynbは、同日同銘柄を合算してから既存値と完全一致するかを
+// 比較する冪等性の仕組みだったため複数取引を区別できなかったが、縦持ちログではこの出現順方式でどちらも実現できる）。
 document.getElementById('gains-save-btn')?.addEventListener('click', async () => {
     const statusEl = document.getElementById('gains-save-status');
     const token = getTokenValue();
@@ -1889,15 +1899,22 @@ document.getElementById('gains-save-btn')?.addEventListener('click', async () =>
     try {
         const existingText = await fetchFileIfExists(token, OWNER, DATA_REPO, REALIZED_GAINS_PATH);
         const existingRows = existingText ? parseCsv(existingText) : [];
-        const existingKeys = new Set(existingRows.map(gainsDedupeKey));
+
+        const existingCounts = new Map(); // 基本キー -> 既存データ内での出現件数
+        existingRows.forEach(r => {
+            const key = gainsBaseKey(r);
+            existingCounts.set(key, (existingCounts.get(key) || 0) + 1);
+        });
 
         let nextId = nextGainsId(existingRows);
-        const seenNew = new Set();
+        const pendingSeenCounts = new Map(); // 基本キー -> ここまでに処理した仮登録側の出現件数
         let added = 0, skipped = 0;
         gainsPendingRows.forEach(({ _pendingId, ...row }) => {
-            const key = gainsDedupeKey(row);
-            if (existingKeys.has(key) || seenNew.has(key)) { skipped++; return; }
-            seenNew.add(key);
+            const key = gainsBaseKey(row);
+            const occurrence = (pendingSeenCounts.get(key) || 0) + 1;
+            pendingSeenCounts.set(key, occurrence);
+
+            if (occurrence <= (existingCounts.get(key) || 0)) { skipped++; return; } // 既存データ側に対応する出現がある＝重複
             existingRows.push({ id: String(nextId++), ...row });
             added++;
         });

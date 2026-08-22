@@ -259,7 +259,7 @@
                     <table id="gains-pending-table" class="data-table"></table>
                 </div>
                 <button type="button" id="gains-save-btn" class="run-btn">登録</button>
-                <p id="gains-save-status" class="update-status">仮登録一覧の内容を、既存の売買履歴に追記する形で`stock/realized_gains.csv`に保存します（証券会社・資産種別・コード・日付・損益が完全一致する行は重複としてスキップします）。</p>
+                <p id="gains-save-status" class="update-status">仮登録一覧の内容を、既存の売買履歴に追記する形で`stock/realized_gains.csv`に保存します（証券会社・資産種別・コード・日付・損益に加え、同じ内容の出現順まで見て重複を判定するため、同日同銘柄の複数取引は保持したまま、期間が重複する再取込みだけを正しくスキップします）。</p>
             </div>
 
             <!-- 集計・グラフ：銘柄別の実現損益合計（「読込」済みの一覧全体が対象。仮登録分は含まない）。
