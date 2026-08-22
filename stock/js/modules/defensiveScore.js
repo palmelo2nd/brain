@@ -1,12 +1,16 @@
 // (1) インポート — なし（Web標準APIのみ使用）
 
-// past/C02-2_ディフェンシブ判定ラベル付け.ipynb のスコアリングロジックを移植したもの。
-// 「改善①〜④」のうち、MDDクリップ（下限クリップ・ローリング窓）とvol許容レンジ緩和（下方偏差モード・外れ値クリップ）に
-// 相当する指標定義の調整は、SIMタブ「指標の定義」欄から設定できる（2026-08-18実装。3指標＋固定加重平均という
-// 骨格自体は変えていない）。条件付き重み変更・救済ルールは未移植。
+// past/C02-2_ディフェンシブ判定ラベル付け.ipynbのスコアリングロジックを移植したものだが、2026-08-22に
+// 「下落局面相関」「ボラ比」を別々に重み付けする方式から、両者を統合した下方β（downside beta）1本による
+// スコアリングに設計変更した。理由：本アプリの用途は購入金額でのポートフォリオ加重平均によりポートフォリオ
+// 全体のディフェンシブ度を算出することだが、加重平均で正しく合成できる（ポートフォリオβ＝Σ w_i・β_i が
+// 数学的に厳密に成立する）指標はβだけであり、相関・ボラ比をそれぞれ別スコアとして加重平均する方式や、
+// 最大下落比（MDD比。分散効果により個別銘柄のMDDの加重平均はポートフォリオ全体の実際のMDDより悲観的な値になる）
+// を加重平均に含める方式は、この用途に対して数学的に整合しない。MDD比自体は完全に廃止した（個別銘柄選定の
+// 参考情報としても保持しない）。
 
 const MIN_MONTHS_EQUIVALENT = 24;      // 判定に必要な最低の重複期間（暦月換算。2年未満はブレやすいため除外。旧notebookと同基準）
-const MIN_DOWN_MONTHS_EQUIVALENT = 12; // 下落局面相関の算出に必要な最低の下落期間（暦月換算）
+const MIN_DOWN_MONTHS_EQUIVALENT = 12; // 下方βの算出に必要な最低の下落期間（暦月換算）
 const WEEKS_PER_MONTH_APPROX = 4;      // 暦月換算の基準（リターン算出期間の既定値=4週=月次相当と揃えている）
 
 /**
@@ -93,44 +97,6 @@ function correlation(xs, ys) {
     return cov / (sx * sy);
 }
 
-/**
- * 日足終値配列（date昇順の数値配列）から最大ドローダウン（負の値。下落が無ければ0）を計算する。
- * リターン算出期間（週）とは無関係に、常に日足の粒度で計算する（月次等に間引かない）。
- *
- * options.floorClip（負の値）を指定すると、各時点のドローダウン値をfloorClipで底打ちしてから使う
- * （floorClipより深い下落は一律floorClipとして扱う。null/未指定なら底打ちしない）。
- * options.rollingを指定すると、windowSize日ぶんのトレーリング窓ごとに最大ドローダウンを計算し、
- * その時系列をagg（'mean'=平均｜'max'=窓の中で最も深い値）で1つの値にまとめる
- * （rolling省略時は系列全体を通した単一の最大ドローダウンを返す。旧実装の挙動と同じ）。
- */
-function computeDrawdownMetric(closes, { floorClip = null, rolling = null } = {}) {
-    const clipDd = dd => (Number.isFinite(floorClip) && floorClip < 0) ? Math.max(floorClip, dd) : dd;
-
-    if (!rolling) {
-        let peak = -Infinity, worst = 0;
-        closes.forEach(v => {
-            peak = Math.max(peak, v);
-            worst = Math.min(worst, clipDd((v / peak) - 1));
-        });
-        return worst;
-    }
-
-    if (closes.length === 0) return NaN;
-    const { windowSize, agg } = rolling;
-    const windowWorstList = [];
-    for (let end = 0; end < closes.length; end++) {
-        const start = Math.max(0, end - windowSize + 1);
-        let peak = -Infinity, worst = 0;
-        for (let i = start; i <= end; i++) {
-            peak = Math.max(peak, closes[i]);
-            worst = Math.min(worst, clipDd((closes[i] / peak) - 1));
-        }
-        windowWorstList.push(worst);
-    }
-    // 'max'＝複数の窓のうち最も深い下落（ドローダウンは負値なので数値としては最小のもの）を採用
-    return agg === 'max' ? Math.min(...windowWorstList) : mean(windowWorstList);
-}
-
 /** 値（低いほど良い指標）を0〜100点に変換する。good以下=100点、bad以上=0点、間は線形補間。算出不能はnull。 */
 export function scoreLowBetter(value, good, bad) {
     if (!Number.isFinite(value)) return null;
@@ -140,40 +106,39 @@ export function scoreLowBetter(value, good, bad) {
 }
 
 /**
- * 銘柄の株価とN225（日経平均）を比較し、ディフェンシブ度スコア（0〜100、高いほど景気非連動＝ディフェンシブ）を算出する。
+ * 銘柄の株価とN225（日経平均）を比較し、下方β（downside beta）に基づくディフェンシブ度スコア
+ * （0〜100、高いほど景気非連動＝ディフェンシブ）を算出する。
+ *
+ * β = 下落局面相関 × 下落局面ボラ比（下落局面のみに絞った相関と標準偏差比を掛け合わせたもの）。
+ * ポートフォリオ全体のβは購入金額加重平均で厳密に合成できる（β_portfolio = Σ w_i・β_i）ため、
+ * 本アプリの用途（購入金額加重平均でポートフォリオ全体のディフェンシブ度を算出する）に対して
+ * 数学的に整合する唯一の指標としてこれを採用している。
  *
  * (2) インプット:
  *   stockPriceRows / n225PriceRows — parseCsvの結果（{date, close}の文字列オブジェクト配列。stock/prices/{code}.csv形式）
  *   params — {
- *     years, wDown, wVol, wMdd, downGood, downBad, volGood, volBad, mddGood, mddBad,
- *     downThreshold,          // 下落局面相関・下方偏差モードの閾値（N225の期間リターンがこれ未満を「下落局面」とみなす。既定0）
- *     returnPeriodWeeks,      // 下落局面相関・ボラ比の算出に使う期間リターンの区切り（週。既定4＝月次相当）
- *     volDownsideOnly,        // true なら標準偏差の対象を下落局面のみ（下方偏差）にする
+ *     years,                  // N225最終データ日の年を除いた過去years年分（暦年区切り）を対象にする
+ *     betaGood, betaBad,      // βのgood/bad閾値（betaGood以下=100点、betaBad以上=0点、線形補間）
+ *     downThreshold,          // 下落局面の閾値（N225の期間リターンがこれ未満を「下落局面」とみなす。既定0）
+ *     returnPeriodWeeks,      // 期間リターンの区切り（週。既定4＝月次相当）
  *     volOutlierClip,         // 期間リターンの絶対値の丸め上限（銘柄・N225の両方に対称適用。nullなら丸めない）
- *     mddFloorClip,           // ドローダウンの底打ち値（負の値。銘柄・N225の両方に対称適用。nullなら底打ちしない）
- *     mddRollingEnabled, mddRollingWindowWeeks, mddRollingAgg, // trueなら日足のローリング窓（週→日換算）でMDDを算出し'mean'|'max'で集約
  *   }
  * (3) メイン: N225の最終データ日の年を「今年」として除外し、暦年（1〜12月）区切りで過去years年分に揃える
  *            （銘柄側もN225と同じ年範囲を使うため、データの鮮度が銘柄ごとに違っても計算期間の終点はズレない）
- *            → returnPeriodWeeks刻みの期間リターン化 → 下落局面相関／ボラ比を算出（MDD比は日足を直接使用。
- *            期間の粒度とは独立） → good/badで0-100点化 → 加重平均（欠損指標は中立50点として扱う）
- * (4) アウトプット: { score, scoreDown, scoreVol, scoreMdd, corrDown, volRatio, mddRatio, periods, downPeriods, insufficientData }
- *                   重複期間が暦月換算24ヶ月分未満の場合は score=null, insufficientData=true
+ *            → returnPeriodWeeks刻みの期間リターン化 → N225の期間リターンがdownThreshold未満の期間（下落局面）
+ *            だけに絞り、相関と標準偏差比を算出 → β = 相関 × 標準偏差比 → good/badで0-100点化
+ * (4) アウトプット: { score, beta, corrDown, volRatio, periods, downPeriods, insufficientData }
+ *                   重複期間が暦月換算24ヶ月分未満、または下落局面が12ヶ月分未満の場合は
+ *                   score=null, insufficientData=true
  */
 export function calcDefensiveScore(stockPriceRows, n225PriceRows, params) {
     const returnPeriodWeeks = Number.isFinite(params.returnPeriodWeeks) && params.returnPeriodWeeks > 0 ? params.returnPeriodWeeks : 4;
     const downThreshold = Number.isFinite(params.downThreshold) ? params.downThreshold : 0;
-    const volDownsideOnly = !!params.volDownsideOnly;
     const volOutlierClip = Number.isFinite(params.volOutlierClip) && params.volOutlierClip > 0 ? params.volOutlierClip : null;
-    const mddFloorClip = Number.isFinite(params.mddFloorClip) && params.mddFloorClip < 0 ? params.mddFloorClip : null;
-    const mddRollingWindowWeeks = Number.isFinite(params.mddRollingWindowWeeks) && params.mddRollingWindowWeeks > 0 ? params.mddRollingWindowWeeks : 52;
-    const mddRolling = params.mddRollingEnabled
-        ? { windowSize: Math.max(1, Math.round(mddRollingWindowWeeks * 7)), agg: params.mddRollingAgg === 'max' ? 'max' : 'mean' }
-        : null;
 
     const n225Clean = cleanPriceRows(n225PriceRows);
     if (n225Clean.length === 0) {
-        return { score: null, scoreDown: null, scoreVol: null, scoreMdd: null, corrDown: null, volRatio: null, mddRatio: null, periods: 0, downPeriods: 0, insufficientData: true };
+        return { score: null, beta: null, corrDown: null, volRatio: null, periods: 0, downPeriods: 0, insufficientData: true };
     }
     // N225側の最終データ日の年を「今年」とみなして除外し、銘柄・N225とも同じ暦年範囲（過去years年分）に揃える
     const excludeYear = Number(n225Clean[n225Clean.length - 1].date.slice(0, 4));
@@ -194,41 +159,31 @@ export function calcDefensiveScore(stockPriceRows, n225PriceRows, params) {
 
     const minPeriods = minPeriodsFor(MIN_MONTHS_EQUIVALENT, returnPeriodWeeks);
     if (paired.length < minPeriods) {
-        return { score: null, scoreDown: null, scoreVol: null, scoreMdd: null, corrDown: null, volRatio: null, mddRatio: null, periods: paired.length, downPeriods: 0, insufficientData: true };
+        return { score: null, beta: null, corrDown: null, volRatio: null, periods: paired.length, downPeriods: 0, insufficientData: true };
     }
 
-    // 下落局面相関（N225の期間リターンがdownThreshold未満の期間だけの相関） … 低いほど良い
+    // 下落局面（N225の期間リターンがdownThreshold未満の期間）だけに絞り、相関と標準偏差比を算出する
     const down = paired.filter(p => p.n225 < downThreshold);
     const minDownPeriods = minPeriodsFor(MIN_DOWN_MONTHS_EQUIVALENT, returnPeriodWeeks);
-    const corrDown = down.length >= minDownPeriods ? correlation(down.map(p => p.stock), down.map(p => p.n225)) : NaN;
-    const scoreDown = scoreLowBetter(corrDown, params.downGood, params.downBad);
+    if (down.length < minDownPeriods) {
+        return { score: null, beta: null, corrDown: null, volRatio: null, periods: paired.length, downPeriods: down.length, insufficientData: true };
+    }
 
-    // ボラ比（期間リターンの標準偏差の比） … 低いほど良い。下方偏差モードONならdown（下落局面）だけを対象にする
-    // （下落局面が無ければ空配列になり、stdDevはNaNを返す＝算出不能として中立50点にフォールバックする）。
-    // 外れ値クリップは銘柄・N225の両方の期間リターンに対称に適用する（比率として公平に比較するため）。
-    const volSource = volDownsideOnly ? down : paired;
-    const volStock = stdDev(volSource.map(p => clipAbs(p.stock, volOutlierClip)));
-    const volN225  = stdDev(volSource.map(p => clipAbs(p.n225, volOutlierClip)));
+    const corrDown = correlation(down.map(p => p.stock), down.map(p => p.n225));
+
+    // 外れ値クリップは標準偏差比（ボラ比）側にのみ適用する（相関は既にスケール非依存のため、旧実装と同じ扱いを踏襲）。
+    const volStock = stdDev(down.map(p => clipAbs(p.stock, volOutlierClip)));
+    const volN225  = stdDev(down.map(p => clipAbs(p.n225, volOutlierClip)));
     const volRatio = volN225 > 0 ? volStock / volN225 : NaN;
-    const scoreVol = scoreLowBetter(volRatio, params.volGood, params.volBad);
 
-    // MDD比（最大ドローダウンの比） … 低いほど良い。リターン算出期間とは無関係に日足終値を直接使う。
-    // 下限クリップ・ローリング窓は銘柄・N225の両方に対称に適用する。
-    const mddOptions = { floorClip: mddFloorClip, rolling: mddRolling };
-    const mddStock = computeDrawdownMetric(stock.map(r => r.close), mddOptions);
-    const mddN225  = computeDrawdownMetric(n225.map(r => r.close), mddOptions);
-    const mddRatio = Math.abs(mddN225) > 1e-12 ? Math.abs(mddStock) / Math.abs(mddN225) : NaN;
-    const scoreMdd = scoreLowBetter(mddRatio, params.mddGood, params.mddBad);
-
-    const sd = scoreDown ?? 50, sv = scoreVol ?? 50, sm = scoreMdd ?? 50;
-    const wSum = params.wDown + params.wVol + params.wMdd;
-    const score = wSum > 0 ? (params.wDown * sd + params.wVol * sv + params.wMdd * sm) / wSum : null;
+    const beta = (Number.isFinite(corrDown) && Number.isFinite(volRatio)) ? corrDown * volRatio : NaN;
+    const score = scoreLowBetter(beta, params.betaGood, params.betaBad);
 
     return {
-        score, scoreDown: sd, scoreVol: sv, scoreMdd: sm,
+        score,
+        beta: Number.isFinite(beta) ? beta : null,
         corrDown: Number.isFinite(corrDown) ? corrDown : null,
         volRatio: Number.isFinite(volRatio) ? volRatio : null,
-        mddRatio: Number.isFinite(mddRatio) ? mddRatio : null,
         periods: paired.length, downPeriods: down.length, insufficientData: false
     };
 }

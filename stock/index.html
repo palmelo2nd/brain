@@ -6,7 +6,6 @@
     <title>Stock 投資管理</title>
     <link rel="stylesheet" href="css/style.css">
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
 </head>
 <body>
 
@@ -358,10 +357,14 @@
 
         <!-- SIM：ディフェンシブ度（景気連動度）シミュレータ。past/C02-2_ディフェンシブ判定ラベル付け.ipynbのスコアリングを移植。
              旧実装の手動ラベル（L_def）は廃止し連続スコアで評価する方針のため、ここではスコア分布と閾値による判定結果の
-             可視化のみを行う（データへの書き込みは行わない、あくまで試算用のページ）。旧手動ラベルは比較表示にのみ使う -->
+             可視化のみを行う（データへの書き込みは行わない、あくまで試算用のページ）。旧手動ラベルは比較表示にのみ使う。
+             2026-08-22：下落局面相関・ボラ比を別々に重み付けする方式から、両者を統合した下方β（downside beta）1本
+             によるスコアリングに変更（購入金額加重平均でポートフォリオ全体のディフェンシブ度を出す用途に対し、
+             加重平均が数学的に厳密に合成できる指標はβだけであるため）。最大下落比（MDD比）は同じ理由（分散効果を
+             無視することになり加重平均に使うと実態より悲観的な値になる）で完全に廃止した。 -->
         <div id="view-sim" class="view-panel" style="display:none">
             <p class="section-label">SIM（ディフェンシブ度シミュレータ）</p>
-            <p class="placeholder-text">株価の値動きを日経平均（N225）と比較し、下落局面相関・ボラ比・最大下落比の3指標からディフェンシブ度スコア（0〜100、高いほど景気非連動）を試算します。パラメータを調整して「計算」を押すと、対象銘柄のスコア分布と、旧実装で手動ラベル付けしていた銘柄との比較を確認できます。「計算」だけでは何も保存されず、下部の「適用」を押した時点で初めて`stock/scores.csv`に保存されます。</p>
+            <p class="placeholder-text">株価の値動きを日経平均（N225）と比較し、下方β（下落局面に絞った相関×ボラ比）からディフェンシブ度スコア（0〜100、高いほど景気非連動）を試算します。パラメータを調整して「計算」を押すと、対象銘柄のスコア分布と、旧実装で手動ラベル付けしていた銘柄との比較を確認できます。「計算」だけでは何も保存されず、下部の「適用」を押した時点で初めて`stock/scores.csv`に保存されます。</p>
 
             <div class="update-form">
                 <p class="update-form-title">対象銘柄・期間</p>
@@ -374,22 +377,6 @@
                     <input type="number" id="sim-years" value="10" min="1" step="1">
                 </div>
                 <p class="placeholder-text">暦年（1〜12月）区切りで、今年（N225の最終データ日が属する年）を除いた過去N年分を対象にします。銘柄側もN225と同じ年範囲で揃えて計算します。</p>
-            </div>
-
-            <div class="update-form">
-                <p class="update-form-title">重み（3指標の合計に対する比率。自動で正規化されます）</p>
-                <div class="update-form-row">
-                    <label>下落局面相関</label>
-                    <input type="number" id="sim-w-down" value="0.4" min="0" step="0.1">
-                </div>
-                <div class="update-form-row">
-                    <label>ボラ比</label>
-                    <input type="number" id="sim-w-vol" value="0.3" min="0" step="0.1">
-                </div>
-                <div class="update-form-row">
-                    <label>最大下落比</label>
-                    <input type="number" id="sim-w-mdd" value="0.3" min="0" step="0.1">
-                </div>
                 <div class="update-form-row">
                     <label>判定しきい値</label>
                     <input type="number" id="sim-threshold" value="50" min="0" max="100" step="1">
@@ -397,87 +384,41 @@
             </div>
 
             <details class="advanced-settings">
-                <summary>各指標のgood/bad閾値（詳細設定）</summary>
+                <summary>βのgood/bad閾値（詳細設定）</summary>
                 <div class="update-form">
-                    <p class="placeholder-text">値がgood以下なら100点、bad以上なら0点、間は線形補間です（下落局面相関・ボラ比・最大下落比のいずれも低いほど高得点）。</p>
+                    <p class="placeholder-text">β（下落局面相関×下落局面ボラ比）がgood以下なら100点、bad以上なら0点、間は線形補間です。既定値（good=0.5／bad=1.5）はβ=1（市場平均並みの感応度）でちょうど50点になるよう対称に設定しています。</p>
                     <div class="update-form-row">
-                        <label>下落相関 good</label>
-                        <input type="number" id="sim-down-good" value="0.2" step="0.05">
+                        <label>β good</label>
+                        <input type="number" id="sim-beta-good" value="0.5" step="0.05">
                     </div>
                     <div class="update-form-row">
-                        <label>下落相関 bad</label>
-                        <input type="number" id="sim-down-bad" value="0.8" step="0.05">
-                    </div>
-                    <div class="update-form-row">
-                        <label>ボラ比 good</label>
-                        <input type="number" id="sim-vol-good" value="0.9" step="0.05">
-                    </div>
-                    <div class="update-form-row">
-                        <label>ボラ比 bad</label>
-                        <input type="number" id="sim-vol-bad" value="1.5" step="0.05">
-                    </div>
-                    <div class="update-form-row">
-                        <label>最大下落比 good</label>
-                        <input type="number" id="sim-mdd-good" value="0.8" step="0.05">
-                    </div>
-                    <div class="update-form-row">
-                        <label>最大下落比 bad</label>
-                        <input type="number" id="sim-mdd-bad" value="1.2" step="0.05">
+                        <label>β bad</label>
+                        <input type="number" id="sim-beta-bad" value="1.5" step="0.05">
                     </div>
                 </div>
             </details>
 
-            <!-- 指標の定義そのもの（下落局面の閾値・リターン算出期間・ボラ比/最大下落比の算出方法）を調整する入力欄。
+            <!-- 指標の定義そのもの（下落局面の閾値・リターン算出期間・ボラ比の算出方法）を調整する入力欄。
                  js/modules/defensiveScore.jsのcalcDefensiveScoreに渡り、計算に反映される -->
             <details class="advanced-settings">
                 <summary>指標の定義（詳細設定）</summary>
                 <div class="update-form">
-                    <p class="placeholder-text">下落局面相関・ボラ比・最大下落比の算出方法そのものに関わるパラメータです。</p>
+                    <p class="placeholder-text">βの算出方法そのものに関わるパラメータです。</p>
                     <div class="update-form-row">
                         <label>下落局面の閾値</label>
                         <input type="number" id="sim-down-threshold" value="0" step="0.01">
                     </div>
-                    <p class="placeholder-text">N225の期間リターンがこの値未満の期間を「下落局面」とみなします（初期値0＝マイナスの期間。下落局面相関・下方偏差モードのボラ比の両方で共通して使います）。</p>
+                    <p class="placeholder-text">N225の期間リターンがこの値未満の期間を「下落局面」とみなします（初期値0＝マイナスの期間）。βの相関・ボラ比の両方をこの下落局面だけに絞って算出します。</p>
                     <div class="update-form-row">
                         <label>リターン算出期間（週）</label>
                         <input type="number" id="sim-return-period-weeks" value="4" min="1" max="8" step="1">
                     </div>
-                    <p class="placeholder-text">下落局面相関・ボラ比の算出に使う期間リターンを、月次の代わりに何週間ごとで切り出すかを指定します（1〜8週。既定4週が月次相当）。最大下落比はこの設定と無関係に日足の値をそのまま使います。</p>
-
-                    <p class="update-form-title">ボラ比の定義</p>
-                    <div class="update-form-row">
-                        <label>下方偏差モード</label>
-                        <input type="checkbox" id="sim-vol-downside-only">
-                    </div>
-                    <p class="placeholder-text">ONにすると、標準偏差の算出対象を全期間ではなく下落局面のみ（下方偏差）にします（下落局面の判定は上の「下落局面の閾値」を共通で使用）。</p>
+                    <p class="placeholder-text">βの算出に使う期間リターンを、月次の代わりに何週間ごとで切り出すかを指定します（1〜8週。既定4週が月次相当）。</p>
                     <div class="update-form-row">
                         <label>外れ値クリップ</label>
                         <input type="number" id="sim-vol-outlier-clip" value="0.5" step="0.05">
                     </div>
-                    <p class="placeholder-text">期間リターンの絶対値がこの値を超えたら丸めてから標準偏差を計算します（銘柄・N225の両方に同じ値を適用します）。</p>
-
-                    <p class="update-form-title">最大下落比の定義</p>
-                    <div class="update-form-row">
-                        <label>下限クリップ</label>
-                        <input type="number" id="sim-mdd-floor-clip" value="-0.4" step="0.05">
-                    </div>
-                    <p class="placeholder-text">この値より深い下落は一律この値として扱います（例: -0.4なら-40%より深い下落を-40%に丸める。銘柄・N225の両方に同じ値を適用します）。</p>
-                    <div class="update-form-row">
-                        <label>ローリング窓</label>
-                        <input type="checkbox" id="sim-mdd-rolling-enabled">
-                    </div>
-                    <div class="update-form-row">
-                        <label>窓の長さ（週）</label>
-                        <input type="number" id="sim-mdd-rolling-window-weeks" value="52" min="1" step="1">
-                    </div>
-                    <div class="update-form-row">
-                        <label>集約方法</label>
-                        <select id="sim-mdd-rolling-agg">
-                            <option value="mean">平均</option>
-                            <option value="max">最大</option>
-                        </select>
-                    </div>
-                    <p class="placeholder-text">ONにすると、全期間を通した単一の最大下落率ではなく、日足終値に対して指定した窓の長さ（週。日数に換算）でローリング算出した最大下落率を集約方法（平均／最大）でまとめた値を使います（銘柄・N225の両方に同じ設定を適用します）。</p>
+                    <p class="placeholder-text">期間リターンの絶対値がこの値を超えたら丸めてからボラ比（標準偏差比）を計算します（銘柄・N225の両方に同じ値を適用します）。</p>
                 </div>
             </details>
 
@@ -496,23 +437,12 @@
                     <label>表示する指標</label>
                     <select id="sim-hist-metric">
                         <option value="score">スコア</option>
+                        <option value="beta">β</option>
                         <option value="corrDown">下落局面相関</option>
-                        <option value="volRatio">ボラ比</option>
-                        <option value="mddRatio">最大下落比</option>
+                        <option value="volRatio">下落局面ボラ比</option>
                     </select>
                 </div>
                 <div id="sim-histogram" class="sim-histogram"></div>
-                <p class="placeholder-text sim-histogram-legend">
-                    <span class="sim-legend-swatch sim-legend-swatch--defensive"></span>旧ディフェンシブ（参考ラベル）
-                    <span class="sim-legend-swatch sim-legend-swatch--offensive"></span>旧オフェンシブ（参考ラベル）
-                    <span class="sim-legend-swatch sim-legend-swatch--none"></span>参考ラベル無し
-                </p>
-            </div>
-
-            <div class="update-form">
-                <p class="update-form-title">3軸散布図（下落局面相関×ボラ比×最大下落比）</p>
-                <p class="placeholder-text">ドラッグで回転、スクロールで拡大縮小できます（Plotly.jsによる3Dプロット）。色分けはヒストグラムと同じく旧実装の手動ラベル（参考ラベル）基準です。</p>
-                <div id="sim-scatter3d" class="sim-scatter3d"></div>
                 <p class="placeholder-text sim-histogram-legend">
                     <span class="sim-legend-swatch sim-legend-swatch--defensive"></span>旧ディフェンシブ（参考ラベル）
                     <span class="sim-legend-swatch sim-legend-swatch--offensive"></span>旧オフェンシブ（参考ラベル）

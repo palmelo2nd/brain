@@ -1876,14 +1876,15 @@ document.getElementById('attributes-save-btn')?.addEventListener('click', async 
 // ===== SIM：ディフェンシブ度（景気連動度）シミュレータ =====
 // past/C02-2_ディフェンシブ判定ラベル付け.ipynbのスコアリングロジックを移植したもの（js/modules/defensiveScore.js）。
 // 旧実装の手動教師ラベル（L_def）は廃止し、連続スコアで評価する方針に変更した。
-// 「改善①〜④」のうちMDDクリップ・vol許容レンジ緩和相当は「指標の定義」欄（getSimParams）から調整できる。
-// 条件付き重み変更・救済ルールは未移植。
+// 2026-08-22：下落局面相関・ボラ比を別々に重み付けする方式から、両者を統合した下方β（downside beta）1本に
+// よるスコアリングへ変更（購入金額加重平均でポートフォリオ全体のディフェンシブ度を出す用途に対し、加重平均が
+// 数学的に厳密に合成できる指標はβだけであるため）。MDD比・重みパラメータは完全に廃止した。
 // 「計算」自体は試算のみで何もコミットしない。「適用」を押した時点で初めてスコアをstock/scores.csvへ保存する
 // （銘柄選定用のスコアとして積み上げる。対象コードだけ更新・追加するマージ方式で、対象外の既存スコアは残す）。
 // 旧手動ラベル（REFERENCE_LABELS）は、保存先を持たない比較表示専用の参考データ（scores.csvには含めない）。
 
 const SIM_FETCH_BATCH_SIZE = 6; // 株価CSVの並列取得数（多すぎるとGitHub APIのレート制限に触れやすいため控えめに）
-let simResults = []; // 直近の計算結果（{ code, name, score, scoreDown, scoreVol, scoreMdd, corrDown, volRatio, mddRatio, periods, refLabel, error }）
+let simResults = []; // 直近の計算結果（{ code, name, score, beta, corrDown, volRatio, periods, downPeriods, refLabel, error }）
 
 /** SIM入力欄からパラメータを読み取る（未入力・不正値はデフォルト値にフォールバック）。 */
 function getSimParams() {
@@ -1891,27 +1892,14 @@ function getSimParams() {
         const v = Number(document.getElementById(id)?.value);
         return Number.isFinite(v) ? v : fallback;
     };
-    const checked = id => !!document.getElementById(id)?.checked;
     return {
-        years:    num('sim-years', 10),
-        wDown:    num('sim-w-down', 0.4),
-        wVol:     num('sim-w-vol', 0.3),
-        wMdd:     num('sim-w-mdd', 0.3),
-        downGood: num('sim-down-good', 0.2),
-        downBad:  num('sim-down-bad', 0.8),
-        volGood:  num('sim-vol-good', 0.9),
-        volBad:   num('sim-vol-bad', 1.5),
-        mddGood:  num('sim-mdd-good', 0.8),
-        mddBad:   num('sim-mdd-bad', 1.2),
+        years:     num('sim-years', 10),
+        betaGood:  num('sim-beta-good', 0.5),
+        betaBad:   num('sim-beta-bad', 1.5),
         // 指標の定義（詳細設定）。js/modules/defensiveScore.jsのcalcDefensiveScoreへそのまま渡す
-        downThreshold:         num('sim-down-threshold', 0),
-        returnPeriodWeeks:     num('sim-return-period-weeks', 4),
-        volDownsideOnly:       checked('sim-vol-downside-only'),
-        volOutlierClip:        num('sim-vol-outlier-clip', 0.5),
-        mddFloorClip:          num('sim-mdd-floor-clip', -0.4),
-        mddRollingEnabled:     checked('sim-mdd-rolling-enabled'),
-        mddRollingWindowWeeks: num('sim-mdd-rolling-window-weeks', 52),
-        mddRollingAgg:         document.getElementById('sim-mdd-rolling-agg')?.value || 'mean',
+        downThreshold:     num('sim-down-threshold', 0),
+        returnPeriodWeeks: num('sim-return-period-weeks', 4),
+        volOutlierClip:    num('sim-vol-outlier-clip', 0.5),
     };
 }
 
@@ -1979,10 +1967,6 @@ async function runSimCalculation() {
         const okCount = results.filter(r => Number.isFinite(r.score)).length;
         statusEl.textContent = `計算完了：${results.length}件中 ${okCount}件でスコアを算出しました（データ不足・取得エラー: ${results.length - okCount}件）。`;
         renderSimResults();
-        // 3D散布図はrenderSimResults()（判定しきい値スライダーからも呼ばれる）には含めない。
-        // 3軸の値・色分け（refLabel基準）はしきい値と無関係なため毎回作り直す必要が無く、
-        // 含めるとスライダー操作のたびにPlotlyが全体を再構築してユーザーが回転させた視点がリセットされてしまう。
-        renderSimScatter3d();
     } catch (error) {
         console.error(error);
         statusEl.textContent = `エラー: ${error.message}`;
@@ -2042,88 +2026,14 @@ function renderSimResults() {
     renderSimTable();
 }
 
-// ヒストグラムと3D散布図で共通して使う、旧実装の手動ラベル（refLabel）区分の色。
-// refLabelが無い（null）銘柄は'_none'キーに割り当てる。ヒストグラムの積み上げ色（sim-hist-seg--*）と揃えている。
-const SIM_REF_LABEL_CATEGORIES = [
-    { key: 'defensive', label: '旧ディフェンシブ', color: '#0d6efd' },
-    { key: 'offensive', label: '旧オフェンシブ',   color: '#adb5bd' },
-    { key: '_none',     label: '参考ラベル無し',   color: '#e9ecef' }, // 凡例スウォッチ・ヒストグラムと同色。白背景でも見えるよう3D側はマーカーの枠線を太めにしている
-];
-
-/**
- * 下落局面相関×ボラ比×最大下落比の3軸散布図をPlotly.js（CDN読み込み。window.Plotly）で描く。
- * ドラッグで回転・スクロールで拡大縮小できる3Dプロット。色分けはヒストグラムと同じくrefLabel基準
- * （現在の判定しきい値とは無関係）で、カテゴリごとに別トレースにすることで凡例クリックでの表示切替もできる。
- * 3指標すべてが算出できた銘柄のみが対象（下落局面相関のみ算出不能等、一部だけ欠けている銘柄は対象外）。
- */
-function renderSimScatter3d() {
-    const container = document.getElementById('sim-scatter3d');
-    if (!container) return;
-    if (!window.Plotly) {
-        // CDN読み込み失敗等で分かりにくく無反応になるより、原因が分かる表示にする
-        container.textContent = 'Plotly.jsの読み込みに失敗しました（通信環境やアドブロック等でcdn.plot.lyがブロックされている可能性があります）。ページを再読み込みしても改善しない場合はご連絡ください。';
-        console.error('renderSimScatter3d: window.Plotly is not available');
-        return;
-    }
-
-    const items = simResults.filter(r =>
-        Number.isFinite(r.corrDown) && Number.isFinite(r.volRatio) && Number.isFinite(r.mddRatio)
-    );
-    if (items.length === 0) {
-        window.Plotly.purge(container);
-        container.textContent = '計算すると散布図が表示されます（下落局面相関・ボラ比・最大下落比の3指標すべてが算出できた銘柄のみが対象です）。';
-        return;
-    }
-
-    const traces = SIM_REF_LABEL_CATEGORIES.map(({ key, label, color }) => {
-        const group = items.filter(r => (r.refLabel || '_none') === key);
-        return {
-            type: 'scatter3d',
-            mode: 'markers',
-            name: `${label}（${group.length}件）`,
-            x: group.map(r => r.corrDown),
-            y: group.map(r => r.volRatio),
-            z: group.map(r => r.mddRatio),
-            text: group.map(r => `${r.code} ${r.name}（スコア: ${Number.isFinite(r.score) ? r.score.toFixed(1) : '－'}）`),
-            hovertemplate: '%{text}<br>下落局面相関: %{x:.2f} / ボラ比: %{y:.2f} / 最大下落比: %{z:.2f}<extra></extra>',
-            marker: { size: 4, color, line: { color: '#57606a', width: 1 } },
-        };
-    }).filter(trace => trace.x.length > 0);
-
-    try {
-        // newPlot（reactではなく）で毎回作り直す：3軸散布図は「計算」実行時にのみ呼ばれる
-        // （判定しきい値スライダーからは呼ばれない。renderSimResults呼び出し箇所のコメント参照）ため、
-        // 回転視点のリセットは計算結果自体が変わるこのタイミングでのみ発生し、実用上問題にならない。
-        window.Plotly.newPlot(container, traces, {
-            margin: { l: 0, r: 0, t: 10, b: 0 },
-            scene: {
-                xaxis: { title: '下落局面相関' },
-                yaxis: { title: 'ボラ比' },
-                zaxis: { title: '最大下落比' },
-                // 3指標は値のスケールが異なる（下落局面相関は-1〜1、ボラ比・最大下落比は実データ依存）ため、
-                // 既定のaspectmode='auto'（各軸を実際のデータレンジ比のまま描画）だと箱が歪んで見える。
-                // 'cube'にすると各軸の実レンジに関わらず描画上の箱を立方体に強制する（軸目盛りの実際の値・
-                // ホバー表示の値自体は変えず、見た目の縦横比だけを揃える）。
-                aspectmode: 'cube',
-            },
-            legend: { orientation: 'h', y: 0 },
-        }, { responsive: true, displaylogo: false });
-    } catch (error) {
-        // ここで例外を外に投げると、呼び出し元（runSimCalculation）のcatchに拾われて
-        // 「計算」自体が失敗したかのように誤解させるステータス表示になってしまうため、ここで止める。
-        console.error('renderSimScatter3d failed:', error);
-        container.textContent = `3D散布図の描画に失敗しました: ${error.message}`;
-    }
-}
-
 // ヒストグラムに表示できる指標一覧。fieldはsimResultsの各要素のキーと対応させる。
 // min/maxを指定した指標は範囲固定（score: 0〜100の定義域そのもの／corrDown: 相関係数の定義域-1〜1）。
-// volRatio・mddRatioはgood/bad閾値次第でデータの実際の範囲が変わるため、都度simResultsの実測値から自動算出する（min/max省略）。
+// beta・volRatioはgood/bad閾値次第でデータの実際の範囲が変わるため、都度simResultsの実測値から自動算出する（min/max省略）。
 const SIM_HIST_METRICS = {
-    score:    { label: 'スコア',       field: 'score',    min: 0, max: 100, binCount: 20, decimals: 0 },
-    corrDown: { label: '下落局面相関', field: 'corrDown', min: -1, max: 1,  binCount: 20, decimals: 1 },
-    volRatio: { label: 'ボラ比',       field: 'volRatio',                  binCount: 20, decimals: 2 },
-    mddRatio: { label: '最大下落比',   field: 'mddRatio',                  binCount: 20, decimals: 2 },
+    score:    { label: 'スコア',           field: 'score',    min: 0, max: 100, binCount: 20, decimals: 0 },
+    beta:     { label: 'β',                field: 'beta',                      binCount: 20, decimals: 2 },
+    corrDown: { label: '下落局面相関',     field: 'corrDown', min: -1, max: 1,  binCount: 20, decimals: 1 },
+    volRatio: { label: '下落局面ボラ比',   field: 'volRatio',                  binCount: 20, decimals: 2 },
 };
 
 /** ヒストグラムの指標選択欄（sim-hist-metric）から現在の選択を読み取る。未選択・不正値は'score'にフォールバック。 */
@@ -2215,9 +2125,9 @@ const SIM_TABLE_COLUMNS = [
     { key: 'code',     label: 'コード',         sortValue: r => r.code },
     { key: 'name',     label: '銘柄名',         sortValue: r => r.name },
     { key: 'score',    label: 'スコア',         sortValue: r => r.score,    format: r => Number.isFinite(r.score) ? r.score.toFixed(1) : (r.error || '－') },
+    { key: 'beta',     label: 'β',              sortValue: r => r.beta,     format: r => Number.isFinite(r.beta) ? r.beta.toFixed(2) : '－' },
     { key: 'corrDown', label: '下落局面相関',   sortValue: r => r.corrDown, format: r => Number.isFinite(r.corrDown) ? r.corrDown.toFixed(2) : '－' },
-    { key: 'volRatio', label: 'ボラ比',         sortValue: r => r.volRatio, format: r => Number.isFinite(r.volRatio) ? r.volRatio.toFixed(2) : '－' },
-    { key: 'mddRatio', label: '最大下落比',     sortValue: r => r.mddRatio, format: r => Number.isFinite(r.mddRatio) ? r.mddRatio.toFixed(2) : '－' },
+    { key: 'volRatio', label: '下落局面ボラ比', sortValue: r => r.volRatio, format: r => Number.isFinite(r.volRatio) ? r.volRatio.toFixed(2) : '－' },
     { key: 'judge',    label: '判定',           sortValue: r => simJudgeText(r) },
     { key: 'refLabel', label: '参考ラベル(旧)', sortValue: r => simRefLabelText(r) },
     { key: 'periods',  label: '対象期間数',     sortValue: r => r.periods },

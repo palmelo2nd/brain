@@ -514,12 +514,6 @@ body {
 .sim-legend-swatch--offensive { background: #adb5bd; }
 .sim-legend-swatch--none { background: #e9ecef; border: 1px solid #d0d7de; }
 
-.sim-scatter3d {
-    width: 100%;
-    height: 480px;
-    margin-top: 10px;
-}
-
 .sim-row-mismatch td { background: #fff3cd; }
 
 .sim-table-sortable {
