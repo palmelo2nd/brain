@@ -1453,6 +1453,23 @@ document.getElementById('holdings-save-btn')?.addEventListener('click', async ()
     }
 });
 
+// ===== 保有・履歴：表示対象の切り替え（保有銘柄／売買履歴）。データ更新タブの株価更新／企業IDと同じ型 =====
+const HOLDINGS_VIEW_MODES = ['holdings', 'gains'];
+
+function renderHoldingsViewMode(mode) {
+    HOLDINGS_VIEW_MODES.forEach(m => {
+        document.getElementById(`holdings-view-${m}`)?.classList.toggle('view-btn--active', m === mode);
+    });
+    const holdingsPanel = document.getElementById('holdings-holdings-panel');
+    const gainsPanel    = document.getElementById('holdings-gains-panel');
+    if (holdingsPanel) holdingsPanel.style.display = mode === 'holdings' ? '' : 'none';
+    if (gainsPanel)    gainsPanel.style.display    = mode === 'gains'    ? '' : 'none';
+}
+
+HOLDINGS_VIEW_MODES.forEach(mode => {
+    document.getElementById(`holdings-view-${mode}`)?.addEventListener('click', () => renderHoldingsViewMode(mode));
+});
+
 // ===== 保有・履歴：入力方法の切り替え（手動入力／CSV入力） =====
 const HOLDINGS_INPUT_MODES = ['manual', 'csv'];
 
@@ -1621,32 +1638,19 @@ async function renderGainsTable() {
     table.replaceChildren(thead, tbody);
 }
 
-/** 銘柄別 実現損益合計の横棒グラフ（中央をゼロとし、プラスは右・マイナスは左へ伸びる）。realizedGainsRows
- * （読込済みの保存済みデータ）が対象で、仮登録中の未保存分は含めない（登録後に「読込」し直せば反映される）。 */
-function renderGainsSummaryChart() {
-    const container = document.getElementById('gains-summary-chart');
+/** 1グループ分（プラス側／マイナス側）の横棒グラフを描画する。バーは0を左端とし、rows内の最大絶対値を
+ * 基準に伸ばす（プラス・マイナスでスケールを共有しない。renderGainsSummaryChartから呼ばれる）。 */
+function renderGainsBarGroup(containerId, rows, fillClass) {
+    const container = document.getElementById(containerId);
     if (!container) return;
     container.replaceChildren();
 
-    const totals = new Map(); // code -> { name, total }
-    realizedGainsRows.forEach(r => {
-        const pnl = Number(r.pnl);
-        if (!Number.isFinite(pnl)) return;
-        const entry = totals.get(r.code) || { name: r.name || '', total: 0 };
-        if (!entry.name && r.name) entry.name = r.name;
-        entry.total += pnl;
-        totals.set(r.code, entry);
-    });
-
-    if (totals.size === 0) {
-        container.textContent = '売買履歴を読み込むと集計が表示されます。';
+    if (rows.length === 0) {
+        container.textContent = '該当銘柄はありません。';
         return;
     }
 
-    const rows = [...totals.entries()].map(([code, { name, total }]) => ({ code, name, total }));
-    rows.sort((a, b) => b.total - a.total);
     const maxAbs = Math.max(...rows.map(r => Math.abs(r.total)), 1);
-
     rows.forEach(r => {
         const row = document.createElement('div');
         row.className = 'gains-chart-row';
@@ -1658,13 +1662,10 @@ function renderGainsSummaryChart() {
 
         const track = document.createElement('div');
         track.className = 'gains-chart-track';
-        const zeroLine = document.createElement('div');
-        zeroLine.className = 'gains-chart-zero-line';
-        track.appendChild(zeroLine);
 
         const fill = document.createElement('div');
-        fill.className = `gains-chart-fill ${r.total >= 0 ? 'gains-chart-fill--positive' : 'gains-chart-fill--negative'}`;
-        fill.style.width = `${(Math.abs(r.total) / maxAbs) * 50}%`;
+        fill.className = `gains-chart-fill ${fillClass}`;
+        fill.style.width = `${(Math.abs(r.total) / maxAbs) * 100}%`;
         track.appendChild(fill);
 
         const value = document.createElement('div');
@@ -1674,6 +1675,28 @@ function renderGainsSummaryChart() {
         row.append(label, track, value);
         container.appendChild(row);
     });
+}
+
+/** 銘柄別 実現損益合計を、旧notebook同様プラス（利益）／マイナス（損失）の2つのグラフに分けて描画する。
+ * realizedGainsRows（読込済みの保存済みデータ）が対象で、仮登録中の未保存分は含めない
+ * （登録後に「読込」し直せば反映される）。 */
+function renderGainsSummaryChart() {
+    const totals = new Map(); // code -> { name, total }
+    realizedGainsRows.forEach(r => {
+        const pnl = Number(r.pnl);
+        if (!Number.isFinite(pnl)) return;
+        const entry = totals.get(r.code) || { name: r.name || '', total: 0 };
+        if (!entry.name && r.name) entry.name = r.name;
+        entry.total += pnl;
+        totals.set(r.code, entry);
+    });
+
+    const rows = [...totals.entries()].map(([code, { name, total }]) => ({ code, name, total }));
+    const positive = rows.filter(r => r.total >= 0).sort((a, b) => b.total - a.total);
+    const negative = rows.filter(r => r.total < 0).sort((a, b) => a.total - b.total);
+
+    renderGainsBarGroup('gains-summary-chart-positive', positive, 'gains-chart-fill--positive');
+    renderGainsBarGroup('gains-summary-chart-negative', negative, 'gains-chart-fill--negative');
 }
 
 // ===== 売買履歴：入力方法の切り替え（手動入力／CSV入力） =====

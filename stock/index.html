@@ -53,10 +53,18 @@
             </div>
         </div>
 
-        <!-- 保有・履歴：証券会社ごとの保有銘柄インプット、売買履歴CSVインポート -->
+        <!-- 保有・履歴：証券会社ごとの保有銘柄インプット、売買履歴（実現損益）の記録 -->
         <div id="view-holdings" class="view-panel" style="display:none">
             <p class="section-label">保有・履歴</p>
-            <p class="placeholder-text">保有銘柄は手動入力・証券会社CSV取込（準備中）に対応。売買履歴CSVのインポートは今後追加予定です。</p>
+            <p class="placeholder-text">保有銘柄は手動入力・証券会社CSV取込に対応。売買履歴（実現損益）は手動入力・証券会社CSV取込に対応。</p>
+
+            <!-- 表示対象の切り替え（保有銘柄／売買履歴） -->
+            <div class="view-toggle">
+                <button type="button" id="holdings-view-holdings" class="view-btn view-btn--active" data-view="holdings">保有銘柄</button>
+                <button type="button" id="holdings-view-gains"    class="view-btn" data-view="gains">売買履歴</button>
+            </div>
+
+            <div id="holdings-holdings-panel">
 
             <!-- 保有銘柄一覧：stock/holdings.csv（データリポジトリ）の内容を一覧表示。行クリックで下のフォームへ読み込む -->
             <div class="update-form">
@@ -154,10 +162,13 @@
                 <p id="holdings-save-status" class="update-status"></p>
             </div>
 
+            </div>
+
             <!-- 売買履歴（実現損益）：証券会社の実現損益CSV取込・手動記録。past/(chk済)_C05_(R3)譲渡益の記録.ipynbを移植。
                  stock/realized_gains.csv（縦持ちの取引ログ＝積み上げるデータ）に保存する。保有銘柄（洗い替え保存）とは
                  異なり、既存の履歴を残したまま新規分だけを追記するマージ方式（同一内容の重複行はスキップする）。
                  旧notebookが行っていた同日同銘柄の合算は行わず、取り込んだ行をそのまま1取引1行で保存する。 -->
+            <div id="holdings-gains-panel" style="display:none">
             <div class="update-form">
                 <p class="update-form-title">売買履歴（実現損益）</p>
                 <button type="button" id="gains-reload-btn" class="run-btn run-btn--secondary">読込</button>
@@ -247,10 +258,17 @@
                 <p id="gains-save-status" class="update-status">仮登録一覧の内容を、既存の売買履歴に追記する形で`stock/realized_gains.csv`に保存します（証券会社・資産種別・コード・日付・損益が完全一致する行は重複としてスキップします）。</p>
             </div>
 
-            <!-- 集計・グラフ：銘柄別の実現損益合計（「読込」済みの一覧全体が対象。仮登録分は含まない） -->
+            <!-- 集計・グラフ：銘柄別の実現損益合計（「読込」済みの一覧全体が対象。仮登録分は含まない）。
+                 既定は閉じた状態（普段は一覧の確認がメインで、グラフは必要な時だけ開く運用を想定） -->
             <div class="update-form">
-                <p class="update-form-title">銘柄別 実現損益合計</p>
-                <div id="gains-summary-chart" class="gains-chart"></div>
+                <details class="advanced-settings">
+                    <summary>銘柄別 実現損益合計</summary>
+                    <p class="update-form-title">プラス（利益）</p>
+                    <div id="gains-summary-chart-positive" class="gains-chart"></div>
+                    <p class="update-form-title">マイナス（損失）</p>
+                    <div id="gains-summary-chart-negative" class="gains-chart"></div>
+                </details>
+            </div>
             </div>
         </div>
 
