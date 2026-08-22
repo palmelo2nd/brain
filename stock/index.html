@@ -153,6 +153,105 @@
                 <button type="button" id="holdings-save-btn" class="run-btn">登録</button>
                 <p id="holdings-save-status" class="update-status"></p>
             </div>
+
+            <!-- 売買履歴（実現損益）：証券会社の実現損益CSV取込・手動記録。past/(chk済)_C05_(R3)譲渡益の記録.ipynbを移植。
+                 stock/realized_gains.csv（縦持ちの取引ログ＝積み上げるデータ）に保存する。保有銘柄（洗い替え保存）とは
+                 異なり、既存の履歴を残したまま新規分だけを追記するマージ方式（同一内容の重複行はスキップする）。
+                 旧notebookが行っていた同日同銘柄の合算は行わず、取り込んだ行をそのまま1取引1行で保存する。 -->
+            <div class="update-form">
+                <p class="update-form-title">売買履歴（実現損益）</p>
+                <button type="button" id="gains-reload-btn" class="run-btn run-btn--secondary">読込</button>
+                <div class="table-wrapper table-wrapper--limited">
+                    <table id="gains-table" class="data-table"></table>
+                </div>
+                <p id="gains-list-status" class="update-status">「読込」を押すと一覧を読み込みます。</p>
+            </div>
+
+            <!-- 入力方法の切り替え（手動入力／CSV入力） -->
+            <div class="view-toggle">
+                <button type="button" id="gains-mode-manual" class="view-btn view-btn--active" data-mode="manual">手動入力</button>
+                <button type="button" id="gains-mode-csv"    class="view-btn" data-mode="csv">CSV入力</button>
+            </div>
+
+            <!-- 手動入力：1件ずつ下の仮登録一覧（gainsPendingRows）に追加する -->
+            <div id="gains-manual-panel" class="update-form">
+                <p class="update-form-title">手動入力</p>
+                <div class="update-form-row">
+                    <label>所有者</label>
+                    <input type="text" id="gains-owner" list="holdings-owner-list" placeholder="例: T">
+                </div>
+                <div class="update-form-row">
+                    <label>証券会社</label>
+                    <input type="text" id="gains-broker" list="holdings-broker-list" placeholder="例: SBI">
+                </div>
+                <div class="update-form-row">
+                    <label>資産種別</label>
+                    <select id="gains-asset-type">
+                        <option value="国内株式">国内株式</option>
+                        <option value="外国株式">外国株式</option>
+                        <option value="投資信託">投資信託</option>
+                    </select>
+                </div>
+                <div class="update-form-row">
+                    <label>証券コード</label>
+                    <input type="text" id="gains-code" placeholder="例: 7203">
+                </div>
+                <div class="update-form-row">
+                    <label>銘柄名</label>
+                    <input type="text" id="gains-name" placeholder="任意">
+                </div>
+                <div class="update-form-row">
+                    <label>約定日</label>
+                    <input type="date" id="gains-date">
+                </div>
+                <div class="update-form-row">
+                    <label>実現損益（円）</label>
+                    <input type="number" id="gains-pnl" step="any">
+                </div>
+                <button type="button" id="gains-add-btn" class="run-btn run-btn--secondary">仮登録に追加</button>
+            </div>
+
+            <!-- CSV入力：証券会社の実現損益CSVから一括取込。取り込んだ内容はいったん仮登録一覧に積むだけで、
+                 「登録」を押すまでGitHubへは反映されない -->
+            <div id="gains-csv-panel" class="update-form" style="display:none">
+                <p class="update-form-title">CSV入力</p>
+                <p class="placeholder-text">証券会社の実現損益CSVから取り込みます（Shift-JISを想定）。取り込んだ内容はいったん下の仮登録一覧に追加されるだけで、「登録」を押すまでGitHubへは反映されません。</p>
+                <div class="update-form-row">
+                    <label>種類</label>
+                    <select id="gains-csv-kind">
+                        <option value="sbi_domestic">SBI証券（国内株式）</option>
+                        <option value="sbi_foreign">SBI証券（外国株式）</option>
+                        <option value="sbi_fund">SBI証券（投資信託）</option>
+                        <option value="rakuten">楽天証券</option>
+                    </select>
+                </div>
+                <div class="update-form-row">
+                    <label>所有者</label>
+                    <input type="text" id="gains-csv-owner" list="holdings-owner-list" placeholder="例: T">
+                </div>
+                <div class="update-form-row">
+                    <label>CSVファイル</label>
+                    <input type="file" id="gains-csv-file" accept=".csv">
+                </div>
+                <button type="button" id="gains-csv-import-btn" class="run-btn">取り込む</button>
+                <p id="gains-csv-status" class="update-status"></p>
+            </div>
+
+            <!-- 仮登録一覧：まだGitHubに保存していない追加分（手動入力・CSV取込の両方がここに積まれる） -->
+            <div class="update-form">
+                <p class="update-form-title">仮登録一覧（未保存）</p>
+                <div class="table-wrapper table-wrapper--limited">
+                    <table id="gains-pending-table" class="data-table"></table>
+                </div>
+                <button type="button" id="gains-save-btn" class="run-btn">登録</button>
+                <p id="gains-save-status" class="update-status">仮登録一覧の内容を、既存の売買履歴に追記する形で`stock/realized_gains.csv`に保存します（証券会社・資産種別・コード・日付・損益が完全一致する行は重複としてスキップします）。</p>
+            </div>
+
+            <!-- 集計・グラフ：銘柄別の実現損益合計（「読込」済みの一覧全体が対象。仮登録分は含まない） -->
+            <div class="update-form">
+                <p class="update-form-title">銘柄別 実現損益合計</p>
+                <div id="gains-summary-chart" class="gains-chart"></div>
+            </div>
         </div>
 
         <!-- データ更新：IRBANK業績情報・yfinance株価のGitHub Actions更新トリガーと実行状況確認 -->
@@ -355,9 +454,11 @@
             <p class="placeholder-text">業績スコア・配当利回り・売買履歴補正後利回り・ポートフォリオスコアの計算結果をここに表示予定です。</p>
         </div>
 
-        <!-- SIM：ディフェンシブ度（景気連動度）シミュレータ。past/C02-2_ディフェンシブ判定ラベル付け.ipynbのスコアリングを移植。
-             旧実装の手動ラベル（L_def）は廃止し連続スコアで評価する方針のため、ここではスコア分布と閾値による判定結果の
-             可視化のみを行う（データへの書き込みは行わない、あくまで試算用のページ）。旧手動ラベルは比較表示にのみ使う。
+        <!-- SIM：ディフェンシブ度（景気連動度）シミュレータ。past/(chk済)_C02-2_ディフェンシブ判定ラベル付け.ipynbのスコアリングを移植。
+             旧実装の手動ラベル（L_def）は廃止し連続スコアで評価する方針のため、ここではスコア分布の可視化のみを行う
+             （データへの書き込みは行わない、あくまで試算用のページ）。ディフェンシブ／オフェンシブという二値ラベルは
+             現行仕様では一切付与しない（2026-08-22：判定しきい値の概念自体を廃止）。旧手動ラベルはヒストグラムでの
+             参考比較表示にのみ残す（銘柄一覧テーブルには表示しない）。
              2026-08-22：下落局面相関・ボラ比を別々に重み付けする方式から、両者を統合した下方β（downside beta）1本
              によるスコアリングに変更（購入金額加重平均でポートフォリオ全体のディフェンシブ度を出す用途に対し、
              加重平均が数学的に厳密に合成できる指標はβだけであるため）。最大下落比（MDD比）は同じ理由（分散効果を
@@ -377,23 +478,19 @@
                     <input type="number" id="sim-years" value="10" min="1" step="1">
                 </div>
                 <p class="placeholder-text">暦年（1〜12月）区切りで、今年（N225の最終データ日が属する年）を除いた過去N年分を対象にします。銘柄側もN225と同じ年範囲で揃えて計算します。</p>
-                <div class="update-form-row">
-                    <label>判定しきい値</label>
-                    <input type="number" id="sim-threshold" value="50" min="0" max="100" step="1">
-                </div>
             </div>
 
             <details class="advanced-settings">
                 <summary>βのgood/bad閾値（詳細設定）</summary>
                 <div class="update-form">
-                    <p class="placeholder-text">β（下落局面相関×下落局面ボラ比）がgood以下なら100点、bad以上なら0点、間は線形補間です。既定値（good=0.5／bad=1.5）はβ=1（市場平均並みの感応度）でちょうど50点になるよう対称に設定しています。</p>
+                    <p class="placeholder-text">β（下落局面相関×下落局面ボラ比）がgood以下なら100点、bad以上なら0点、間は線形補間です。既定値（good=0／bad=2）はβ=1（市場平均並みの感応度）でちょうど50点になるよう対称に設定しています。</p>
                     <div class="update-form-row">
                         <label>β good</label>
-                        <input type="number" id="sim-beta-good" value="0.5" step="0.05">
+                        <input type="number" id="sim-beta-good" value="0" step="0.05">
                     </div>
                     <div class="update-form-row">
                         <label>β bad</label>
-                        <input type="number" id="sim-beta-bad" value="1.5" step="0.05">
+                        <input type="number" id="sim-beta-bad" value="2" step="0.05">
                     </div>
                 </div>
             </details>
@@ -411,9 +508,9 @@
                     <p class="placeholder-text">N225の期間リターンがこの値未満の期間を「下落局面」とみなします（初期値0＝マイナスの期間）。βの相関・ボラ比の両方をこの下落局面だけに絞って算出します。</p>
                     <div class="update-form-row">
                         <label>リターン算出期間（週）</label>
-                        <input type="number" id="sim-return-period-weeks" value="4" min="1" max="8" step="1">
+                        <input type="number" id="sim-return-period-weeks" value="2" min="1" max="8" step="1">
                     </div>
-                    <p class="placeholder-text">βの算出に使う期間リターンを、月次の代わりに何週間ごとで切り出すかを指定します（1〜8週。既定4週が月次相当）。</p>
+                    <p class="placeholder-text">βの算出に使う期間リターンを、月次の代わりに何週間ごとで切り出すかを指定します（1〜8週。4週が月次相当。既定2週）。</p>
                     <div class="update-form-row">
                         <label>外れ値クリップ</label>
                         <input type="number" id="sim-vol-outlier-clip" value="0.5" step="0.05">
@@ -452,11 +549,10 @@
 
             <div class="update-form">
                 <p class="update-form-title">銘柄一覧（スコア降順）</p>
-                <p class="placeholder-text">背景色が付いている行は、旧実装の手動ラベルと今回の判定が食い違っている銘柄です。</p>
                 <div class="table-wrapper table-wrapper--limited">
                     <table id="sim-table" class="data-table"></table>
                 </div>
-                <button type="button" id="sim-apply-btn" class="run-btn">適用（銘柄選定用スコアとして保存）</button>
+                <button type="button" id="sim-apply-btn" class="run-btn">適用</button>
                 <p id="sim-apply-status" class="update-status">スコアを算出できた銘柄（データ不足・エラーを除く）を、対象コードだけ更新・追加する形で`stock/scores.csv`に保存します（対象外の既存スコアは残ります）。</p>
             </div>
         </div>

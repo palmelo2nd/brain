@@ -1,6 +1,6 @@
 // (1) インポート — なし（Web標準APIのみ使用）
 
-// past/C02-2_ディフェンシブ判定ラベル付け.ipynbのスコアリングロジックを移植したものだが、2026-08-22に
+// past/(chk済)_C02-2_ディフェンシブ判定ラベル付け.ipynbのスコアリングロジックを移植したものだが、2026-08-22に
 // 「下落局面相関」「ボラ比」を別々に重み付けする方式から、両者を統合した下方β（downside beta）1本による
 // スコアリングに設計変更した。理由：本アプリの用途は購入金額でのポートフォリオ加重平均によりポートフォリオ
 // 全体のディフェンシブ度を算出することだが、加重平均で正しく合成できる（ポートフォリオβ＝Σ w_i・β_i が
@@ -11,12 +11,12 @@
 
 const MIN_MONTHS_EQUIVALENT = 24;      // 判定に必要な最低の重複期間（暦月換算。2年未満はブレやすいため除外。旧notebookと同基準）
 const MIN_DOWN_MONTHS_EQUIVALENT = 12; // 下方βの算出に必要な最低の下落期間（暦月換算）
-const WEEKS_PER_MONTH_APPROX = 4;      // 暦月換算の基準（リターン算出期間の既定値=4週=月次相当と揃えている）
+const WEEKS_PER_MONTH_APPROX = 4;      // 暦月換算の基準（1ヶ月=4週。returnPeriodWeeksの既定値とは無関係の暦上の近似値）
 
 /**
  * 暦月ベースの最低件数（MIN_MONTHS_EQUIVALENT等）を、リターン算出期間（週）に応じた期間数に換算する。
- * 例: 既定のreturnPeriodWeeks=4（月次相当）なら24ヶ月→24期間のまま。returnPeriodWeeks=1（週次）なら
- * 24ヶ月→約96期間（≒96週）というように、期間を短くするほど必要件数が増え、暦年数としての基準は変わらない。
+ * 例: returnPeriodWeeks=4（月次相当）なら24ヶ月→24期間のまま。既定のreturnPeriodWeeks=2（隔週相当）なら
+ * 24ヶ月→約48期間というように、期間を短くするほど必要件数が増え、暦年数としての基準は変わらない。
  */
 function minPeriodsFor(monthsEquivalent, returnPeriodWeeks) {
     return Math.max(1, Math.round(monthsEquivalent * WEEKS_PER_MONTH_APPROX / returnPeriodWeeks));
@@ -120,7 +120,7 @@ export function scoreLowBetter(value, good, bad) {
  *     years,                  // N225最終データ日の年を除いた過去years年分（暦年区切り）を対象にする
  *     betaGood, betaBad,      // βのgood/bad閾値（betaGood以下=100点、betaBad以上=0点、線形補間）
  *     downThreshold,          // 下落局面の閾値（N225の期間リターンがこれ未満を「下落局面」とみなす。既定0）
- *     returnPeriodWeeks,      // 期間リターンの区切り（週。既定4＝月次相当）
+ *     returnPeriodWeeks,      // 期間リターンの区切り（週。4＝月次相当。既定2）
  *     volOutlierClip,         // 期間リターンの絶対値の丸め上限（銘柄・N225の両方に対称適用。nullなら丸めない）
  *   }
  * (3) メイン: N225の最終データ日の年を「今年」として除外し、暦年（1〜12月）区切りで過去years年分に揃える
@@ -132,7 +132,7 @@ export function scoreLowBetter(value, good, bad) {
  *                   score=null, insufficientData=true
  */
 export function calcDefensiveScore(stockPriceRows, n225PriceRows, params) {
-    const returnPeriodWeeks = Number.isFinite(params.returnPeriodWeeks) && params.returnPeriodWeeks > 0 ? params.returnPeriodWeeks : 4;
+    const returnPeriodWeeks = Number.isFinite(params.returnPeriodWeeks) && params.returnPeriodWeeks > 0 ? params.returnPeriodWeeks : 2;
     const downThreshold = Number.isFinite(params.downThreshold) ? params.downThreshold : 0;
     const volOutlierClip = Number.isFinite(params.volOutlierClip) && params.volOutlierClip > 0 ? params.volOutlierClip : null;
 
@@ -189,7 +189,7 @@ export function calcDefensiveScore(stockPriceRows, n225PriceRows, params) {
 }
 
 /**
- * 過去実装（past/C02-2_ディフェンシブ判定ラベル付け.ipynb）で手動指定されていた参考ラベル。
+ * 過去実装（past/(chk済)_C02-2_ディフェンシブ判定ラベル付け.ipynb）で手動指定されていた参考ラベル。
  * L_defラベル自体は廃止（スコアによる連続評価に一本化）したため、01_IDmap.csv相当のどこにも保存・反映されないが、
  * SIMタブで新スコアとの比較表示にのみ使う参考データとしてここに残す。
  */

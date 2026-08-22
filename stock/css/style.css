@@ -514,7 +514,65 @@ body {
 .sim-legend-swatch--offensive { background: #adb5bd; }
 .sim-legend-swatch--none { background: #e9ecef; border: 1px solid #d0d7de; }
 
-.sim-row-mismatch td { background: #fff3cd; }
+/* ===== 売買履歴（実現損益）：銘柄別合計の横棒グラフ ===== */
+/* 中央（トラック幅50%の位置）をゼロ地点とし、プラスは右へ・マイナスは左へ伸びる形の左右対称バー。
+   旧notebook（past/(chk済)_C05_(R3)譲渡益の記録.ipynb）はプラス／マイナスを別々の図に分けていたが、
+   Web版では1本のバーで両方向に描くほうがコンパクトに収まる。 */
+.gains-chart {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-top: 10px;
+}
+
+.gains-chart-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+}
+
+.gains-chart-label {
+    width: 140px;
+    flex: 0 0 140px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.gains-chart-track {
+    flex: 1 1 auto;
+    height: 14px;
+    background: #f6f8fa;
+    border-radius: 2px;
+    position: relative;
+}
+
+.gains-chart-zero-line {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 50%;
+    width: 1px;
+    background: #d0d7de;
+}
+
+.gains-chart-fill {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    border-radius: 2px;
+}
+
+.gains-chart-fill--positive { background: #1a7f37; left: 50%; }
+.gains-chart-fill--negative { background: #cf222e; right: 50%; }
+
+.gains-chart-value {
+    width: 100px;
+    flex: 0 0 100px;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
 
 .sim-table-sortable {
     cursor: pointer;

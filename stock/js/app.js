@@ -5,6 +5,10 @@ import {
 } from './modules/github.js';
 import { parseCsv, stringifyCsv } from './modules/csv.js';
 import { parseSbiHoldingsCsv, parseRakutenHoldingsCsv } from './modules/brokerCsv.js';
+import {
+    parseSbiDomesticRealizedGainsCsv, parseSbiForeignRealizedGainsCsv,
+    parseSbiFundRealizedGainsCsv, parseRakutenRealizedGainsCsv,
+} from './modules/brokerCsv.js';
 import { summarizeHoldingsHierarchy } from './modules/holdingsSummary.js';
 import { calcDefensiveScore, REFERENCE_LABELS, buildHistogramBins } from './modules/defensiveScore.js';
 
@@ -26,6 +30,10 @@ const README_PATH   = 'stock/README.md'; // コードリポジトリ側（アプ
 const HOLDINGS_PATH = 'stock/holdings.csv';
 const HOLDINGS_HEADERS = ['id', 'owner', 'broker', 'account', 'code', 'shares', 'avg_cost'];
 const HOLDINGS_CODE_DISPLAY_MAX = 10; // 一覧表のコード列・銘柄名列の最大表示文字数（全角10文字相当。超過分は…で省略）
+// 売買履歴（実現損益）。past/(chk済)_C05_(R3)譲渡益の記録.ipynbを移植。holdings.csvと異なり「積み上げるデータ」
+// （縦持ちの取引ログ）のため、保存は全体洗い替えではなく追記型マージにする
+const REALIZED_GAINS_PATH = 'stock/realized_gains.csv';
+const REALIZED_GAINS_HEADERS = ['id', 'owner', 'broker', 'asset_type', 'code', 'name', 'date', 'pnl'];
 const BULK_ASSET_TYPES = ['内国株式', 'ETF・ETN']; // fetch_prices.pyの--asset-types既定値と揃えている
 // 「更新最終日」「データ品質」の内訳を内国株式／その他（ETF等）に分ける分類ラベル（2026-08-18追加）。
 // yfinanceはETF側で更新漏れ・欠損が起きやすく、内国株式と混在させると個別株側の問題が埋もれるため区別する。
@@ -109,9 +117,12 @@ DATAUPDATE_MODES.forEach(mode => {
     });
 });
 
-// 保有・履歴タブを開いたとき、トークンが入力済みなら保有銘柄一覧を自動読み込みする
+// 保有・履歴タブを開いたとき、トークンが入力済みなら保有銘柄一覧・売買履歴一覧を自動読み込みする
 document.getElementById('tab-holdings')?.addEventListener('click', () => {
-    if (getTokenValue()) loadHoldings();
+    if (getTokenValue()) {
+        loadHoldings();
+        loadRealizedGains();
+    }
 });
 
 // 銘柄属性タブを開いたとき、トークンが入力済みならラベル一覧を自動読み込みする
@@ -1515,6 +1526,333 @@ document.getElementById('holdings-csv-import-btn')?.addEventListener('click', as
     }
 });
 
+// ===== 保有・履歴：売買履歴（実現損益。stock/realized_gains.csv） =====
+// past/(chk済)_C05_(R3)譲渡益の記録.ipynbを移植。holdings.csvと違い「積み上げるデータ」（縦持ちの取引ログ）
+// のため、保存は全体洗い替えではなく「追記型マージ」にする：登録ボタンを押した時点の最新の内容を取得し直し、
+// 仮登録一覧（gainsPendingRows）のうち内容が完全一致する重複行だけを除いて追記する（同一CSVの誤った二重取込を防ぐ）。
+// 旧notebookが行っていた同日同銘柄の合算・対話的な競合解決（合算/上書き/スキップ）は行わない
+// （縦持ちならそもそも合算不要で、対話プロンプトもブラウザでは使えないため）。
+
+let realizedGainsRows = [];  // 読込済みの売買履歴一覧（stock/realized_gains.csvの内容。表示・集計専用）
+let gainsPendingRows = [];   // 手動入力・CSV取込で仮登録した未保存の行（{ _pendingId, owner, broker, asset_type, code, name, date, pnl }）
+let gainsPendingSeq = 0;     // 仮登録行のUI管理用の連番（保存時に振り直す本番idとは別）
+
+/** realizedGainsRows内の最大id（数値部分）+1を返す（新規行のid採番用）。holdingsのnextHoldingIdと同じロジック。 */
+function nextGainsId(rows) {
+    const maxId = rows.reduce((max, r) => {
+        const n = parseInt(r.id, 10);
+        return Number.isNaN(n) ? max : Math.max(max, n);
+    }, 0);
+    return maxId + 1;
+}
+
+/** 重複判定キー（証券会社・資産種別・コード・日付・損益が完全一致なら同一取引とみなす）。 */
+function gainsDedupeKey(row) {
+    return [row.broker, row.asset_type, row.code, row.date, row.pnl].join('|');
+}
+
+/** stock/realized_gains.csv を読み込み、一覧・集計グラフを再描画する。 */
+async function loadRealizedGains() {
+    const listStatusEl = document.getElementById('gains-list-status');
+    const token = getTokenValue();
+    if (!token) { listStatusEl.textContent = 'トークンを入力してください。'; return; }
+
+    listStatusEl.textContent = '読込中...';
+    try {
+        const text = await fetchFileIfExists(token, OWNER, DATA_REPO, REALIZED_GAINS_PATH);
+        realizedGainsRows = text ? parseCsv(text) : [];
+        await renderGainsTable();
+        renderGainsSummaryChart();
+        listStatusEl.textContent = `${realizedGainsRows.length}件を読み込みました。`;
+    } catch (error) {
+        console.error(error);
+        listStatusEl.textContent = `読込に失敗しました: ${error.message}`;
+    }
+}
+
+document.getElementById('gains-reload-btn')?.addEventListener('click', loadRealizedGains);
+
+/** 売買履歴一覧テーブル（読込済み・保存済みの内容）を約定日の降順で描画する。銘柄名はCSV由来のname列を優先し、
+ * 空欄ならmaster.csvのnameMapで解決を試みる（外国株・投資信託はmaster.csvに載らないため解決できないことが多い）。 */
+async function renderGainsTable() {
+    const table = document.getElementById('gains-table');
+    if (!table) return;
+
+    const token = getTokenValue();
+    let nameMap = new Map();
+    if (token) {
+        try { nameMap = await getMasterNameMap(token); } catch (error) { console.error(error); }
+    }
+
+    const cols = ['所有者', '証券会社', '資産種別', 'コード', '銘柄名', '約定日', '実現損益（円）'];
+    const thead = document.createElement('thead');
+    const hRow = document.createElement('tr');
+    cols.forEach(label => {
+        const th = document.createElement('th');
+        th.textContent = label;
+        hRow.appendChild(th);
+    });
+    thead.appendChild(hRow);
+
+    const tbody = document.createElement('tbody');
+    const sorted = [...realizedGainsRows].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+
+    if (sorted.length === 0) {
+        const tr = document.createElement('tr');
+        const td = document.createElement('td');
+        td.colSpan = cols.length;
+        td.className = 'empty-cell';
+        td.textContent = '売買履歴がありません';
+        tr.appendChild(td);
+        tbody.appendChild(tr);
+    } else {
+        sorted.forEach(r => {
+            const tr = document.createElement('tr');
+            const name = r.name || nameMap.get(r.code) || '';
+            const values = [r.owner, r.broker, r.asset_type, r.code, name, r.date, Number(r.pnl).toLocaleString('ja-JP')];
+            values.forEach(v => {
+                const td = document.createElement('td');
+                td.textContent = v ?? '';
+                tr.appendChild(td);
+            });
+            tbody.appendChild(tr);
+        });
+    }
+    table.replaceChildren(thead, tbody);
+}
+
+/** 銘柄別 実現損益合計の横棒グラフ（中央をゼロとし、プラスは右・マイナスは左へ伸びる）。realizedGainsRows
+ * （読込済みの保存済みデータ）が対象で、仮登録中の未保存分は含めない（登録後に「読込」し直せば反映される）。 */
+function renderGainsSummaryChart() {
+    const container = document.getElementById('gains-summary-chart');
+    if (!container) return;
+    container.replaceChildren();
+
+    const totals = new Map(); // code -> { name, total }
+    realizedGainsRows.forEach(r => {
+        const pnl = Number(r.pnl);
+        if (!Number.isFinite(pnl)) return;
+        const entry = totals.get(r.code) || { name: r.name || '', total: 0 };
+        if (!entry.name && r.name) entry.name = r.name;
+        entry.total += pnl;
+        totals.set(r.code, entry);
+    });
+
+    if (totals.size === 0) {
+        container.textContent = '売買履歴を読み込むと集計が表示されます。';
+        return;
+    }
+
+    const rows = [...totals.entries()].map(([code, { name, total }]) => ({ code, name, total }));
+    rows.sort((a, b) => b.total - a.total);
+    const maxAbs = Math.max(...rows.map(r => Math.abs(r.total)), 1);
+
+    rows.forEach(r => {
+        const row = document.createElement('div');
+        row.className = 'gains-chart-row';
+
+        const label = document.createElement('div');
+        label.className = 'gains-chart-label';
+        label.textContent = r.name ? `${r.code}：${r.name}` : r.code;
+        label.title = label.textContent;
+
+        const track = document.createElement('div');
+        track.className = 'gains-chart-track';
+        const zeroLine = document.createElement('div');
+        zeroLine.className = 'gains-chart-zero-line';
+        track.appendChild(zeroLine);
+
+        const fill = document.createElement('div');
+        fill.className = `gains-chart-fill ${r.total >= 0 ? 'gains-chart-fill--positive' : 'gains-chart-fill--negative'}`;
+        fill.style.width = `${(Math.abs(r.total) / maxAbs) * 50}%`;
+        track.appendChild(fill);
+
+        const value = document.createElement('div');
+        value.className = 'gains-chart-value';
+        value.textContent = Math.round(r.total).toLocaleString('ja-JP');
+
+        row.append(label, track, value);
+        container.appendChild(row);
+    });
+}
+
+// ===== 売買履歴：入力方法の切り替え（手動入力／CSV入力） =====
+const GAINS_INPUT_MODES = ['manual', 'csv'];
+
+function renderGainsInputMode(mode) {
+    GAINS_INPUT_MODES.forEach(m => {
+        document.getElementById(`gains-mode-${m}`)?.classList.toggle('view-btn--active', m === mode);
+    });
+    const manualPanel = document.getElementById('gains-manual-panel');
+    const csvPanel    = document.getElementById('gains-csv-panel');
+    if (manualPanel) manualPanel.style.display = mode === 'manual' ? '' : 'none';
+    if (csvPanel)    csvPanel.style.display    = mode === 'csv'    ? '' : 'none';
+}
+
+GAINS_INPUT_MODES.forEach(mode => {
+    document.getElementById(`gains-mode-${mode}`)?.addEventListener('click', () => renderGainsInputMode(mode));
+});
+
+/** 仮登録一覧（gainsPendingRows）テーブルを描画する。行クリックではなく「削除」ボタンで個別に取り消す。 */
+function renderGainsPendingTable() {
+    const table = document.getElementById('gains-pending-table');
+    if (!table) return;
+
+    const cols = ['所有者', '証券会社', '資産種別', 'コード', '銘柄名', '約定日', '実現損益（円）', ''];
+    const thead = document.createElement('thead');
+    const hRow = document.createElement('tr');
+    cols.forEach(label => {
+        const th = document.createElement('th');
+        th.textContent = label;
+        hRow.appendChild(th);
+    });
+    thead.appendChild(hRow);
+
+    const tbody = document.createElement('tbody');
+    if (gainsPendingRows.length === 0) {
+        const tr = document.createElement('tr');
+        const td = document.createElement('td');
+        td.colSpan = cols.length;
+        td.className = 'empty-cell';
+        td.textContent = '仮登録はありません';
+        tr.appendChild(td);
+        tbody.appendChild(tr);
+    } else {
+        gainsPendingRows.forEach(r => {
+            const tr = document.createElement('tr');
+            const values = [r.owner, r.broker, r.asset_type, r.code, r.name, r.date, Number(r.pnl).toLocaleString('ja-JP')];
+            values.forEach(v => {
+                const td = document.createElement('td');
+                td.textContent = v ?? '';
+                tr.appendChild(td);
+            });
+            const actionTd = document.createElement('td');
+            const delBtn = document.createElement('button');
+            delBtn.type = 'button';
+            delBtn.className = 'run-btn run-btn--danger';
+            delBtn.textContent = '削除';
+            delBtn.addEventListener('click', () => {
+                gainsPendingRows = gainsPendingRows.filter(p => p._pendingId !== r._pendingId);
+                renderGainsPendingTable();
+            });
+            actionTd.appendChild(delBtn);
+            tr.appendChild(actionTd);
+            tbody.appendChild(tr);
+        });
+    }
+    table.replaceChildren(thead, tbody);
+}
+
+/** 手動入力フォームの内容をクリアする（所有者・証券会社・資産種別は連続入力しやすいよう残す）。 */
+function clearGainsManualForm() {
+    document.getElementById('gains-code').value = '';
+    document.getElementById('gains-name').value = '';
+    document.getElementById('gains-date').value = '';
+    document.getElementById('gains-pnl').value = '';
+}
+
+document.getElementById('gains-add-btn')?.addEventListener('click', () => {
+    const owner = document.getElementById('gains-owner').value.trim();
+    const broker = document.getElementById('gains-broker').value.trim();
+    const asset_type = document.getElementById('gains-asset-type').value;
+    const code = document.getElementById('gains-code').value.trim();
+    const name = document.getElementById('gains-name').value.trim();
+    const date = document.getElementById('gains-date').value;
+    const pnl = document.getElementById('gains-pnl').value.trim();
+
+    if (!owner || !broker || !code || !date || pnl === '') { alert('所有者・証券会社・証券コード・約定日・実現損益を入力してください'); return; }
+
+    gainsPendingRows.push({ _pendingId: ++gainsPendingSeq, owner, broker, asset_type, code, name, date, pnl: Number(pnl) });
+    renderGainsPendingTable();
+    clearGainsManualForm();
+});
+
+// ===== 売買履歴：CSV入力（証券会社の実現損益CSVから一括取込） =====
+// 取り込んだ内容はいったんgainsPendingRowsに積むだけで、「登録」を押すまでGitHubへは反映されない。
+const GAINS_CSV_PARSERS = {
+    sbi_domestic: { parser: parseSbiDomesticRealizedGainsCsv, broker: 'SBI',  asset_type: '国内株式' },
+    sbi_foreign:  { parser: parseSbiForeignRealizedGainsCsv,  broker: 'SBI',  asset_type: '外国株式' },
+    sbi_fund:     { parser: parseSbiFundRealizedGainsCsv,     broker: 'SBI',  asset_type: '投資信託' },
+    rakuten:      { parser: parseRakutenRealizedGainsCsv,     broker: '楽天', asset_type: '国内株式' },
+};
+
+document.getElementById('gains-csv-import-btn')?.addEventListener('click', async () => {
+    const statusEl = document.getElementById('gains-csv-status');
+    const kind  = document.getElementById('gains-csv-kind').value;
+    const owner = document.getElementById('gains-csv-owner').value.trim();
+    const file  = document.getElementById('gains-csv-file').files[0];
+
+    if (!owner) { alert('所有者を入力してください'); return; }
+    if (!file)  { alert('CSVファイルを選択してください'); return; }
+
+    const config = GAINS_CSV_PARSERS[kind];
+    statusEl.textContent = '読み込み中...';
+
+    try {
+        // 証券会社の出力CSVはShift-JIS（cp932）でエクスポートされるため、明示的にデコードする
+        const buffer = await file.arrayBuffer();
+        const text = new TextDecoder('shift-jis').decode(buffer);
+        const parsed = config.parser(text);
+
+        if (parsed.length === 0) {
+            statusEl.textContent = 'CSVから実現損益を読み取れませんでした（ファイル形式が想定と異なる可能性があります）。';
+            return;
+        }
+
+        parsed.forEach(item => {
+            gainsPendingRows.push({ _pendingId: ++gainsPendingSeq, owner, broker: config.broker, asset_type: config.asset_type, ...item });
+        });
+
+        renderGainsPendingTable();
+        document.getElementById('gains-csv-file').value = '';
+        statusEl.textContent = `${parsed.length}件を仮登録一覧に追加しました。「登録」を押すとGitHubへ反映されます。`;
+    } catch (error) {
+        console.error(error);
+        statusEl.textContent = `取り込みに失敗しました: ${error.message}`;
+    }
+});
+
+// ===== 売買履歴：仮登録一覧をGitHubへ保存（追記型マージ） =====
+// 保存直前に最新のstock/realized_gains.csvを取得し直し、gainsDedupeKeyが完全一致する行を除いた分だけ
+// 新しいidを振って追記する（delisted.csv/extra_targets.csv等と同様、常に最新の内容の上にマージする）。
+document.getElementById('gains-save-btn')?.addEventListener('click', async () => {
+    const statusEl = document.getElementById('gains-save-status');
+    const token = getTokenValue();
+    if (!token) { alert('トークンを入力してください'); return; }
+    if (gainsPendingRows.length === 0) { alert('仮登録がありません（手動入力またはCSV取込で追加してください）'); return; }
+
+    statusEl.textContent = '保存中...';
+    try {
+        const existingText = await fetchFileIfExists(token, OWNER, DATA_REPO, REALIZED_GAINS_PATH);
+        const existingRows = existingText ? parseCsv(existingText) : [];
+        const existingKeys = new Set(existingRows.map(gainsDedupeKey));
+
+        let nextId = nextGainsId(existingRows);
+        const seenNew = new Set();
+        let added = 0, skipped = 0;
+        gainsPendingRows.forEach(({ _pendingId, ...row }) => {
+            const key = gainsDedupeKey(row);
+            if (existingKeys.has(key) || seenNew.has(key)) { skipped++; return; }
+            seenNew.add(key);
+            existingRows.push({ id: String(nextId++), ...row });
+            added++;
+        });
+
+        const content = stringifyCsv(existingRows, REALIZED_GAINS_HEADERS);
+        await commitFile(token, OWNER, DATA_REPO, REALIZED_GAINS_PATH, DATA_REPO_BRANCH, content, 'chore: 売買履歴（実現損益）を追加');
+
+        gainsPendingRows = [];
+        renderGainsPendingTable();
+        statusEl.textContent = `保存しました（追加: ${added}件 / 重複スキップ: ${skipped}件 / 合計: ${existingRows.length}件）。`;
+        await loadRealizedGains();
+    } catch (error) {
+        console.error(error);
+        statusEl.textContent = `保存に失敗しました: ${error.message}`;
+    }
+});
+
+renderGainsPendingTable();
+
 // ===== データ更新：IRBANK企業ID取得（stock/irbank.csv。内国株式のEID・URL・社名） =====
 // master.csvとは別ファイルにする理由: master.csvはJPX公式データからいつでも作り直せる派生データだが、
 // irbank.csvはスクレイピングで積み上げた（再取得コストが高い）データのため、master.csvの再生成で
@@ -1874,7 +2212,7 @@ document.getElementById('attributes-save-btn')?.addEventListener('click', async 
 });
 
 // ===== SIM：ディフェンシブ度（景気連動度）シミュレータ =====
-// past/C02-2_ディフェンシブ判定ラベル付け.ipynbのスコアリングロジックを移植したもの（js/modules/defensiveScore.js）。
+// past/(chk済)_C02-2_ディフェンシブ判定ラベル付け.ipynbのスコアリングロジックを移植したもの（js/modules/defensiveScore.js）。
 // 旧実装の手動教師ラベル（L_def）は廃止し、連続スコアで評価する方針に変更した。
 // 2026-08-22：下落局面相関・ボラ比を別々に重み付けする方式から、両者を統合した下方β（downside beta）1本に
 // よるスコアリングへ変更（購入金額加重平均でポートフォリオ全体のディフェンシブ度を出す用途に対し、加重平均が
@@ -1882,6 +2220,9 @@ document.getElementById('attributes-save-btn')?.addEventListener('click', async 
 // 「計算」自体は試算のみで何もコミットしない。「適用」を押した時点で初めてスコアをstock/scores.csvへ保存する
 // （銘柄選定用のスコアとして積み上げる。対象コードだけ更新・追加するマージ方式で、対象外の既存スコアは残す）。
 // 旧手動ラベル（REFERENCE_LABELS）は、保存先を持たない比較表示専用の参考データ（scores.csvには含めない）。
+// 2026-08-22：ディフェンシブ／オフェンシブの二値判定・判定しきい値の概念を廃止し、スコアの連続値のみで評価する
+// 方針に変更（判定しきい値入力欄・判定列・旧参考ラベルとの不一致ハイライトを削除。旧手動ラベルはヒストグラムの
+// 参考比較表示にのみ残す）。
 
 const SIM_FETCH_BATCH_SIZE = 6; // 株価CSVの並列取得数（多すぎるとGitHub APIのレート制限に触れやすいため控えめに）
 let simResults = []; // 直近の計算結果（{ code, name, score, beta, corrDown, volRatio, periods, downPeriods, refLabel, error }）
@@ -1894,11 +2235,11 @@ function getSimParams() {
     };
     return {
         years:     num('sim-years', 10),
-        betaGood:  num('sim-beta-good', 0.5),
-        betaBad:   num('sim-beta-bad', 1.5),
+        betaGood:  num('sim-beta-good', 0),
+        betaBad:   num('sim-beta-bad', 2),
         // 指標の定義（詳細設定）。js/modules/defensiveScore.jsのcalcDefensiveScoreへそのまま渡す
         downThreshold:     num('sim-down-threshold', 0),
-        returnPeriodWeeks: num('sim-return-period-weeks', 4),
+        returnPeriodWeeks: num('sim-return-period-weeks', 2),
         volOutlierClip:    num('sim-vol-outlier-clip', 0.5),
     };
 }
@@ -1977,7 +2318,6 @@ async function runSimCalculation() {
 }
 
 document.getElementById('sim-run-btn')?.addEventListener('click', runSimCalculation);
-document.getElementById('sim-threshold')?.addEventListener('input', renderSimResults);
 document.getElementById('sim-hist-metric')?.addEventListener('change', renderSimHistogram);
 
 // ===== SIM：計算結果を銘柄選定用のスコアとして保存（stock/scores.csv）。
@@ -2016,11 +2356,6 @@ document.getElementById('sim-apply-btn')?.addEventListener('click', async (event
     }
 });
 
-function getSimThreshold() {
-    const v = Number(document.getElementById('sim-threshold')?.value);
-    return Number.isFinite(v) ? v : 50;
-}
-
 function renderSimResults() {
     renderSimHistogram();
     renderSimTable();
@@ -2049,7 +2384,7 @@ function formatSimHistValue(value, metric) {
 
 /**
  * 指標分布をdiv要素の積み上げ棒グラフで描く（外部チャートライブラリは使わない簡易実装）。
- * 各binの棒は、旧実装の手動ラベル（refLabel。past/C02-2_ディフェンシブ判定ラベル付け.ipynb由来）で
+ * 各binの棒は、旧実装の手動ラベル（refLabel。past/(chk済)_C02-2_ディフェンシブ判定ラベル付け.ipynb由来）で
  * 「旧ディフェンシブ／旧オフェンシブ／参考ラベル無し」の3区分に積み上げる（現在の判定しきい値とは無関係の表示）。
  */
 function renderSimHistogram() {
@@ -2119,8 +2454,8 @@ function renderSimHistogram() {
 }
 
 // SIM：銘柄一覧テーブルの列定義。sortValueは並べ替えに使う生の値、formatは表示用の文字列を返す
-// （format省略時はsortValueの結果をそのまま表示する）。判定・参考ラベル(旧)は現在の判定しきい値
-// （sim-thresholdの値）に依存するため、都度getSimThreshold()を読んで計算する。
+// （format省略時はsortValueの結果をそのまま表示する）。ディフェンシブ／オフェンシブの二値判定は行わず、
+// スコア・β・下落局面相関・下落局面ボラ比の連続値のみを表示する。
 const SIM_TABLE_COLUMNS = [
     { key: 'code',     label: 'コード',         sortValue: r => r.code },
     { key: 'name',     label: '銘柄名',         sortValue: r => r.name },
@@ -2128,24 +2463,10 @@ const SIM_TABLE_COLUMNS = [
     { key: 'beta',     label: 'β',              sortValue: r => r.beta,     format: r => Number.isFinite(r.beta) ? r.beta.toFixed(2) : '－' },
     { key: 'corrDown', label: '下落局面相関',   sortValue: r => r.corrDown, format: r => Number.isFinite(r.corrDown) ? r.corrDown.toFixed(2) : '－' },
     { key: 'volRatio', label: '下落局面ボラ比', sortValue: r => r.volRatio, format: r => Number.isFinite(r.volRatio) ? r.volRatio.toFixed(2) : '－' },
-    { key: 'judge',    label: '判定',           sortValue: r => simJudgeText(r) },
-    { key: 'refLabel', label: '参考ラベル(旧)', sortValue: r => simRefLabelText(r) },
-    { key: 'periods',  label: '対象期間数',     sortValue: r => r.periods },
 ];
 
 let simSortKey = 'score'; // 現在のソート対象列のkey（既定：スコア）
 let simSortDir = -1;      // 1=昇順、-1=降順（既定：スコア降順。旧実装のデフォルト表示と揃えている）
-
-/** 現在の判定しきい値と比較した判定結果のテキスト。判定列の表示・ソート値、行の背景色判定（不一致）で共通利用する。 */
-function simJudgeText(r) {
-    const threshold = getSimThreshold();
-    return Number.isFinite(r.score) ? (r.score >= threshold ? 'ディフェンシブ' : 'オフェンシブ') : (r.error ? 'エラー' : 'データ不足');
-}
-
-/** 旧実装の手動ラベル（refLabel）の表示用テキスト。参考ラベル(旧)列の表示・ソート値で共通利用する。 */
-function simRefLabelText(r) {
-    return r.refLabel === 'defensive' ? 'ディフェンシブ' : r.refLabel === 'offensive' ? 'オフェンシブ' : '－';
-}
 
 /** ソート値の比較。数値同士は数値として、それ以外は文字列として比較する。
  * null/undefined/算出不能（NaN）は昇順・降順どちらでも常に末尾に回す（値が無い行が上位に来て紛らわしくなるのを防ぐ）。 */
@@ -2160,8 +2481,7 @@ function compareSimSortValues(a, b, dir) {
 }
 
 /** 結果一覧テーブル。列ヘッダークリックでその列でソートする（同じ列の再クリックで昇順/降順トグル、
- * 別の列への切り替えは降順から始める）。既定はスコア降順。旧実装の手動ラベル（REFERENCE_LABELS）との
- * 一致・不一致も表示する。 */
+ * 別の列への切り替えは降順から始める）。既定はスコア降順。 */
 function renderSimTable() {
     const table = document.getElementById('sim-table');
     if (!table) return;
@@ -2195,12 +2515,8 @@ function renderSimTable() {
         tr.appendChild(td);
         tbody.appendChild(tr);
     } else {
-        const threshold = getSimThreshold();
         sorted.forEach(r => {
             const tr = document.createElement('tr');
-            const mismatch = r.refLabel && Number.isFinite(r.score) &&
-                ((r.refLabel === 'defensive' && r.score < threshold) || (r.refLabel === 'offensive' && r.score >= threshold));
-            if (mismatch) tr.classList.add('sim-row-mismatch');
 
             SIM_TABLE_COLUMNS.forEach(col => {
                 const td = document.createElement('td');
