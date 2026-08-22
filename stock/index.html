@@ -172,6 +172,10 @@
             <div class="update-form">
                 <p class="update-form-title">売買履歴（実現損益）</p>
                 <button type="button" id="gains-reload-btn" class="run-btn run-btn--secondary">読込</button>
+                <!-- 証券会社×資産種別ごとの記録済み最新約定日。次にCSVを取得する際、どこから（どの日付以降を）
+                     取得すればよいかの目安にする（4.1「更新最終日」の株価版と同じ考え方） -->
+                <p class="update-form-title">記録済み最新約定日</p>
+                <ul id="gains-latest-date-list" class="status-distribution"></ul>
                 <div class="table-wrapper table-wrapper--limited">
                     <table id="gains-table" class="data-table"></table>
                 </div>

@@ -33,7 +33,7 @@ const HOLDINGS_CODE_DISPLAY_MAX = 10; // 一覧表のコード列・銘柄名列
 // 売買履歴（実現損益）。past/(chk済)_C05_(R3)譲渡益の記録.ipynbを移植。holdings.csvと異なり「積み上げるデータ」
 // （縦持ちの取引ログ）のため、保存は全体洗い替えではなく追記型マージにする
 const REALIZED_GAINS_PATH = 'stock/realized_gains.csv';
-const REALIZED_GAINS_HEADERS = ['id', 'owner', 'broker', 'asset_type', 'code', 'name', 'date', 'pnl', 'updated_at'];
+const REALIZED_GAINS_HEADERS = ['id', 'owner', 'broker', 'asset_type', 'code', 'name', 'date', 'pnl'];
 const BULK_ASSET_TYPES = ['内国株式', 'ETF・ETN']; // fetch_prices.pyの--asset-types既定値と揃えている
 // 「更新最終日」「データ品質」の内訳を内国株式／その他（ETF等）に分ける分類ラベル（2026-08-18追加）。
 // yfinanceはETF側で更新漏れ・欠損が起きやすく、内国株式と混在させると個別株側の問題が埋もれるため区別する。
@@ -1582,6 +1582,7 @@ async function loadRealizedGains() {
     try {
         const text = await fetchFileIfExists(token, OWNER, DATA_REPO, REALIZED_GAINS_PATH);
         realizedGainsRows = text ? parseCsv(text) : [];
+        renderGainsLatestDates();
         await renderGainsTable();
         renderGainsSummaryChart();
         listStatusEl.textContent = `${realizedGainsRows.length}件を読み込みました。`;
@@ -1592,6 +1593,36 @@ async function loadRealizedGains() {
 }
 
 document.getElementById('gains-reload-btn')?.addEventListener('click', loadRealizedGains);
+
+/** 証券会社×資産種別ごとに、記録済みの約定日の最新値を一覧表示する。次にCSVを取得する際、
+ * どの日付以降を取得すればよいか（取得範囲のギャップ）を判断する目安にする
+ * （4.1「更新最終日」の株価版と同じ考え方。CSV入力の「種類」プルダウンの区分と揃えている）。 */
+function renderGainsLatestDates() {
+    const list = document.getElementById('gains-latest-date-list');
+    if (!list) return;
+    list.replaceChildren();
+
+    const latestByGroup = new Map(); // "証券会社/資産種別" -> 最新の約定日
+    realizedGainsRows.forEach(r => {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(r.date)) return;
+        const key = `${r.broker || '不明'}（${r.asset_type || '不明'}）`;
+        const current = latestByGroup.get(key);
+        if (!current || r.date > current) latestByGroup.set(key, r.date);
+    });
+
+    if (latestByGroup.size === 0) {
+        const li = document.createElement('li');
+        li.textContent = '記録がまだありません。';
+        list.appendChild(li);
+        return;
+    }
+
+    [...latestByGroup.entries()].sort(([a], [b]) => a.localeCompare(b, 'ja')).forEach(([group, date]) => {
+        const li = document.createElement('li');
+        li.textContent = `${group}: ${date} まで記録済み`;
+        list.appendChild(li);
+    });
+}
 
 /** 売買履歴一覧テーブル（読込済み・保存済みの内容）を約定日の降順で描画する。銘柄名はCSV由来のname列を優先し、
  * 空欄ならmaster.csvのnameMapで解決を試みる（外国株・投資信託はmaster.csvに載らないため解決できないことが多い）。 */
@@ -1605,7 +1636,7 @@ async function renderGainsTable() {
         try { nameMap = await getMasterNameMap(token); } catch (error) { console.error(error); }
     }
 
-    const cols = ['所有者', '証券会社', '資産種別', 'コード', '銘柄名', '約定日', '実現損益（円）', '最終更新日'];
+    const cols = ['所有者', '証券会社', '資産種別', 'コード', '銘柄名', '約定日', '実現損益（円）'];
     const thead = document.createElement('thead');
     const hRow = document.createElement('tr');
     cols.forEach(label => {
@@ -1630,8 +1661,7 @@ async function renderGainsTable() {
         sorted.forEach(r => {
             const tr = document.createElement('tr');
             const name = r.name || nameMap.get(r.code) || '';
-            // 最終更新日（updated_at）は約定日（date）とは別物＝この行をアプリに登録した日時。追加より前の行は空欄になる
-            const values = [r.owner, r.broker, r.asset_type, r.code, name, r.date, Number(r.pnl).toLocaleString('ja-JP'), r.updated_at || ''];
+            const values = [r.owner, r.broker, r.asset_type, r.code, name, r.date, Number(r.pnl).toLocaleString('ja-JP')];
             values.forEach(v => {
                 const td = document.createElement('td');
                 td.textContent = v ?? '';
@@ -1862,14 +1892,13 @@ document.getElementById('gains-save-btn')?.addEventListener('click', async () =>
         const existingKeys = new Set(existingRows.map(gainsDedupeKey));
 
         let nextId = nextGainsId(existingRows);
-        const now = formatJstTimestamp(); // 「約定日」（date列）とは別物。この行をアプリに登録した日時を記録する
         const seenNew = new Set();
         let added = 0, skipped = 0;
         gainsPendingRows.forEach(({ _pendingId, ...row }) => {
             const key = gainsDedupeKey(row);
             if (existingKeys.has(key) || seenNew.has(key)) { skipped++; return; }
             seenNew.add(key);
-            existingRows.push({ id: String(nextId++), ...row, updated_at: now });
+            existingRows.push({ id: String(nextId++), ...row });
             added++;
         });
 
